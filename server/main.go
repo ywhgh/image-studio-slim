@@ -36,7 +36,7 @@ const (
 	defaultUpstreamTimeout       = 180 * time.Second
 	maxUpstreamBodyBytes         = 32 << 20
 	maxRequestBodyBytes          = 16 << 20
-	imageStudioMaxImageCount     = 3
+	imageStudioMaxImageCount     = 10
 	imageStudioDefaultImageCount = 1
 
 	profileOpenAIImageAPI = "openai-image-api"

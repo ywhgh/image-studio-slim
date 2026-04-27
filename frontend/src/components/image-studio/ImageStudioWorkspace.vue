@@ -368,7 +368,7 @@
                             @click="preferences.resolutionPreset = option.value"
                           >
                             <span class="studio-resolution-name">{{ option.label }}</span>
-                            <span class="studio-resolution-size">{{ option.size }}</span>
+                            <span class="studio-resolution-size">{{ option.size || t('imageStudio.settings.defaultLabel') }}</span>
                           </button>
                         </div>
                         <p class="studio-helper">{{ resolutionHint }}</p>
@@ -398,14 +398,16 @@
                         <label class="studio-field-label">{{ t('imageStudio.fields.imageCount') }}</label>
                         <div class="studio-inline-meta">
                           <strong>{{ effectiveCount }}</strong>
-                          <span>×</span>
-                          <span>{{ resolvedSizeDisplay }}</span>
+                          <template v-if="resolvedSize">
+                            <span>×</span>
+                            <span>{{ resolvedSize }}</span>
+                          </template>
                         </div>
                         <input
                           v-model.number="preferences.count"
                           type="range"
                           min="1"
-                          max="3"
+                          max="10"
                           class="studio-range"
                         />
                       </div>
@@ -1799,44 +1801,25 @@ async function translatePromptAction() {
   }
   if (translating.value) return
 
-  // Translation reuses the same upstream + api_key + model the user already
-  // configured for image generation. The endpoint is /chat/completions.
-  const baseUrl = preferences.externalBaseUrl.trim().replace(/\/+$/, '')
-  const apiKey = externalApiKey.value.trim()
-  if (!baseUrl || !apiKey) {
-    appStore.showWarning(t('imageStudio.toasts.externalConfigRequired'))
+  // Translation uses the SAME 提示词模型 (prompt helper) account the user
+  // already configured for "优化提示词" / "随机灵感" — i.e. promptHelperConfig
+  // (separate from the image-generation model). callPromptHelper throws a
+  // clean error if the panel hasn't been filled in.
+  if (!promptHelperConfigured.value) {
+    appStore.showWarning(t('imageStudio.toasts.helperConfigure'))
     return
   }
 
   translating.value = true
   try {
     const targetLang = translateLanguageName(translateLang.value)
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+    const translated = await callPromptHelper([
+      {
+        role: 'system',
+        content: `You are a translator. Translate the user's text into ${targetLang}. Output ONLY the translated text — no preamble, no quotes, no explanation. Preserve line breaks.`,
       },
-      body: JSON.stringify({
-        model: preferences.model,
-        messages: [
-          {
-            role: 'system',
-            content: `You are a translator. Translate the user's text into ${targetLang}. Output ONLY the translated text — no preamble, no quotes, no explanation. Preserve line breaks.`,
-          },
-          { role: 'user', content: text },
-        ],
-        temperature: 0.2,
-      }),
-    })
-    const payload = await response.json().catch(() => null) as
-      | { choices?: { message?: { content?: string } }[]; error?: { message?: string } }
-      | null
-    if (!response.ok) {
-      const msg = payload?.error?.message || `HTTP ${response.status}`
-      throw new Error(msg)
-    }
-    const translated = payload?.choices?.[0]?.message?.content?.trim()
+      { role: 'user', content: text },
+    ])
     if (!translated) {
       throw new Error(t('imageStudio.translate.emptyResponse'))
     }
@@ -2303,7 +2286,7 @@ const effectiveCount = computed(() => {
   if (preferences.providerMode !== 'sub2api' && preferences.profile === 'openai-responses') {
     return 1
   }
-  return Math.max(1, Math.min(3, preferences.count))
+  return Math.max(1, Math.min(10, preferences.count))
 })
 
 const countSliderDisabled = computed(() => (
@@ -4951,7 +4934,7 @@ onBeforeUnmount(() => {
 }
 
 .studio-layout {
-  @apply grid gap-4 p-4 xl:grid-cols-[200px_minmax(0,1fr)_320px];
+  @apply grid gap-4 p-4 xl:grid-cols-[280px_minmax(0,1fr)_320px];
 }
 
 .studio-left-column,
@@ -5375,7 +5358,7 @@ onBeforeUnmount(() => {
 
 .studio-prompt-layout {
   @apply mt-4 grid gap-4;
-  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-columns: minmax(0, 1fr) 320px;
   grid-template-areas:
     "side controls"
     "footer footer";
@@ -6684,7 +6667,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1535px) {
   .studio-layout {
-    @apply xl:grid-cols-[180px_minmax(0,1fr)_300px];
+    @apply xl:grid-cols-[260px_minmax(0,1fr)_300px];
   }
 }
 

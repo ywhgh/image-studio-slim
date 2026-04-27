@@ -4687,7 +4687,7 @@ export default {
       etaUnknown: '提示词解析完成，正在生成图像...'
     },
     resolutionPresets: {
-      standard: '标准',
+      standard: '标准（1K）',
       twoK: '2K',
       fourK: '4K'
     },

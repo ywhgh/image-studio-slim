@@ -4515,7 +4515,7 @@ export default {
       etaUnknown: 'Prompt parsed, rendering image...'
     },
     resolutionPresets: {
-      standard: 'Standard',
+      standard: 'Standard (1K)',
       twoK: '2K',
       fourK: '4K'
     },

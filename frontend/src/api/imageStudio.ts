@@ -479,7 +479,7 @@ function collectImageInputs(request: ExternalImageStudioRequest): string[] {
 }
 
 function mapExternalPayload(request: ExternalImageStudioRequest) {
-  const count = Math.max(1, Math.min(3, request.count || 1))
+  const count = Math.max(1, Math.min(10, request.count || 1))
   const size = resolveSizeFromAspect(request.aspect_ratio, request.size)
   const imageInputs = collectImageInputs(request)
 
