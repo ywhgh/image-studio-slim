@@ -433,121 +433,140 @@
             </div>
 
             <div class="studio-prompt-layout">
-              <div class="studio-prompt-form">
-                <label class="studio-field-label">{{ t('imageStudio.sections.prompt') }}</label>
-                <textarea
-                  v-model.trim="prompt"
-                  rows="4"
-                  class="input studio-prompt-textarea"
-                  :placeholder="t('imageStudio.placeholders.prompt')"
-                ></textarea>
+              <!-- LEFT side: text-editing flow -->
+              <div class="studio-prompt-side">
+                <div class="studio-prompt-form">
+                  <label class="studio-field-label">{{ t('imageStudio.sections.prompt') }}</label>
+                  <textarea
+                    v-model.trim="prompt"
+                    rows="4"
+                    class="input studio-prompt-textarea"
+                    :placeholder="t('imageStudio.placeholders.prompt')"
+                  ></textarea>
 
-                <div class="studio-prompt-tools">
-                  <button
-                    type="button"
-                    class="studio-chip accent"
-                    :disabled="promptHelperBusy === 'optimize'"
-                    @click="applyPromptOptimization"
-                  >
-                    <Icon :name="promptHelperBusy === 'optimize' ? 'sync' : 'sparkles'" size="sm" />
-                    <span>{{ promptHelperBusy === 'optimize'
-                      ? t('imageStudio.promptPanel.optimizing')
-                      : t('imageStudio.promptPanel.optimize') }}</span>
-                  </button>
-
-                  <button
-                    v-for="chip in promptChips"
-                    :key="chip"
-                    type="button"
-                    class="studio-chip"
-                    @click="applyPromptChip(chip)"
-                  >
-                    {{ chip }}
-                  </button>
-                </div>
-
-                <template v-if="preferences.providerMode !== 'sub2api'">
-                  <div class="studio-negative-header">
-                    <label class="studio-field-label">{{ t('imageStudio.promptPanel.negativeTitle') }}</label>
-                    <span class="studio-character-count">
-                      {{ negativePromptCharacterCount }}/500
-                    </span>
-                  </div>
-
-                  <div class="studio-negative-input">
-                    <input
-                      v-model.trim="negativePrompt"
-                      type="text"
-                      class="input"
-                      maxlength="500"
-                      :placeholder="t('imageStudio.promptPanel.negativePlaceholder')"
-                    />
+                  <div class="studio-prompt-tools">
                     <button
-                      v-if="negativePrompt"
                       type="button"
-                      class="studio-icon-button inset"
-                      @click="negativePrompt = ''"
+                      class="studio-chip accent"
+                      :disabled="promptHelperBusy === 'optimize'"
+                      @click="applyPromptOptimization"
                     >
-                      <Icon name="x" size="sm" />
+                      <Icon :name="promptHelperBusy === 'optimize' ? 'sync' : 'sparkles'" size="sm" />
+                      <span>{{ promptHelperBusy === 'optimize'
+                        ? t('imageStudio.promptPanel.optimizing')
+                        : t('imageStudio.promptPanel.optimize') }}</span>
+                    </button>
+
+                    <button
+                      v-for="chip in promptChips"
+                      :key="chip"
+                      type="button"
+                      class="studio-chip"
+                      @click="applyPromptChip(chip)"
+                    >
+                      {{ chip }}
                     </button>
                   </div>
-                </template>
-              </div>
 
-              <div class="studio-reference-images">
-                <div class="studio-reference-head">
-                  <div>
-                    <p class="studio-field-label">{{ t('imageStudio.referenceImages.title') }}</p>
-                    <p class="studio-helper">
-                      {{ t('imageStudio.referenceImages.hint', { max: REFERENCE_IMAGE_MAX_COUNT, bytes: 8 }) }}
-                    </p>
-                  </div>
-                  <button
-                    v-if="referenceImages.length"
-                    type="button"
-                    class="studio-panel-link-button"
-                    @click="clearReferenceImages"
-                  >
-                    {{ t('imageStudio.promptPanel.clear') }}
-                  </button>
+                  <template v-if="preferences.providerMode !== 'sub2api'">
+                    <div class="studio-negative-header">
+                      <label class="studio-field-label">{{ t('imageStudio.promptPanel.negativeTitle') }}</label>
+                      <span class="studio-character-count">
+                        {{ negativePromptCharacterCount }}/500
+                      </span>
+                    </div>
+
+                    <div class="studio-negative-input">
+                      <input
+                        v-model.trim="negativePrompt"
+                        type="text"
+                        class="input"
+                        maxlength="500"
+                        :placeholder="t('imageStudio.promptPanel.negativePlaceholder')"
+                      />
+                      <button
+                        v-if="negativePrompt"
+                        type="button"
+                        class="studio-icon-button inset"
+                        @click="negativePrompt = ''"
+                      >
+                        <Icon name="x" size="sm" />
+                      </button>
+                    </div>
+                  </template>
                 </div>
-                <div class="studio-reference-grid">
-                  <div
-                    v-for="(src, index) in referenceImages"
-                    :key="`ref-${index}-${src.slice(-12)}`"
-                    class="studio-reference-tile"
-                  >
-                    <img :src="src" :alt="`reference ${index + 1}`" />
+
+                <div
+                  v-if="generationError"
+                  class="studio-generation-banner"
+                  :class="{ 'is-recoverable': generationError.kind === 'backend-unreachable' }"
+                  role="alert"
+                >
+                  <div class="studio-generation-banner-body">
+                    <Icon name="exclamationTriangle" size="sm" />
+                    <span class="studio-generation-banner-message">{{ generationError.message }}</span>
+                  </div>
+                  <div class="studio-generation-banner-actions">
+                    <button
+                      v-if="generationError.kind === 'backend-unreachable' && preferences.providerMode !== 'external-browser'"
+                      type="button"
+                      class="studio-banner-action"
+                      @click="recoverWithBrowserDirect"
+                    >
+                      {{ t('imageStudio.banner.switchToBrowserDirect') }}
+                    </button>
                     <button
                       type="button"
-                      class="studio-reference-remove"
-                      :title="t('imageStudio.referenceImages.remove')"
-                      @click="removeReferenceImage(index)"
+                      class="studio-banner-dismiss"
+                      :title="t('imageStudio.banner.dismiss')"
+                      @click="dismissGenerationError"
                     >
                       <Icon name="x" size="xs" />
                     </button>
                   </div>
-                  <label
-                    v-if="referenceImages.length < REFERENCE_IMAGE_MAX_COUNT"
-                    class="studio-reference-add"
-                  >
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      class="hidden"
-                      @change="handleReferenceFileSelect"
-                    />
-                    <Icon name="plus" size="md" />
-                    <span>{{ t('imageStudio.referenceImages.add') }}</span>
-                  </label>
                 </div>
-                <p v-if="referenceImageError" class="studio-reference-error">
-                  {{ referenceImageError }}
-                </p>
+
+                <div class="studio-prompt-actions">
+                  <button
+                    v-if="!generating"
+                    type="button"
+                    class="studio-generate-button"
+                    @click="generateImages()"
+                  >
+                    <Icon name="play" size="sm" />
+                    <span>{{ t('imageStudio.buttons.start') }}</span>
+                  </button>
+                  <button
+                    v-else
+                    type="button"
+                    class="studio-generate-button is-cancel"
+                    @click="cancelGeneration"
+                  >
+                    <Icon name="x" size="sm" />
+                    <span>{{ t('imageStudio.buttons.cancel', { value: generationElapsedSeconds }) }}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    class="studio-secondary-action"
+                    :disabled="promptHelperBusy === 'inspire'"
+                    @click="applyRandomInspiration"
+                  >
+                    <Icon :name="promptHelperBusy === 'inspire' ? 'sync' : 'lightbulb'" size="sm" />
+                    <span>{{ promptHelperBusy === 'inspire'
+                      ? t('imageStudio.promptPanel.inspiring')
+                      : t('imageStudio.promptPanel.randomIdea') }}</span>
+                  </button>
+
+                  <div class="studio-character-badge">
+                    {{ promptCharacterCount }}/1000
+                  </div>
+                </div>
               </div>
 
-              <div class="studio-settings-strip">
+              <!-- RIGHT side: settings + reference images + translate -->
+              <div class="studio-prompt-controls">
+                <div class="studio-settings-strip">
                 <div class="studio-strip-row studio-strip-aspect">
                   <button
                     v-for="option in aspectOptions"
@@ -693,87 +712,98 @@
                 </div>
               </div>
 
-              <div class="studio-generate-target studio-generate-target-compact">
-                <span class="studio-generate-target-mode">
-                  <span class="studio-generate-target-dot"></span>
-                  {{ generateTargetSummary.modeLabel }}
-                </span>
-                <span
-                  v-if="generateTargetSummary.endpointLabel"
-                  class="studio-generate-target-host"
-                  :title="generateTargetSummary.endpointLabel"
-                >
-                  → {{ generateTargetSummary.endpointLabel }}
-                </span>
-                <span v-if="generating" class="studio-generate-target-elapsed">
-                  {{ t('imageStudio.workbench.elapsedSeconds', { value: generationElapsedSeconds }) }}
-                </span>
-              </div>
-
-              <div
-                v-if="generationError"
-                class="studio-generation-banner"
-                :class="{ 'is-recoverable': generationError.kind === 'backend-unreachable' }"
-                role="alert"
-              >
-                <div class="studio-generation-banner-body">
-                  <Icon name="exclamationTriangle" size="sm" />
-                  <span class="studio-generation-banner-message">{{ generationError.message }}</span>
-                </div>
-                <div class="studio-generation-banner-actions">
+              <div class="studio-reference-images">
+                <div class="studio-reference-head">
+                  <div>
+                    <p class="studio-field-label">{{ t('imageStudio.referenceImages.title') }}</p>
+                    <p class="studio-helper">
+                      {{ t('imageStudio.referenceImages.hint', { max: REFERENCE_IMAGE_MAX_COUNT, bytes: 8 }) }}
+                    </p>
+                  </div>
                   <button
-                    v-if="generationError.kind === 'backend-unreachable' && preferences.providerMode !== 'external-browser'"
+                    v-if="referenceImages.length"
                     type="button"
-                    class="studio-banner-action"
-                    @click="recoverWithBrowserDirect"
+                    class="studio-panel-link-button"
+                    @click="clearReferenceImages"
                   >
-                    {{ t('imageStudio.banner.switchToBrowserDirect') }}
-                  </button>
-                  <button
-                    type="button"
-                    class="studio-banner-dismiss"
-                    :title="t('imageStudio.banner.dismiss')"
-                    @click="dismissGenerationError"
-                  >
-                    <Icon name="x" size="xs" />
+                    {{ t('imageStudio.promptPanel.clear') }}
                   </button>
                 </div>
+                <div class="studio-reference-grid">
+                  <div
+                    v-for="(src, index) in referenceImages"
+                    :key="`ref-${index}-${src.slice(-12)}`"
+                    class="studio-reference-tile"
+                  >
+                    <img :src="src" :alt="`reference ${index + 1}`" />
+                    <button
+                      type="button"
+                      class="studio-reference-remove"
+                      :title="t('imageStudio.referenceImages.remove')"
+                      @click="removeReferenceImage(index)"
+                    >
+                      <Icon name="x" size="xs" />
+                    </button>
+                  </div>
+                  <label
+                    v-if="referenceImages.length < REFERENCE_IMAGE_MAX_COUNT"
+                    class="studio-reference-add"
+                  >
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      class="hidden"
+                      @change="handleReferenceFileSelect"
+                    />
+                    <Icon name="plus" size="md" />
+                    <span>{{ t('imageStudio.referenceImages.add') }}</span>
+                  </label>
+                </div>
+                <p v-if="referenceImageError" class="studio-reference-error">
+                  {{ referenceImageError }}
+                </p>
               </div>
 
-              <div class="studio-prompt-actions">
+              <div class="studio-translate-row">
+                <select v-model="translateLang" class="studio-translate-lang">
+                  <option v-for="lang in translateLanguages" :key="lang.value" :value="lang.value">
+                    {{ lang.label }}
+                  </option>
+                </select>
                 <button
-                  v-if="!generating"
                   type="button"
-                  class="studio-generate-button"
-                  @click="generateImages()"
+                  class="studio-translate-btn"
+                  :disabled="translating || !prompt.trim()"
+                  @click="translatePromptAction"
                 >
-                  <Icon name="play" size="sm" />
-                  <span>{{ t('imageStudio.buttons.start') }}</span>
+                  <Icon :name="translating ? 'sync' : 'sparkles'" size="sm" />
+                  <span>
+                    {{ translating
+                      ? t('imageStudio.translate.busy')
+                      : t('imageStudio.translate.action') }}
+                  </span>
                 </button>
-                <button
-                  v-else
-                  type="button"
-                  class="studio-generate-button is-cancel"
-                  @click="cancelGeneration"
-                >
-                  <Icon name="x" size="sm" />
-                  <span>{{ t('imageStudio.buttons.cancel', { value: generationElapsedSeconds }) }}</span>
-                </button>
+              </div>
+              </div>
 
-                <button
-                  type="button"
-                  class="studio-secondary-action"
-                  :disabled="promptHelperBusy === 'inspire'"
-                  @click="applyRandomInspiration"
-                >
-                  <Icon :name="promptHelperBusy === 'inspire' ? 'sync' : 'lightbulb'" size="sm" />
-                  <span>{{ promptHelperBusy === 'inspire'
-                    ? t('imageStudio.promptPanel.inspiring')
-                    : t('imageStudio.promptPanel.randomIdea') }}</span>
-                </button>
-
-                <div class="studio-character-badge">
-                  {{ promptCharacterCount }}/1000
+              <!-- FOOTER spans both columns -->
+              <div class="studio-prompt-footer">
+                <div class="studio-generate-target studio-generate-target-compact">
+                  <span class="studio-generate-target-mode">
+                    <span class="studio-generate-target-dot"></span>
+                    {{ generateTargetSummary.modeLabel }}
+                  </span>
+                  <span
+                    v-if="generateTargetSummary.endpointLabel"
+                    class="studio-generate-target-host"
+                    :title="generateTargetSummary.endpointLabel"
+                  >
+                    → {{ generateTargetSummary.endpointLabel }}
+                  </span>
+                  <span v-if="generating" class="studio-generate-target-elapsed">
+                    {{ t('imageStudio.workbench.elapsedSeconds', { value: generationElapsedSeconds }) }}
+                  </span>
                 </div>
               </div>
             </div>
@@ -1739,6 +1769,86 @@ const qualityPanelOpen = ref(false)
 const qualityPanelRef = ref<HTMLElement | null>(null)
 const seedPanelOpen = ref(false)
 const seedPanelRef = ref<HTMLElement | null>(null)
+
+type TranslateLang = 'en' | 'ja' | 'de' | 'zh' | 'ru'
+const translateLang = ref<TranslateLang>('en')
+const translating = ref(false)
+const translateLanguages = computed<{ value: TranslateLang; label: string }[]>(() => [
+  { value: 'en', label: t('imageStudio.translate.languages.en') },
+  { value: 'ja', label: t('imageStudio.translate.languages.ja') },
+  { value: 'de', label: t('imageStudio.translate.languages.de') },
+  { value: 'zh', label: t('imageStudio.translate.languages.zh') },
+  { value: 'ru', label: t('imageStudio.translate.languages.ru') },
+])
+
+function translateLanguageName(code: TranslateLang): string {
+  switch (code) {
+    case 'en': return 'English'
+    case 'ja': return 'Japanese'
+    case 'de': return 'German'
+    case 'zh': return 'Simplified Chinese'
+    case 'ru': return 'Russian'
+  }
+}
+
+async function translatePromptAction() {
+  const text = prompt.value.trim()
+  if (!text) {
+    appStore.showWarning(t('imageStudio.toasts.promptRequired'))
+    return
+  }
+  if (translating.value) return
+
+  // Translation reuses the same upstream + api_key + model the user already
+  // configured for image generation. The endpoint is /chat/completions.
+  const baseUrl = preferences.externalBaseUrl.trim().replace(/\/+$/, '')
+  const apiKey = externalApiKey.value.trim()
+  if (!baseUrl || !apiKey) {
+    appStore.showWarning(t('imageStudio.toasts.externalConfigRequired'))
+    return
+  }
+
+  translating.value = true
+  try {
+    const targetLang = translateLanguageName(translateLang.value)
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: preferences.model,
+        messages: [
+          {
+            role: 'system',
+            content: `You are a translator. Translate the user's text into ${targetLang}. Output ONLY the translated text — no preamble, no quotes, no explanation. Preserve line breaks.`,
+          },
+          { role: 'user', content: text },
+        ],
+        temperature: 0.2,
+      }),
+    })
+    const payload = await response.json().catch(() => null) as
+      | { choices?: { message?: { content?: string } }[]; error?: { message?: string } }
+      | null
+    if (!response.ok) {
+      const msg = payload?.error?.message || `HTTP ${response.status}`
+      throw new Error(msg)
+    }
+    const translated = payload?.choices?.[0]?.message?.content?.trim()
+    if (!translated) {
+      throw new Error(t('imageStudio.translate.emptyResponse'))
+    }
+    prompt.value = translated
+    appStore.showSuccess(t('imageStudio.translate.success'))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : t('imageStudio.translate.failure')
+    appStore.showError(`${t('imageStudio.translate.failure')}: ${message}`)
+  } finally {
+    translating.value = false
+  }
+}
 
 const PROMPT_HELPER_STORAGE_KEY = 'image-studio.prompt-helper'
 
@@ -4841,7 +4951,7 @@ onBeforeUnmount(() => {
 }
 
 .studio-layout {
-  @apply grid gap-4 p-4 xl:grid-cols-[280px_minmax(0,1fr)_320px];
+  @apply grid gap-4 p-4 xl:grid-cols-[200px_minmax(0,1fr)_320px];
 }
 
 .studio-left-column,
@@ -5264,7 +5374,49 @@ onBeforeUnmount(() => {
 }
 
 .studio-prompt-layout {
-  @apply mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_180px];
+  @apply mt-4 grid gap-4;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-areas:
+    "side controls"
+    "footer footer";
+}
+
+.studio-prompt-side {
+  grid-area: side;
+  @apply flex min-w-0 flex-col gap-3;
+}
+
+.studio-prompt-controls {
+  grid-area: controls;
+  @apply flex min-w-0 flex-col gap-3;
+}
+
+.studio-prompt-footer {
+  grid-area: footer;
+  @apply min-w-0;
+}
+
+.studio-translate-row {
+  @apply flex flex-wrap items-center gap-2 rounded-2xl border p-3;
+  border-color: var(--studio-border);
+  background: color-mix(in srgb, var(--studio-soft-background) 60%, transparent);
+}
+
+.studio-translate-lang {
+  @apply rounded-lg border px-2.5 py-1.5 text-xs font-medium;
+  border-color: var(--studio-border);
+  background: var(--studio-surface);
+  color: var(--studio-text);
+}
+
+.studio-translate-btn {
+  @apply inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50;
+  background: var(--studio-accent-deep);
+  min-height: 32px;
+}
+
+.studio-translate-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--studio-accent-deep) 88%, black);
 }
 
 .studio-prompt-textarea {
@@ -6532,7 +6684,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1535px) {
   .studio-layout {
-    @apply xl:grid-cols-[260px_minmax(0,1fr)_300px];
+    @apply xl:grid-cols-[180px_minmax(0,1fr)_300px];
   }
 }
 
@@ -6590,7 +6742,11 @@ onBeforeUnmount(() => {
   }
 
   .studio-prompt-layout {
-    @apply grid-cols-1;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "side"
+      "controls"
+      "footer";
   }
 
   .studio-preview-tools,

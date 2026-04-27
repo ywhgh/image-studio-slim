@@ -4276,6 +4276,20 @@ export default {
       readFailed: 'Failed to read file',
       empty: 'None uploaded'
     },
+    translate: {
+      action: 'Translate prompt',
+      busy: 'Translating…',
+      success: 'Prompt translated',
+      failure: 'Translation failed',
+      emptyResponse: 'Upstream returned no text',
+      languages: {
+        en: 'English',
+        ja: 'Japanese',
+        de: 'German',
+        zh: 'Chinese',
+        ru: 'Russian'
+      }
+    },
     fields: {
       model: 'Model',
       soraKey: 'Current Site API Key',

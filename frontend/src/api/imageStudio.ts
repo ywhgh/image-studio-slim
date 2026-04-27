@@ -315,12 +315,19 @@ function resolveSizeFromAspect(
 }
 
 function finalizeResults(results: Array<Omit<NormalizedImageResult, 'id' | 'filename'>>): NormalizedImageResult[] {
+  // Stable per-batch stamp so all images in the same generation share a prefix,
+  // but no two batches collide. Format: yyyymmdd-hhmmss-random.
+  const now = new Date()
+  const yyyymmdd = now.toISOString().slice(0, 10).replace(/-/g, '')
+  const hhmmss = now.toTimeString().slice(0, 8).replace(/:/g, '')
+  const rand = Math.random().toString(36).slice(2, 7)
+  const stamp = `${yyyymmdd}-${hhmmss}-${rand}`
   return results.map((result, index) => {
     const mimeType = result.mimeType || parseMimeTypeFromDataUrl(result.url)
     return {
       ...result,
       id: createImageStudioId('image-studio', index + 1),
-      filename: `image-studio-${index + 1}.${extensionForMimeType(mimeType)}`,
+      filename: `image-studio-${stamp}-${index + 1}.${extensionForMimeType(mimeType)}`,
     }
   })
 }

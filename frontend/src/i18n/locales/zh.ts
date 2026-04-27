@@ -4448,6 +4448,20 @@ export default {
       readFailed: '读取文件失败',
       empty: '未上传'
     },
+    translate: {
+      action: '翻译提示词',
+      busy: '翻译中…',
+      success: '已翻译',
+      failure: '翻译失败',
+      emptyResponse: '上游返回为空',
+      languages: {
+        en: '英语',
+        ja: '日语',
+        de: '德语',
+        zh: '中文',
+        ru: '俄语'
+      }
+    },
     fields: {
       model: '模型',
       soraKey: '当前站点 API Key',
