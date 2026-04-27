@@ -44,18 +44,19 @@ const (
 )
 
 type externalGenerateRequest struct {
-	BaseURL     string `json:"base_url"`
-	APIKey      string `json:"api_key"`
-	Profile     string `json:"profile"`
-	Model       string `json:"model"`
-	Prompt      string `json:"prompt"`
-	Count       int    `json:"count,omitempty"`
-	ImageInput  string `json:"image_input,omitempty"`
-	Size        string `json:"size,omitempty"`
-	AspectRatio string `json:"aspect_ratio,omitempty"`
-	Quality     string `json:"quality,omitempty"`
-	Background  string `json:"background,omitempty"`
-	Format      string `json:"format,omitempty"`
+	BaseURL     string   `json:"base_url"`
+	APIKey      string   `json:"api_key"`
+	Profile     string   `json:"profile"`
+	Model       string   `json:"model"`
+	Prompt      string   `json:"prompt"`
+	Count       int      `json:"count,omitempty"`
+	ImageInput  string   `json:"image_input,omitempty"`
+	ImageInputs []string `json:"image_inputs,omitempty"`
+	Size        string   `json:"size,omitempty"`
+	AspectRatio string   `json:"aspect_ratio,omitempty"`
+	Quality     string   `json:"quality,omitempty"`
+	Background  string   `json:"background,omitempty"`
+	Format      string   `json:"format,omitempty"`
 }
 
 type normalizedResult struct {
@@ -266,6 +267,20 @@ func handleGenerateExternal(client *http.Client, cfg config) http.HandlerFunc {
 		req.Model = strings.TrimSpace(req.Model)
 		req.Prompt = strings.TrimSpace(req.Prompt)
 		req.ImageInput = strings.TrimSpace(req.ImageInput)
+		// Normalize ImageInputs: prefer the array; fall back to the single field for legacy callers.
+		cleaned := make([]string, 0, len(req.ImageInputs))
+		for _, s := range req.ImageInputs {
+			if s = strings.TrimSpace(s); s != "" {
+				cleaned = append(cleaned, s)
+			}
+		}
+		if len(cleaned) == 0 && req.ImageInput != "" {
+			cleaned = []string{req.ImageInput}
+		}
+		req.ImageInputs = cleaned
+		if len(cleaned) > 0 {
+			req.ImageInput = cleaned[0]
+		}
 		req.Size = strings.TrimSpace(req.Size)
 		req.AspectRatio = strings.TrimSpace(req.AspectRatio)
 		req.Quality = strings.TrimSpace(req.Quality)
@@ -538,7 +553,7 @@ func buildExternalImagePayload(req externalGenerateRequest, baseURL string) (str
 
 	switch req.Profile {
 	case profileOpenAIImageAPI:
-		if req.ImageInput == "" {
+		if len(req.ImageInputs) == 0 {
 			payload := map[string]any{
 				"model":  req.Model,
 				"prompt": req.Prompt,
@@ -567,11 +582,6 @@ func buildExternalImagePayload(req externalGenerateRequest, baseURL string) (str
 			return endpoint, body, "application/json", nil
 		}
 
-		imageBytes, mimeType, err := decodeDataURL(req.ImageInput)
-		if err != nil {
-			return "", nil, "", err
-		}
-
 		var body bytes.Buffer
 		writer := multipart.NewWriter(&body)
 		_ = writer.WriteField("model", req.Model)
@@ -589,12 +599,18 @@ func buildExternalImagePayload(req externalGenerateRequest, baseURL string) (str
 		if req.Format != "" {
 			_ = writer.WriteField("output_format", req.Format)
 		}
-		fileWriter, err := writer.CreateFormFile("image[]", "reference"+extensionForMimeType(mimeType))
-		if err != nil {
-			return "", nil, "", err
-		}
-		if _, err := fileWriter.Write(imageBytes); err != nil {
-			return "", nil, "", err
+		for idx, dataURL := range req.ImageInputs {
+			imageBytes, mimeType, err := decodeDataURL(dataURL)
+			if err != nil {
+				return "", nil, "", fmt.Errorf("image_inputs[%d]: %w", idx, err)
+			}
+			fileWriter, err := writer.CreateFormFile("image[]", fmt.Sprintf("reference-%d%s", idx+1, extensionForMimeType(mimeType)))
+			if err != nil {
+				return "", nil, "", err
+			}
+			if _, err := fileWriter.Write(imageBytes); err != nil {
+				return "", nil, "", err
+			}
 		}
 		if err := writer.Close(); err != nil {
 			return "", nil, "", err
@@ -609,10 +625,10 @@ func buildExternalImagePayload(req externalGenerateRequest, baseURL string) (str
 		content := []map[string]any{
 			{"type": "input_text", "text": req.Prompt},
 		}
-		if req.ImageInput != "" {
+		for _, dataURL := range req.ImageInputs {
 			content = append(content, map[string]any{
 				"type":      "input_image",
-				"image_url": req.ImageInput,
+				"image_url": dataURL,
 			})
 		}
 

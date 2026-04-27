@@ -8,7 +8,7 @@ function getDefaultPreferences(): ImageStudioPreferences {
     providerMode: 'external-relay',
     profile: 'openai-image-api',
     model: 'gpt-image-1',
-    aspectRatio: '1:1',
+    aspectRatio: 'default',
     resolutionPreset: 'standard',
     count: 1,
     quality: 'high',

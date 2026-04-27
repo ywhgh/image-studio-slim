@@ -410,111 +410,9 @@
                         />
                       </div>
 
-                      <div class="studio-field-group">
-                        <label class="studio-field-label">{{ t('imageStudio.fields.referenceImage') }}</label>
-                        <ImageUpload v-model="referenceImage" />
-                      </div>
                     </div>
                   </div>
                 </transition>
-              </div>
-            </div>
-          </section>
-
-          <section class="studio-panel">
-            <div class="studio-panel-heading">
-              <p class="studio-panel-title">{{ t('imageStudio.sections.aspectRatio') }}</p>
-              <span class="studio-panel-link">{{ t('imageStudio.hints.aspectRatio') }}</span>
-            </div>
-
-            <div class="studio-ratio-grid">
-              <button
-                v-for="option in aspectOptions"
-                :key="option.value"
-                type="button"
-                class="studio-ratio-card"
-                :class="{ active: preferences.aspectRatio === option.value }"
-                @click="preferences.aspectRatio = option.value"
-              >
-                <span class="studio-ratio-icon" :class="option.frameClass"></span>
-                <span>{{ option.value }}</span>
-              </button>
-
-              <button type="button" class="studio-ratio-card ghost" disabled>
-                <span class="studio-ratio-icon is-custom"></span>
-                <span>{{ t('imageStudio.settings.customRatio') }}</span>
-              </button>
-            </div>
-          </section>
-
-          <section class="studio-panel">
-            <div class="studio-panel-heading">
-              <p class="studio-panel-title">{{ t('imageStudio.settings.styleTitle') }}</p>
-              <button type="button" class="studio-panel-link-button">
-                {{ t('imageStudio.settings.viewAll') }}
-              </button>
-            </div>
-
-            <div class="studio-style-grid">
-              <button
-                v-for="preset in stylePresets"
-                :key="preset.id"
-                type="button"
-                class="studio-style-card"
-                :class="[
-                  `preset-${preset.id}`,
-                  { active: selectedStylePresetId === preset.id },
-                ]"
-                @click="selectedStylePresetId = preset.id"
-              >
-                <span class="studio-style-preview">
-                  <img
-                    :src="`/style-presets/${preset.id}.png`"
-                    :alt="preset.title"
-                    loading="lazy"
-                    @error="(event) => ((event.target as HTMLImageElement).style.opacity = '0')"
-                  />
-                </span>
-                <strong>{{ preset.title }}</strong>
-                <small>{{ preset.subtitle }}</small>
-              </button>
-            </div>
-          </section>
-
-          <section class="studio-panel">
-            <div class="studio-panel-heading">
-              <p class="studio-panel-title">{{ t('imageStudio.fields.quality') }}</p>
-            </div>
-
-            <div class="studio-quality-row">
-              <button
-                v-for="option in qualityOptions"
-                :key="option.value"
-                type="button"
-                class="studio-quality-pill"
-                :class="{ active: preferences.quality === option.value }"
-                @click="preferences.quality = option.value"
-              >
-                <Icon :name="option.icon" size="xs" />
-                <span>{{ option.label }}</span>
-              </button>
-            </div>
-
-            <div v-if="preferences.providerMode !== 'sub2api'" class="studio-seed-row">
-              <label class="studio-field-label">
-                {{ t('imageStudio.settings.seedTitle') }}
-                <span class="studio-inline-tip">{{ t('imageStudio.settings.seedHint') }}</span>
-              </label>
-              <div class="studio-seed-input">
-                <input
-                  v-model.trim="randomSeed"
-                  type="text"
-                  class="input"
-                  :placeholder="t('imageStudio.settings.seedPlaceholder')"
-                />
-                <button type="button" class="studio-icon-button inset" @click="randomizeSeed">
-                  <Icon name="refresh" size="sm" />
-                </button>
               </div>
             </div>
           </section>
@@ -596,7 +494,206 @@
                 </template>
               </div>
 
-              <div class="studio-generate-target">
+              <div class="studio-reference-images">
+                <div class="studio-reference-head">
+                  <div>
+                    <p class="studio-field-label">{{ t('imageStudio.referenceImages.title') }}</p>
+                    <p class="studio-helper">
+                      {{ t('imageStudio.referenceImages.hint', { max: REFERENCE_IMAGE_MAX_COUNT, bytes: 8 }) }}
+                    </p>
+                  </div>
+                  <button
+                    v-if="referenceImages.length"
+                    type="button"
+                    class="studio-panel-link-button"
+                    @click="clearReferenceImages"
+                  >
+                    {{ t('imageStudio.promptPanel.clear') }}
+                  </button>
+                </div>
+                <div class="studio-reference-grid">
+                  <div
+                    v-for="(src, index) in referenceImages"
+                    :key="`ref-${index}-${src.slice(-12)}`"
+                    class="studio-reference-tile"
+                  >
+                    <img :src="src" :alt="`reference ${index + 1}`" />
+                    <button
+                      type="button"
+                      class="studio-reference-remove"
+                      :title="t('imageStudio.referenceImages.remove')"
+                      @click="removeReferenceImage(index)"
+                    >
+                      <Icon name="x" size="xs" />
+                    </button>
+                  </div>
+                  <label
+                    v-if="referenceImages.length < REFERENCE_IMAGE_MAX_COUNT"
+                    class="studio-reference-add"
+                  >
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      class="hidden"
+                      @change="handleReferenceFileSelect"
+                    />
+                    <Icon name="plus" size="md" />
+                    <span>{{ t('imageStudio.referenceImages.add') }}</span>
+                  </label>
+                </div>
+                <p v-if="referenceImageError" class="studio-reference-error">
+                  {{ referenceImageError }}
+                </p>
+              </div>
+
+              <div class="studio-settings-strip">
+                <div class="studio-strip-row studio-strip-aspect">
+                  <button
+                    v-for="option in aspectOptions"
+                    :key="option.value"
+                    type="button"
+                    class="studio-strip-chip"
+                    :class="{ active: preferences.aspectRatio === option.value }"
+                    :title="aspectChipLabel(option.value)"
+                    @click="preferences.aspectRatio = option.value"
+                  >
+                    <span class="studio-ratio-icon" :class="option.frameClass"></span>
+                    <span>{{ aspectChipLabel(option.value) }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="studio-strip-chip ghost"
+                    disabled
+                    :title="t('imageStudio.settings.customRatio')"
+                  >
+                    <span class="studio-ratio-icon is-custom"></span>
+                    <span>{{ t('imageStudio.settings.customRatio') }}</span>
+                  </button>
+                </div>
+
+                <div class="studio-strip-row studio-strip-actions">
+                  <div ref="stylePanelRef" class="studio-strip-popover">
+                    <button
+                      type="button"
+                      class="studio-strip-trigger"
+                      :class="{ 'is-open': stylePanelOpen, active: !!selectedStylePreset }"
+                      @click.stop="stylePanelOpen = !stylePanelOpen"
+                    >
+                      <Icon name="sparkles" size="sm" />
+                      <span>{{ selectedStylePreset?.title || t('imageStudio.settings.styleTitle') }}</span>
+                      <Icon name="chevronDown" size="xs" />
+                    </button>
+                    <transition name="studio-popover">
+                      <div v-if="stylePanelOpen" class="studio-popover-panel">
+                        <div class="studio-popover-head">
+                          <p class="studio-popover-title">{{ t('imageStudio.settings.styleTitle') }}</p>
+                          <button
+                            type="button"
+                            class="studio-panel-link-button"
+                            @click="stylePanelOpen = false"
+                          >
+                            {{ t('imageStudio.settings.viewAll') }}
+                          </button>
+                        </div>
+                        <div class="studio-style-grid">
+                          <button
+                            v-for="preset in stylePresets"
+                            :key="preset.id"
+                            type="button"
+                            class="studio-style-card"
+                            :class="[
+                              `preset-${preset.id}`,
+                              { active: selectedStylePresetId === preset.id },
+                            ]"
+                            @click="selectedStylePresetId = preset.id; stylePanelOpen = false"
+                          >
+                            <span class="studio-style-preview">
+                              <img
+                                :src="`/style-presets/${preset.id}.png`"
+                                :alt="preset.title"
+                                loading="lazy"
+                                @error="(event) => ((event.target as HTMLImageElement).style.opacity = '0')"
+                              />
+                            </span>
+                            <strong>{{ preset.title }}</strong>
+                            <small>{{ preset.subtitle }}</small>
+                          </button>
+                        </div>
+                      </div>
+                    </transition>
+                  </div>
+
+                  <div ref="qualityPanelRef" class="studio-strip-popover">
+                    <button
+                      type="button"
+                      class="studio-strip-trigger"
+                      :class="{ 'is-open': qualityPanelOpen, active: !!preferences.quality }"
+                      @click.stop="qualityPanelOpen = !qualityPanelOpen"
+                    >
+                      <Icon name="bolt" size="sm" />
+                      <span>{{ activeQualityLabel }}</span>
+                      <Icon name="chevronDown" size="xs" />
+                    </button>
+                    <transition name="studio-popover">
+                      <div v-if="qualityPanelOpen" class="studio-popover-panel studio-popover-narrow">
+                        <p class="studio-popover-title">{{ t('imageStudio.fields.quality') }}</p>
+                        <div class="studio-quality-row">
+                          <button
+                            v-for="option in qualityOptions"
+                            :key="option.value"
+                            type="button"
+                            class="studio-quality-pill"
+                            :class="{ active: preferences.quality === option.value }"
+                            @click="preferences.quality = option.value; qualityPanelOpen = false"
+                          >
+                            <Icon :name="option.icon" size="xs" />
+                            <span>{{ option.label }}</span>
+                          </button>
+                        </div>
+                      </div>
+                    </transition>
+                  </div>
+
+                  <div
+                    v-if="preferences.providerMode !== 'sub2api'"
+                    ref="seedPanelRef"
+                    class="studio-strip-popover"
+                  >
+                    <button
+                      type="button"
+                      class="studio-strip-trigger"
+                      :class="{ 'is-open': seedPanelOpen, active: !!randomSeed }"
+                      @click.stop="seedPanelOpen = !seedPanelOpen"
+                    >
+                      <Icon name="cube" size="sm" />
+                      <span>{{ randomSeed || t('imageStudio.settings.seedTitle') }}</span>
+                      <Icon name="chevronDown" size="xs" />
+                    </button>
+                    <transition name="studio-popover">
+                      <div v-if="seedPanelOpen" class="studio-popover-panel studio-popover-narrow">
+                        <p class="studio-popover-title">
+                          {{ t('imageStudio.settings.seedTitle') }}
+                          <span class="studio-inline-tip">{{ t('imageStudio.settings.seedHint') }}</span>
+                        </p>
+                        <div class="studio-seed-input">
+                          <input
+                            v-model.trim="randomSeed"
+                            type="text"
+                            class="input"
+                            :placeholder="t('imageStudio.settings.seedPlaceholder')"
+                          />
+                          <button type="button" class="studio-icon-button inset" @click="randomizeSeed">
+                            <Icon name="refresh" size="sm" />
+                          </button>
+                        </div>
+                      </div>
+                    </transition>
+                  </div>
+                </div>
+              </div>
+
+              <div class="studio-generate-target studio-generate-target-compact">
                 <span class="studio-generate-target-mode">
                   <span class="studio-generate-target-dot"></span>
                   {{ generateTargetSummary.modeLabel }}
@@ -790,48 +887,22 @@
 
             <div
               v-if="previewTile && previewMode === 'original'"
-              class="studio-preview-stage studio-preview-stage-split"
+              class="studio-preview-stage studio-preview-stage-single"
               :class="{ 'is-generating': generating }"
             >
               <button
                 type="button"
-                class="studio-preview-split-cell is-current"
+                class="studio-preview-single-cell"
                 :title="previewTile.result.filename"
                 @click="openTileLightbox(previewTile.id, 'fit')"
               >
                 <img
                   :src="previewTile.result.url"
                   :alt="previewTile.result.filename"
-                  class="studio-preview-split-image"
+                  class="studio-preview-single-image"
                   :class="{ 'is-generating-shimmer': generating }"
                 />
-                <span class="studio-preview-split-tag tone-blue">
-                  <Icon name="sparkles" size="xs" />
-                  {{ t('imageStudio.previewCanvas.splitCurrent') }}
-                </span>
               </button>
-
-              <button
-                v-if="previousBatchTile"
-                type="button"
-                class="studio-preview-split-cell is-previous"
-                :title="previousBatchTile.result.filename"
-                @click="openTileLightbox(previousBatchTile.id, 'fit')"
-              >
-                <img
-                  :src="previousBatchTile.result.url"
-                  :alt="previousBatchTile.result.filename"
-                  class="studio-preview-split-image"
-                />
-                <span class="studio-preview-split-tag tone-slate">
-                  <Icon name="clock" size="xs" />
-                  {{ t('imageStudio.previewCanvas.splitPrev') }}
-                </span>
-              </button>
-              <div v-else class="studio-preview-split-cell is-empty">
-                <Icon name="clock" size="md" />
-                <p>{{ t('imageStudio.previewCanvas.splitNoPrev') }}</p>
-              </div>
 
               <div v-if="generating" class="studio-preview-generating-overlay">
                 <div class="studio-preview-generating-shine"></div>
@@ -844,18 +915,79 @@
 
             <div
               v-else-if="previewTile && previewMode === 'compare'"
-              class="studio-preview-stage"
+              class="studio-preview-stage studio-preview-stage-compare"
             >
-              <div class="studio-compare-stage">
+              <!-- Mode toggle: side-by-side vs slider overlay -->
+              <div class="studio-compare-mode-toggle">
+                <button
+                  type="button"
+                  class="studio-compare-mode-btn"
+                  :class="{ active: compareViewMode === 'side-by-side' }"
+                  @click="compareViewMode = 'side-by-side'"
+                >
+                  <Icon name="grid" size="xs" />
+                  <span>{{ t('imageStudio.previewCanvas.compareSideBySide') }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="studio-compare-mode-btn"
+                  :class="{ active: compareViewMode === 'slider' }"
+                  @click="compareViewMode = 'slider'"
+                >
+                  <Icon name="swap" size="xs" />
+                  <span>{{ t('imageStudio.previewCanvas.compareSlider') }}</span>
+                </button>
+              </div>
+
+              <!-- Side-by-side -->
+              <div
+                v-if="compareViewMode === 'side-by-side'"
+                class="studio-compare-grid"
+              >
+                <button
+                  type="button"
+                  class="studio-compare-cell"
+                  :title="compareTile ? compareTile.result.filename : ''"
+                  @click="compareTile && openTileLightbox(compareTile.id, 'fit')"
+                >
+                  <img
+                    v-if="compareTile"
+                    :src="compareTile.result.url"
+                    :alt="compareTile.result.filename"
+                  />
+                  <span class="studio-compare-tag tone-slate">
+                    <Icon name="clock" size="xs" />
+                    {{ t('imageStudio.previewCanvas.compareSource') }}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  class="studio-compare-cell is-current"
+                  :title="previewTile.result.filename"
+                  @click="openTileLightbox(previewTile.id, 'fit')"
+                >
+                  <img
+                    :src="previewTile.result.url"
+                    :alt="previewTile.result.filename"
+                  />
+                  <span class="studio-compare-tag tone-blue">
+                    <Icon name="sparkles" size="xs" />
+                    {{ t('imageStudio.previewCanvas.compareVariant') }}
+                  </span>
+                </button>
+              </div>
+
+              <!-- Slider overlay (the original implementation) -->
+              <div v-else class="studio-compare-stage">
                 <img
-                  :src="previewTile.result.url"
-                  :alt="previewTile.result.filename"
+                  :src="compareTile?.result.url || previewTile.result.url"
+                  :alt="compareTile?.result.filename || previewTile.result.filename"
                   class="studio-preview-image base"
                 />
                 <div class="studio-compare-overlay" :style="{ width: `${comparePosition}%` }">
                   <img
-                    :src="compareTile?.result.url || previewTile.result.url"
-                    :alt="compareTile?.result.filename || previewTile.result.filename"
+                    :src="previewTile.result.url"
+                    :alt="previewTile.result.filename"
                     class="studio-preview-image overlay"
                   />
                 </div>
@@ -864,6 +996,12 @@
                     <Icon name="swap" size="sm" />
                   </span>
                 </div>
+                <span class="studio-compare-corner-tag tone-slate corner-left">
+                  {{ t('imageStudio.previewCanvas.compareSource') }}
+                </span>
+                <span class="studio-compare-corner-tag tone-blue corner-right">
+                  {{ t('imageStudio.previewCanvas.compareVariant') }}
+                </span>
                 <input
                   v-model.number="comparePosition"
                   type="range"
@@ -1406,7 +1544,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import ImageUpload from '@/components/common/ImageUpload.vue'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 import {
@@ -1478,7 +1615,60 @@ const sub2apiApiKey = ref('')
 const externalApiKey = ref('')
 const prompt = ref('')
 const negativePrompt = ref('')
-const referenceImage = ref('')
+const referenceImages = ref<string[]>([])
+const REFERENCE_IMAGE_MAX_COUNT = 3
+const REFERENCE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+const referenceImageError = ref('')
+
+function handleReferenceFileSelect(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  input.value = ''
+  referenceImageError.value = ''
+  if (!files.length) return
+
+  const remaining = REFERENCE_IMAGE_MAX_COUNT - referenceImages.value.length
+  if (remaining <= 0) {
+    referenceImageError.value = t('imageStudio.referenceImages.tooMany', { max: REFERENCE_IMAGE_MAX_COUNT })
+    return
+  }
+
+  files.slice(0, remaining).forEach((file) => {
+    if (!file.type.startsWith('image/')) {
+      referenceImageError.value = t('imageStudio.referenceImages.notImage')
+      return
+    }
+    if (file.size > REFERENCE_IMAGE_MAX_BYTES) {
+      referenceImageError.value = t('imageStudio.referenceImages.tooLarge', {
+        max: Math.round(REFERENCE_IMAGE_MAX_BYTES / 1024 / 1024),
+      })
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result
+      if (typeof dataUrl === 'string' && referenceImages.value.length < REFERENCE_IMAGE_MAX_COUNT) {
+        referenceImages.value.push(dataUrl)
+      }
+    }
+    reader.onerror = () => {
+      referenceImageError.value = t('imageStudio.referenceImages.readFailed')
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+function removeReferenceImage(index: number) {
+  if (index >= 0 && index < referenceImages.value.length) {
+    referenceImages.value.splice(index, 1)
+  }
+  referenceImageError.value = ''
+}
+
+function clearReferenceImages() {
+  referenceImages.value = []
+  referenceImageError.value = ''
+}
 const randomSeed = ref('')
 const generating = ref(false)
 const progress = ref(0)
@@ -1532,8 +1722,9 @@ const lightboxPanStartY = ref(0)
 const lightboxFreeDrag = ref(false)
 const lightboxLongPressTimer = ref<number | null>(null)
 const LIGHTBOX_LONG_PRESS_MS = 420
-const comparePosition = ref(34)
-const selectedStylePresetId = ref('realistic')
+const comparePosition = ref(50)
+const compareViewMode = ref<'side-by-side' | 'slider'>('side-by-side')
+const selectedStylePresetId = ref('default')
 const appearancePanelOpen = ref(false)
 const appearancePanelRef = ref<HTMLElement | null>(null)
 const connectionPanelOpen = ref(false)
@@ -1542,6 +1733,12 @@ const advancedPanelOpen = ref(false)
 const advancedPanelRef = ref<HTMLElement | null>(null)
 const promptHelperPanelOpen = ref(false)
 const promptHelperPanelRef = ref<HTMLElement | null>(null)
+const stylePanelOpen = ref(false)
+const stylePanelRef = ref<HTMLElement | null>(null)
+const qualityPanelOpen = ref(false)
+const qualityPanelRef = ref<HTMLElement | null>(null)
+const seedPanelOpen = ref(false)
+const seedPanelRef = ref<HTMLElement | null>(null)
 
 const PROMPT_HELPER_STORAGE_KEY = 'image-studio.prompt-helper'
 
@@ -1793,7 +1990,12 @@ const compatibilityProfiles = computed(() => [
   { value: 'sub2api-sora-compatible', label: t('imageStudio.profiles.sub2apiCompatible') },
 ])
 
+function aspectChipLabel(value: string): string {
+  return value === 'default' ? t('imageStudio.settings.defaultLabel') : value
+}
+
 const aspectOptions = [
+  { value: 'default', frameClass: 'is-default' },
   { value: '1:1', frameClass: 'is-square' },
   { value: '16:9', frameClass: 'is-wide' },
   { value: '9:16', frameClass: 'is-tall' },
@@ -1830,6 +2032,11 @@ const qualityOptions = computed(() => [
   { value: 'medium', label: t('imageStudio.qualities.medium'), icon: 'bolt' as const },
   { value: 'low', label: t('imageStudio.qualities.low'), icon: 'cloud' as const },
 ])
+
+const activeQualityLabel = computed(() => (
+  qualityOptions.value.find((option) => option.value === preferences.quality)?.label
+    || t('imageStudio.fields.quality')
+))
 
 const backgroundOptions = computed(() => [
   { value: 'auto', label: t('imageStudio.backgrounds.auto') },
@@ -1868,16 +2075,22 @@ const inspirationPrompts = computed(() => (
 const stylePresets = computed<StylePresetOption[]>(() => (
   locale.value === 'zh'
     ? [
+        { id: 'default', title: '默认', subtitle: '不限风格 · 仅按提示词', promptHint: '' },
         { id: 'realistic', title: '写实', subtitle: '自然光影 · 细节丰富', promptHint: '写实摄影，光影自然，真实材质，细节丰富' },
+        { id: 'photo', title: '摄影', subtitle: '镜头质感 · 真实纪录', promptHint: '专业摄影，镜头景深，胶片颗粒，自然色调' },
         { id: 'anime', title: '动漫', subtitle: '高对比 · 清晰轮廓', promptHint: '动漫风格，清晰线条，高对比配色，角色感强' },
+        { id: 'manga', title: '漫画', subtitle: '黑白线条 · 强烈分镜', promptHint: '日式漫画风格，黑白网点，强烈分镜，墨线明显' },
         { id: 'illustration', title: '插画', subtitle: '柔和叙事 · 画面干净', promptHint: '插画风格，构图完整，色彩柔和，叙事感明确' },
         { id: 'render3d', title: '3D 渲染', subtitle: '材质通透 · 体积感强', promptHint: '3D 渲染，体积光，真实材质，空间层次分明' },
         { id: 'watercolor', title: '水彩', subtitle: '晕染边缘 · 轻盈通透', promptHint: '水彩质感，柔和晕染，轻盈色块，手工笔触' },
         { id: 'oil', title: '油画', subtitle: '厚涂纹理 · 色彩沉稳', promptHint: '油画质感，厚涂笔触，肌理明显，色彩沉稳' },
       ]
     : [
+        { id: 'default', title: 'Default', subtitle: 'No style · Prompt only', promptHint: '' },
         { id: 'realistic', title: 'Realistic', subtitle: 'Natural light · Rich detail', promptHint: 'photorealistic, natural lighting, realistic surfaces, rich detail' },
+        { id: 'photo', title: 'Photography', subtitle: 'Lens feel · Documentary', promptHint: 'professional photography, depth of field, film grain, natural color grading' },
         { id: 'anime', title: 'Anime', subtitle: 'Bold contrast · Clean lines', promptHint: 'anime style, clean line art, bold contrast, expressive color palette' },
+        { id: 'manga', title: 'Manga', subtitle: 'Black & white · Sharp panels', promptHint: 'Japanese manga style, black-and-white screentones, dynamic paneling, strong inking' },
         { id: 'illustration', title: 'Illustration', subtitle: 'Soft narrative · Clean frame', promptHint: 'illustration style, balanced composition, soft palette, narrative clarity' },
         { id: 'render3d', title: '3D Render', subtitle: 'Dimensional light · Polished surfaces', promptHint: '3d render, volumetric light, polished materials, strong depth' },
         { id: 'watercolor', title: 'Watercolor', subtitle: 'Soft bleed · Airy mood', promptHint: 'watercolor texture, soft bleeds, airy atmosphere, handcrafted brushwork' },
@@ -2061,10 +2274,21 @@ const evolutionTimeline = computed<ImageStudioWorkspaceTile[]>(() => {
 })
 
 const compareTile = computed<ImageStudioWorkspaceTile | null>(() => {
-  if (previousBatchTile.value) return previousBatchTile.value
   const current = previewTile.value
   if (!current) return null
-  return previewGroupTiles.value.find((tile) => tile.id !== current.id) || null
+  // Compare is only meaningful when the current tile is a variant of an
+  // earlier tile. We follow the explicit parent linkage written by
+  // generateVariantFromPreview / persistCurrentResults.
+  if (!current.parentHistoryId && !current.parentTileId) return null
+  if (current.parentTileId) {
+    const byTile = workspaceTiles.value.find((tile) => tile.id === current.parentTileId)
+    if (byTile) return byTile
+  }
+  if (current.parentHistoryId) {
+    const byHistory = sortedTilesByDate.value.find((tile) => tile.historyId === current.parentHistoryId)
+    if (byHistory) return byHistory
+  }
+  return null
 })
 
 const compareAvailable = computed(() => compareTile.value !== null && compareTile.value.id !== previewTile.value?.id)
@@ -2562,6 +2786,8 @@ function flattenHistoryItems(items: ImageStudioHistoryItem[]): ImageStudioWorksp
       prompt: item.prompt,
       aspectRatio: item.aspectRatio,
       result,
+      parentHistoryId: item.parentHistoryId,
+      parentTileId: item.parentTileId,
     }))
   )
 }
@@ -3022,6 +3248,15 @@ function handleDocumentClick(event: MouseEvent) {
   if (promptHelperPanelRef.value && !promptHelperPanelRef.value.contains(target)) {
     promptHelperPanelOpen.value = false
   }
+  if (stylePanelRef.value && !stylePanelRef.value.contains(target)) {
+    stylePanelOpen.value = false
+  }
+  if (qualityPanelRef.value && !qualityPanelRef.value.contains(target)) {
+    qualityPanelOpen.value = false
+  }
+  if (seedPanelRef.value && !seedPanelRef.value.contains(target)) {
+    seedPanelOpen.value = false
+  }
 }
 
 function handleGlobalMouseMove(event: MouseEvent) {
@@ -3104,6 +3339,18 @@ function handleGlobalKeydown(event: KeyboardEvent) {
     }
     if (appearancePanelOpen.value) {
       appearancePanelOpen.value = false
+      return
+    }
+    if (stylePanelOpen.value) {
+      stylePanelOpen.value = false
+      return
+    }
+    if (qualityPanelOpen.value) {
+      qualityPanelOpen.value = false
+      return
+    }
+    if (seedPanelOpen.value) {
+      seedPanelOpen.value = false
       return
     }
     if (lightboxFreeDrag.value) {
@@ -3341,7 +3588,9 @@ function buildPromptText(basePrompt?: string): string {
   return parts.join('\n')
 }
 
-function createExternalRequest(model: string, resolvedPromptText: string, imageInput?: string): ExternalImageStudioRequest {
+function createExternalRequest(model: string, resolvedPromptText: string, imageInputs?: string[]): ExternalImageStudioRequest {
+  const cleaned = (imageInputs || []).filter((s) => typeof s === 'string' && s.length > 0)
+  const aspectValue = preferences.aspectRatio === 'default' ? '' : preferences.aspectRatio
   return {
     base_url: preferences.externalBaseUrl,
     api_key: externalApiKey.value,
@@ -3349,9 +3598,10 @@ function createExternalRequest(model: string, resolvedPromptText: string, imageI
     model,
     prompt: resolvedPromptText,
     count: effectiveCount.value,
-    image_input: imageInput,
+    image_input: cleaned[0],
+    image_inputs: cleaned.length ? cleaned : undefined,
     size: resolvedSize.value || undefined,
-    aspect_ratio: preferences.aspectRatio,
+    aspect_ratio: aspectValue || undefined,
     quality: preferences.quality,
     background: preferences.background,
     format: preferences.format,
@@ -3362,13 +3612,16 @@ async function persistCurrentResults(
   model: string,
   generatedResults: NormalizedImageResult[],
   resolvedPromptText: string,
-  imageInput?: string
+  imageInputs?: string[],
+  lineage?: { parentHistoryId?: string; parentTileId?: string }
 ) {
   const historyId = createHistoryId()
 
   for (const result of generatedResults) {
     await ensureResultBlob(result)
   }
+
+  const cleanedInputs = (imageInputs || []).filter((s) => typeof s === 'string' && s.length > 0)
 
   await saveImageStudioHistoryItem({
     id: historyId,
@@ -3379,7 +3632,10 @@ async function persistCurrentResults(
     prompt: resolvedPromptText,
     aspectRatio: preferences.aspectRatio,
     count: effectiveCount.value,
-    referenceImageUrl: imageInput,
+    referenceImageUrl: cleanedInputs[0],
+    referenceImageUrls: cleanedInputs.length ? cleanedInputs : undefined,
+    parentHistoryId: lineage?.parentHistoryId,
+    parentTileId: lineage?.parentTileId,
     results: generatedResults.map((result) => ({ ...result })),
   })
 
@@ -3458,7 +3714,15 @@ function classifyGenerationError(error: unknown): { message: string; kind: 'back
 
 function buildSyntheticTile(
   result: NormalizedImageResult,
-  context: { model: string; prompt: string; aspectRatio: string; profile: ImageStudioProtocolProfile; createdAt: string }
+  context: {
+    model: string
+    prompt: string
+    aspectRatio: string
+    profile: ImageStudioProtocolProfile
+    createdAt: string
+    parentHistoryId?: string
+    parentTileId?: string
+  }
 ): ImageStudioWorkspaceTile {
   return {
     id: `tmp:${result.id}`,
@@ -3470,6 +3734,8 @@ function buildSyntheticTile(
     prompt: context.prompt,
     aspectRatio: context.aspectRatio,
     result,
+    parentHistoryId: context.parentHistoryId,
+    parentTileId: context.parentTileId,
   }
 }
 
@@ -3486,13 +3752,24 @@ function startElapsedTracker() {
   }
 }
 
-async function generateImages(options: { promptText?: string; referenceImageData?: string } = {}) {
+async function generateImages(options: {
+  promptText?: string
+  referenceImageData?: string | string[]
+  parentHistoryId?: string
+  parentTileId?: string
+} = {}) {
   if (generating.value) {
     return
   }
 
   const resolvedPromptText = (options.promptText || buildPromptText()).trim()
-  const imageInput = options.referenceImageData || referenceImage.value || undefined
+  const overrideRaw = options.referenceImageData
+  const overrideArray = Array.isArray(overrideRaw)
+    ? overrideRaw
+    : (overrideRaw ? [overrideRaw] : [])
+  const imageInputs = (overrideArray.length ? overrideArray : referenceImages.value)
+    .filter((s): s is string => typeof s === 'string' && s.length > 0)
+  const imageInput = imageInputs[0] || undefined
 
   if (!resolvedPromptText) {
     appStore.showWarning(t('imageStudio.toasts.promptRequired'))
@@ -3552,13 +3829,13 @@ async function generateImages(options: { promptText?: string; referenceImageData
       }
     } else if (preferences.providerMode === 'external-relay') {
       generatedResults = await generateImageWithExternalRelay(
-        createExternalRequest(resolvedModel, resolvedPromptText, imageInput),
+        createExternalRequest(resolvedModel, resolvedPromptText, imageInputs),
         { signal: controller.signal }
       )
     } else {
       try {
         generatedResults = await generateImageWithExternalBrowser(
-          createExternalRequest(resolvedModel, resolvedPromptText, imageInput),
+          createExternalRequest(resolvedModel, resolvedPromptText, imageInputs),
           { signal: controller.signal }
         )
       } catch (error) {
@@ -3569,7 +3846,7 @@ async function generateImages(options: { promptText?: string; referenceImageData
           appStore.showWarning(t('imageStudio.toasts.browserDirectFallback'))
           preferences.providerMode = 'external-relay'
           generatedResults = await generateImageWithExternalRelay(
-            createExternalRequest(resolvedModel, resolvedPromptText, imageInput),
+            createExternalRequest(resolvedModel, resolvedPromptText, imageInputs),
             { signal: controller.signal }
           )
         } else {
@@ -3602,6 +3879,8 @@ async function generateImages(options: { promptText?: string; referenceImageData
         aspectRatio: preferences.aspectRatio,
         profile: profileForTiles,
         createdAt,
+        parentHistoryId: options.parentHistoryId,
+        parentTileId: options.parentTileId,
       })
     )
 
@@ -3615,7 +3894,13 @@ async function generateImages(options: { promptText?: string; referenceImageData
 
     appStore.showSuccess(t('imageStudio.toasts.generatedCount', { count: generatedResults.length }))
 
-    void persistCurrentResults(resolvedModel, generatedResults, resolvedPromptText, imageInput)
+    void persistCurrentResults(
+      resolvedModel,
+      generatedResults,
+      resolvedPromptText,
+      imageInputs,
+      { parentHistoryId: options.parentHistoryId, parentTileId: options.parentTileId }
+    )
       .catch((error) => {
         const description = classifyGenerationError(error)
         generationError.value = { message: description.message, kind: 'generic' }
@@ -3965,7 +4250,13 @@ function restoreHistoryRecord(id: string) {
   preferences.model = item.model === 'gpt-image-landscape' || item.model === 'gpt-image-portrait' ? 'gpt-image' : item.model
   preferences.aspectRatio = item.aspectRatio
   preferences.count = item.count
-  referenceImage.value = item.referenceImageUrl || ''
+  if (item.referenceImageUrls && item.referenceImageUrls.length) {
+    referenceImages.value = [...item.referenceImageUrls]
+  } else if (item.referenceImageUrl) {
+    referenceImages.value = [item.referenceImageUrl]
+  } else {
+    referenceImages.value = []
+  }
   selectHistoryRecord(id)
 }
 
@@ -4089,6 +4380,8 @@ async function generateVariantFromPreview() {
     await generateImages({
       promptText: variantPrompt,
       referenceImageData: dataUrl,
+      parentHistoryId: previewTile.value.historyId,
+      parentTileId: previewTile.value.id,
     })
   } catch (error) {
     appStore.showError(error instanceof Error ? error.message : t('imageStudio.toasts.generateFailed'))
@@ -4728,6 +5021,13 @@ onBeforeUnmount(() => {
   border-style: dashed;
 }
 
+.studio-ratio-icon.is-default {
+  width: 22px;
+  height: 22px;
+  border-style: dotted;
+  border-radius: 999px;
+}
+
 .studio-style-grid {
   @apply mt-4 grid grid-cols-3;
   gap: 8px;
@@ -4788,21 +5088,44 @@ onBeforeUnmount(() => {
 
 .studio-style-card strong {
   position: absolute;
-  left: 6px;
-  right: 6px;
-  bottom: 4px;
-  font-size: 12px;
-  font-weight: 700;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: calc(100% - 12px);
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.78);
   color: #ffffff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  font-size: 12px;
+  font-weight: 600;
   line-height: 1.2;
   letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  backdrop-filter: blur(2px);
   z-index: 2;
   pointer-events: none;
 }
 
 .studio-style-card small {
   display: none;
+}
+
+/* Fallback backgrounds for presets without a /style-presets/<id>.png asset.
+   The <img> hides itself on error so these gradients show through. */
+.studio-style-card.preset-default .studio-style-preview {
+  background: linear-gradient(135deg, #e0e7ff 0%, #f1f5f9 60%, #e2e8f0 100%);
+}
+.studio-style-card.preset-photo .studio-style-preview {
+  background: linear-gradient(135deg, #4b5563 0%, #94a3b8 60%, #cbd5e1 100%);
+}
+.studio-style-card.preset-manga .studio-style-preview {
+  background:
+    repeating-linear-gradient(45deg, rgba(15,23,42,0.95) 0 6px, rgba(255,255,255,1) 6px 12px);
 }
 
 .studio-style-card.active::after {
@@ -5080,6 +5403,50 @@ onBeforeUnmount(() => {
   min-height: 480px;
 }
 
+/* New single-image preview (default for "原图" tab) */
+.studio-preview-stage-single {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  max-height: 78vh;
+  min-height: 480px;
+}
+
+.studio-preview-single-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: var(--studio-card-background);
+  border: 1px solid var(--studio-border);
+  border-radius: 14px;
+  padding: 8px;
+  cursor: zoom-in;
+  overflow: hidden;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+  min-height: 0;
+}
+
+.studio-preview-single-cell:hover {
+  border-color: var(--studio-accent);
+  box-shadow: 0 0 0 2px var(--studio-accent-soft);
+}
+
+.studio-preview-single-image {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 10px;
+  background:
+    repeating-conic-gradient(oklch(96% 0.005 250) 0% 25%, oklch(98% 0.005 250) 0% 50%) 0 0 / 14px 14px;
+}
+
 .studio-preview-split-cell {
   position: relative;
   display: flex;
@@ -5207,6 +5574,132 @@ onBeforeUnmount(() => {
 
 .studio-compare-range {
   @apply absolute inset-x-6 bottom-5 z-20 w-[calc(100%-3rem)] cursor-ew-resize opacity-0;
+}
+
+/* === New compare layout (gated to variant) === */
+.studio-preview-stage-compare {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  max-height: 78vh;
+  min-height: 480px;
+  gap: 10px;
+}
+
+.studio-compare-mode-toggle {
+  @apply inline-flex flex-shrink-0 items-center gap-1 self-start rounded-full border bg-white p-1;
+  border-color: var(--studio-border);
+}
+
+.studio-compare-mode-btn {
+  @apply inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition;
+  color: color-mix(in srgb, var(--studio-text) 70%, transparent);
+}
+
+.studio-compare-mode-btn:hover {
+  color: var(--studio-accent-deep);
+}
+
+.studio-compare-mode-btn.active {
+  background: var(--studio-accent);
+  color: #fff;
+}
+
+.studio-compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.studio-compare-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--studio-card-background);
+  border: 1px solid var(--studio-border);
+  border-radius: 14px;
+  padding: 8px;
+  cursor: zoom-in;
+  overflow: hidden;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+  min-height: 0;
+}
+
+.studio-compare-cell:hover {
+  border-color: var(--studio-accent);
+}
+
+.studio-compare-cell.is-current {
+  border-color: var(--studio-accent);
+  box-shadow: 0 0 0 2px var(--studio-accent-soft);
+}
+
+.studio-compare-cell img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 10px;
+  background:
+    repeating-conic-gradient(oklch(96% 0.005 250) 0% 25%, oklch(98% 0.005 250) 0% 50%) 0 0 / 14px 14px;
+}
+
+.studio-compare-tag {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.studio-compare-tag.tone-blue {
+  background: var(--studio-accent);
+  color: #fff;
+}
+
+.studio-compare-tag.tone-slate {
+  background: rgba(15, 23, 42, 0.78);
+  color: #fff;
+}
+
+.studio-compare-corner-tag {
+  position: absolute;
+  top: 12px;
+  z-index: 4;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.studio-compare-corner-tag.corner-left {
+  left: 12px;
+}
+
+.studio-compare-corner-tag.corner-right {
+  right: 12px;
+}
+
+.studio-compare-corner-tag.tone-blue {
+  background: var(--studio-accent);
+  color: #fff;
+}
+
+.studio-compare-corner-tag.tone-slate {
+  background: rgba(15, 23, 42, 0.78);
+  color: #fff;
 }
 
 .studio-empty-preview {
@@ -5837,7 +6330,6 @@ onBeforeUnmount(() => {
 .studio-inline-tip,
 .studio-history-meta,
 .studio-download-card span,
-.studio-style-card small,
 .studio-resolution-size,
 .studio-empty-text,
 .studio-lightbox-caption {
@@ -5849,7 +6341,6 @@ onBeforeUnmount(() => {
 .studio-panel-title,
 .studio-field-label,
 .studio-provider-pill span,
-.studio-style-card strong,
 .studio-slider-block strong,
 .studio-resolution-name,
 .studio-progress-value,
@@ -5858,6 +6349,12 @@ onBeforeUnmount(() => {
 .studio-disabled-title,
 .studio-lightbox-title {
   color: var(--studio-text);
+}
+
+/* Style card title sits on top of image — must stay white & legible regardless of theme. */
+.studio-style-card strong {
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7), 0 0 6px rgba(0, 0, 0, 0.35);
 }
 
 .studio-header-pill,
@@ -6197,6 +6694,190 @@ onBeforeUnmount(() => {
   @apply rounded-full px-2 py-0.5 font-medium;
   background: color-mix(in srgb, var(--studio-accent) 18%, white 82%);
   color: var(--studio-accent-deep);
+}
+
+/* Compact variant: single-line, matches Generate-button height */
+.studio-generate-target.studio-generate-target-compact {
+  @apply mt-2 flex-nowrap overflow-hidden whitespace-nowrap py-2;
+  min-height: 44px;
+  height: 44px;
+}
+
+.studio-generate-target.studio-generate-target-compact .studio-generate-target-host {
+  @apply truncate;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.studio-generate-target.studio-generate-target-compact .studio-generate-target-mode {
+  flex: 0 0 auto;
+}
+
+/* === Reference images (img-to-img) module === */
+.studio-reference-images {
+  @apply mt-3 rounded-2xl border p-3;
+  border-color: var(--studio-border);
+  background: color-mix(in srgb, var(--studio-soft-background) 60%, transparent);
+}
+
+.studio-reference-head {
+  @apply mb-2 flex items-start justify-between gap-3;
+}
+
+.studio-reference-grid {
+  @apply flex flex-wrap gap-2;
+}
+
+.studio-reference-tile {
+  @apply relative h-20 w-20 overflow-hidden rounded-xl border;
+  border-color: var(--studio-border);
+}
+
+.studio-reference-tile img {
+  @apply h-full w-full object-cover;
+}
+
+.studio-reference-remove {
+  @apply absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full text-white;
+  background: rgba(15, 23, 42, 0.7);
+}
+
+.studio-reference-remove:hover {
+  background: rgba(220, 38, 38, 0.85);
+}
+
+.studio-reference-add {
+  @apply inline-flex h-20 w-20 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed text-xs transition;
+  border-color: var(--studio-border);
+  background: var(--studio-surface);
+  color: color-mix(in srgb, var(--studio-text) 60%, transparent);
+}
+
+.studio-reference-add:hover {
+  border-color: var(--studio-accent);
+  color: var(--studio-accent-deep);
+  background: color-mix(in srgb, var(--studio-accent-soft) 35%, var(--studio-surface) 65%);
+}
+
+.studio-reference-error {
+  @apply mt-2 text-xs;
+  color: rgb(220, 38, 38);
+}
+
+/* === New compact settings strip (above status indicator) === */
+.studio-settings-strip {
+  @apply mt-3 flex flex-col gap-2;
+}
+
+.studio-strip-row {
+  @apply flex flex-wrap items-center gap-1.5;
+}
+
+.studio-strip-aspect {
+  @apply gap-1;
+}
+
+.studio-strip-chip {
+  @apply inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-medium transition;
+  border-color: var(--studio-border);
+  background: var(--studio-surface);
+  color: color-mix(in srgb, var(--studio-text) 78%, transparent);
+}
+
+.studio-strip-chip:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--studio-accent) 35%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-accent-soft) 30%, var(--studio-surface) 70%);
+  color: var(--studio-accent-deep);
+}
+
+.studio-strip-chip.active {
+  border-color: var(--studio-accent);
+  background: color-mix(in srgb, var(--studio-accent-soft) 70%, white 30%);
+  color: var(--studio-accent-deep);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--studio-accent) 40%, transparent);
+}
+
+.studio-strip-chip.ghost {
+  @apply opacity-60;
+  border-style: dashed;
+}
+
+.studio-strip-chip:disabled {
+  cursor: not-allowed;
+}
+
+.studio-strip-chip .studio-ratio-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.studio-strip-actions {
+  @apply gap-2;
+}
+
+.studio-strip-popover {
+  @apply relative;
+}
+
+.studio-strip-trigger {
+  @apply inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-medium transition;
+  border-color: var(--studio-border);
+  background: var(--studio-surface);
+  color: color-mix(in srgb, var(--studio-text) 80%, transparent);
+}
+
+.studio-strip-trigger:hover {
+  border-color: color-mix(in srgb, var(--studio-accent) 35%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-accent-soft) 30%, var(--studio-surface) 70%);
+  color: var(--studio-accent-deep);
+}
+
+.studio-strip-trigger.is-open,
+.studio-strip-trigger.active {
+  border-color: var(--studio-accent);
+  background: color-mix(in srgb, var(--studio-accent-soft) 70%, white 30%);
+  color: var(--studio-accent-deep);
+}
+
+.studio-popover-panel {
+  @apply absolute left-0 top-full z-30 mt-2 w-[320px] rounded-2xl border bg-white p-3 shadow-[0_18px_50px_rgba(15,23,42,0.18)];
+  border-color: var(--studio-border);
+}
+
+.studio-popover-narrow {
+  @apply w-[260px];
+}
+
+.studio-popover-head {
+  @apply mb-2 flex items-center justify-between;
+}
+
+.studio-popover-title {
+  @apply text-sm font-semibold;
+  color: var(--studio-text);
+}
+
+.studio-popover-panel .studio-style-grid {
+  @apply grid grid-cols-3 gap-2;
+}
+
+.studio-popover-panel .studio-style-card {
+  @apply text-xs;
+}
+
+.studio-popover-panel .studio-quality-row {
+  @apply flex flex-wrap gap-1.5;
+}
+
+.studio-popover-panel .studio-seed-input {
+  @apply mt-2;
+}
+
+/* Stack rows on narrow screens so chips wrap and the popover row sits under aspect */
+@media (max-width: 767px) {
+  .studio-popover-panel {
+    @apply w-[min(92vw,300px)];
+  }
 }
 
 .studio-generation-banner {

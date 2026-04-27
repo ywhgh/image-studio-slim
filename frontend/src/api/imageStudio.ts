@@ -464,12 +464,20 @@ function joinEndpoint(baseURL: string, endpointPath: string): string {
   return url.toString()
 }
 
+function collectImageInputs(request: ExternalImageStudioRequest): string[] {
+  if (request.image_inputs && request.image_inputs.length) {
+    return request.image_inputs.filter((s) => typeof s === 'string' && s.length > 0)
+  }
+  return request.image_input ? [request.image_input] : []
+}
+
 function mapExternalPayload(request: ExternalImageStudioRequest) {
   const count = Math.max(1, Math.min(3, request.count || 1))
   const size = resolveSizeFromAspect(request.aspect_ratio, request.size)
+  const imageInputs = collectImageInputs(request)
 
   if (request.profile === 'openai-image-api') {
-    if (!request.image_input) {
+    if (imageInputs.length === 0) {
       return {
         url: joinEndpoint(request.base_url, '/images/generations'),
         body: JSON.stringify({
@@ -504,8 +512,13 @@ function mapExternalPayload(request: ExternalImageStudioRequest) {
       formData.set('output_format', request.format)
     }
 
-    const blob = dataUrlToBlob(request.image_input)
-    formData.append('image[]', new File([blob], `reference.${extensionForMimeType(blob.type)}`, { type: blob.type }))
+    imageInputs.forEach((dataUrl, index) => {
+      const blob = dataUrlToBlob(dataUrl)
+      formData.append(
+        'image[]',
+        new File([blob], `reference-${index + 1}.${extensionForMimeType(blob.type)}`, { type: blob.type })
+      )
+    })
 
     return {
       url: joinEndpoint(request.base_url, '/images/edits'),
@@ -515,7 +528,6 @@ function mapExternalPayload(request: ExternalImageStudioRequest) {
   }
 
   if (request.profile === 'openai-responses') {
-    const size = resolveSizeFromAspect(request.aspect_ratio, request.size)
     const tool: Record<string, unknown> = {
       type: 'image_generation',
       ...(size ? { size } : {}),
@@ -534,9 +546,7 @@ function mapExternalPayload(request: ExternalImageStudioRequest) {
             role: 'user',
             content: [
               { type: 'input_text', text: request.prompt },
-              ...(request.image_input
-                ? [{ type: 'input_image', image_url: request.image_input }]
-                : []),
+              ...imageInputs.map((dataUrl) => ({ type: 'input_image', image_url: dataUrl })),
             ],
           },
         ],
@@ -555,7 +565,7 @@ function mapExternalPayload(request: ExternalImageStudioRequest) {
       model: request.model,
       messages: [{ role: 'user', content: request.prompt }],
       stream: false,
-      ...(request.image_input ? { image_input: request.image_input } : {}),
+      ...(imageInputs.length ? { image_input: imageInputs[0], image_inputs: imageInputs } : {}),
       ...(count > 1 ? { n_variants: count } : {}),
     }),
     headers: {

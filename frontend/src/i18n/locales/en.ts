@@ -4265,6 +4265,17 @@ export default {
       imageCount: 'The Responses profile is limited to one image. Other modes allow up to three.',
       referenceImage: 'Uploads stay in the active session and browser-local history only. Nothing is persisted on the server.'
     },
+    referenceImages: {
+      title: 'Reference Images (img-to-img)',
+      hint: 'Up to {max} images · {bytes} MB each',
+      add: 'Add reference',
+      remove: 'Remove',
+      tooMany: 'Maximum {max} reference images allowed',
+      tooLarge: 'Image too large, max {max} MB per image',
+      notImage: 'Please select an image file',
+      readFailed: 'Failed to read file',
+      empty: 'None uploaded'
+    },
     fields: {
       model: 'Model',
       soraKey: 'Current Site API Key',
@@ -4344,6 +4355,7 @@ export default {
       styleTitle: 'Style Presets',
       viewAll: 'All styles',
       customRatio: 'Custom',
+      defaultLabel: 'Default',
       seedTitle: 'Random Seed',
       seedHint: 'Reuse a seed for similar reruns',
       seedPlaceholder: 'Optional seed value',
@@ -4370,6 +4382,11 @@ export default {
       splitCurrent: 'This',
       splitPrev: 'Last',
       splitNoPrev: 'No previous image yet',
+      compareSource: 'Source',
+      compareVariant: 'Variant',
+      compareSideBySide: 'Side by side',
+      compareSlider: 'Slider',
+      compareUnavailable: 'Generate a variant first to enable compare',
       originalTab: 'Original',
       compareTab: 'Compare',
       expandPreview: 'Open Viewer',

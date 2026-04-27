@@ -4437,6 +4437,17 @@ export default {
       imageCount: 'Responses 协议最多生成 1 张图，其余模式最多可生成 3 张。',
       referenceImage: '上传文件只保留在当前会话和浏览器本地工作区中，不会持久化到服务器。'
     },
+    referenceImages: {
+      title: '参考图（图生图）',
+      hint: '最多 {max} 张，单张 ≤ {bytes} MB',
+      add: '添加参考图',
+      remove: '移除',
+      tooMany: '最多只能上传 {max} 张参考图',
+      tooLarge: '图片过大，单张限制 {max} MB',
+      notImage: '请选择图片文件',
+      readFailed: '读取文件失败',
+      empty: '未上传'
+    },
     fields: {
       model: '模型',
       soraKey: '当前站点 API Key',
@@ -4516,6 +4527,7 @@ export default {
       styleTitle: '风格预设',
       viewAll: '全部风格',
       customRatio: '自定义',
+      defaultLabel: '默认',
       seedTitle: '随机种子',
       seedHint: '固定种子可复现接近结果',
       seedPlaceholder: '可选，用于复现',
@@ -4542,6 +4554,11 @@ export default {
       splitCurrent: '本次',
       splitPrev: '上次',
       splitNoPrev: '还没有上一张图',
+      compareSource: '原图',
+      compareVariant: '变体',
+      compareSideBySide: '左右对比',
+      compareSlider: '滑块对比',
+      compareUnavailable: '生成变体后才能开启对比',
       originalTab: '原图',
       compareTab: '对比',
       expandPreview: '打开大图预览',

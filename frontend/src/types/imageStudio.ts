@@ -28,6 +28,9 @@ export interface ImageStudioHistoryItem {
   aspectRatio: string
   count: number
   referenceImageUrl?: string
+  referenceImageUrls?: string[]
+  parentHistoryId?: string
+  parentTileId?: string
   results: NormalizedImageResult[]
 }
 
@@ -41,6 +44,8 @@ export interface ImageStudioWorkspaceTile {
   prompt: string
   aspectRatio: string
   result: NormalizedImageResult
+  parentHistoryId?: string
+  parentTileId?: string
 }
 
 export interface ImageStudioPreferences {
@@ -72,6 +77,7 @@ export interface ExternalImageStudioRequest {
   prompt: string
   count: number
   image_input?: string
+  image_inputs?: string[]
   size?: string
   aspect_ratio?: string
   quality?: string
