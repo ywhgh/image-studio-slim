@@ -1438,7 +1438,10 @@
                 >
                   <img :src="tile.result.url" :alt="tile.result.filename" />
                   <div class="studio-evolution-step-meta">
-                    <span class="studio-evolution-step-model">{{ tile.model }}</span>
+                    <span
+                      class="studio-evolution-step-model"
+                      :title="tile.result.filename"
+                    >{{ tile.result.filename }}</span>
                     <span class="studio-evolution-step-time">{{ formatTime(tile.createdAt) }}</span>
                   </div>
                   <span class="studio-evolution-step-arrow">
@@ -2362,7 +2365,14 @@ const previousBatchTile = computed<ImageStudioWorkspaceTile | null>(() => {
 })
 
 const EVOLUTION_TIMELINE_LIMIT = 6
+const hasAnyVariant = computed(() =>
+  workspaceTiles.value.some((tile) => !!tile.parentHistoryId || !!tile.parentTileId)
+)
 const evolutionTimeline = computed<ImageStudioWorkspaceTile[]>(() => {
+  // Only surface the variant-evolution panel after the user has actually
+  // generated at least one variant. Without that, the panel is just a
+  // duplicate of the recent-tiles strip and clutters the side column.
+  if (!hasAnyVariant.value) return []
   return sortedTilesByDate.value.slice(0, EVOLUTION_TIMELINE_LIMIT)
 })
 
@@ -5538,15 +5548,17 @@ onBeforeUnmount(() => {
   min-height: 480px;
 }
 
-/* New single-image preview (default for "原图" tab) */
+/* New single-image preview (default for "原图" tab).
+   Uses CSS grid so the cell's `height: 100%` resolves against a definite
+   track. With flex centering + percentage height the parent's height is
+   content-driven, which clipped the image at the bottom. */
 .studio-preview-stage-single {
   position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 1fr;
   padding: 12px;
-  max-height: 78vh;
-  min-height: 480px;
+  height: clamp(480px, 78vh, 1100px);
 }
 
 .studio-preview-single-cell {
@@ -5556,6 +5568,8 @@ onBeforeUnmount(() => {
   justify-content: center;
   width: 100%;
   height: 100%;
+  min-height: 0;
+  min-width: 0;
   background: var(--studio-card-background);
   border: 1px solid var(--studio-border);
   border-radius: 14px;
@@ -5563,7 +5577,6 @@ onBeforeUnmount(() => {
   cursor: zoom-in;
   overflow: hidden;
   transition: border-color 160ms ease, box-shadow 160ms ease;
-  min-height: 0;
 }
 
 .studio-preview-single-cell:hover {
@@ -6755,6 +6768,10 @@ onBeforeUnmount(() => {
 
   .studio-preview-stage {
     min-height: 280px;
+  }
+
+  .studio-preview-stage-single {
+    height: clamp(320px, 70vh, 900px);
   }
 
   .studio-lightbox {
