@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Image Studio Demo Seeder</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: "Segoe UI", "PingFang SC", sans-serif;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at top, rgba(96, 165, 250, 0.26), transparent 34%),
+          linear-gradient(180deg, #0f172a 0%, #020617 100%);
+        color: #e2e8f0;
+      }
+
+      .panel {
+        width: min(92vw, 520px);
+        padding: 28px;
+        border-radius: 24px;
+        background: rgba(15, 23, 42, 0.88);
+        border: 1px solid rgba(148, 163, 184, 0.24);
+        box-shadow: 0 24px 80px rgba(2, 6, 23, 0.45);
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 22px;
+      }
+
+      p {
+        margin: 0;
+        line-height: 1.7;
+        color: rgba(226, 232, 240, 0.78);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 20px;
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 11px 18px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      .primary {
+        background: linear-gradient(135deg, #60a5fa 0%, #2563eb 100%);
+        color: white;
+      }
+
+      .secondary {
+        background: rgba(148, 163, 184, 0.14);
+        color: #e2e8f0;
+      }
+
+      pre {
+        margin-top: 18px;
+        padding: 14px 16px;
+        border-radius: 18px;
+        background: rgba(2, 6, 23, 0.52);
+        color: #cbd5e1;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="panel">
+      <h1>Image Studio Demo Seeder</h1>
+      <p>写入几张本地示例图到同源 IndexedDB，方便测试工作区框选、拖拽排序和大图预览交互。</p>
+      <div class="actions">
+        <button id="seed" class="primary" type="button">写入示例图片</button>
+        <button id="clear" class="secondary" type="button">清空示例数据</button>
+      </div>
+      <pre id="status">等待操作…</pre>
+    </main>
+
+    <script>
+      const DB_NAME = 'sub2api-image-studio'
+      const DB_VERSION = 1
+      const STORE_NAME = 'generations'
+      const ORDER_STORAGE_KEY = 'image-studio.workspace-order'
+      const status = document.getElementById('status')
+
+      function log(message) {
+        status.textContent = message
+      }
+
+      function openDatabase() {
+        return new Promise((resolve, reject) => {
+          const request = indexedDB.open(DB_NAME, DB_VERSION)
+          request.onerror = () => reject(request.error)
+          request.onsuccess = () => resolve(request.result)
+          request.onupgradeneeded = () => {
+            const db = request.result
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+              db.createObjectStore(STORE_NAME, { keyPath: 'id' })
+            }
+          }
+        })
+      }
+
+      async function withStore(mode, run) {
+        const db = await openDatabase()
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_NAME, mode)
+          const store = tx.objectStore(STORE_NAME)
+          run(store)
+          tx.oncomplete = () => {
+            db.close()
+            resolve()
+          }
+          tx.onerror = () => {
+            db.close()
+            reject(tx.error)
+          }
+          tx.onabort = () => {
+            db.close()
+            reject(tx.error)
+          }
+        })
+      }
+
+      function makeSvgBlob({ width, height, title, subtitle, colors }) {
+        const svg = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+            <defs>
+              <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="${colors[0]}" />
+                <stop offset="100%" stop-color="${colors[1]}" />
+              </linearGradient>
+              <filter id="blur">
+                <feGaussianBlur stdDeviation="26" />
+              </filter>
+            </defs>
+            <rect width="${width}" height="${height}" rx="48" fill="url(#bg)" />
+            <circle cx="${Math.round(width * 0.22)}" cy="${Math.round(height * 0.28)}" r="${Math.round(Math.min(width, height) * 0.18)}" fill="rgba(255,255,255,0.22)" filter="url(#blur)" />
+            <circle cx="${Math.round(width * 0.78)}" cy="${Math.round(height * 0.74)}" r="${Math.round(Math.min(width, height) * 0.14)}" fill="rgba(255,255,255,0.18)" filter="url(#blur)" />
+            <text x="52" y="${Math.round(height * 0.34)}" fill="white" font-size="${Math.round(Math.min(width, height) * 0.12)}" font-family="Segoe UI, PingFang SC, sans-serif" font-weight="700">${title}</text>
+            <text x="52" y="${Math.round(height * 0.48)}" fill="rgba(255,255,255,0.85)" font-size="${Math.round(Math.min(width, height) * 0.05)}" font-family="Segoe UI, PingFang SC, sans-serif">${subtitle}</text>
+            <rect x="52" y="${Math.round(height * 0.58)}" width="${Math.round(width * 0.42)}" height="3" rx="2" fill="rgba(255,255,255,0.5)" />
+            <rect x="52" y="${Math.round(height * 0.63)}" width="${Math.round(width * 0.3)}" height="3" rx="2" fill="rgba(255,255,255,0.35)" />
+          </svg>
+        `.trim()
+
+        return new Blob([svg], { type: 'image/svg+xml' })
+      }
+
+      function buildResult(id, filename, title, subtitle, width, height, colors) {
+        return {
+          id,
+          source: 'data-url',
+          mimeType: 'image/svg+xml',
+          revisedPrompt: subtitle,
+          filename,
+          originalUrl: '',
+          blob: makeSvgBlob({ width, height, title, subtitle, colors }),
+        }
+      }
+
+      function buildDemoRecords() {
+        const createdAtA = new Date(Date.now() - 1000 * 60 * 12).toISOString()
+        const createdAtB = new Date(Date.now() - 1000 * 60 * 4).toISOString()
+
+        return [
+          {
+            id: 'demo-history-square',
+            createdAt: createdAtA,
+            providerMode: 'sub2api',
+            profile: 'sub2api-sora-compatible',
+            model: 'gpt-image',
+            prompt: '晨雾湖畔的木栈道，柔和日出，高级胶片质感。',
+            aspectRatio: '1:1',
+            count: 2,
+            results: [
+              buildResult('square-01', 'mist-lake-a.svg', 'A1', 'Mist Lake / Square', 1440, 1440, ['#1d4ed8', '#0f766e']),
+              buildResult('square-02', 'mist-lake-b.svg', 'A2', 'Morning Light / Square', 1440, 1440, ['#f59e0b', '#f97316']),
+            ],
+          },
+          {
+            id: 'demo-history-wide',
+            createdAt: createdAtB,
+            providerMode: 'external-relay',
+            profile: 'openai-image-api',
+            model: 'gpt-image-1',
+            prompt: '未来感滨海城市天际线，层叠云层与水面反射，电影级布光。',
+            aspectRatio: '16:9',
+            count: 3,
+            results: [
+              buildResult('wide-01', 'skyline-a.svg', 'B1', 'Cinematic Skyline / Wide', 1920, 1080, ['#7c3aed', '#0f172a']),
+              buildResult('wide-02', 'skyline-b.svg', 'B2', 'Harbor Glow / Wide', 1920, 1080, ['#0ea5e9', '#164e63']),
+              buildResult('wide-03', 'skyline-c.svg', 'B3', 'Cloud Break / Wide', 1920, 1080, ['#ec4899', '#7c2d12']),
+            ],
+          },
+        ]
+      }
+
+      async function seedDemoData() {
+        const records = buildDemoRecords()
+        await withStore('readwrite', (store) => {
+          store.clear()
+          records.forEach((record) => store.put(record))
+        })
+        localStorage.removeItem(ORDER_STORAGE_KEY)
+        log(`已写入 ${records.length} 组历史记录，共 ${records.reduce((sum, record) => sum + record.results.length, 0)} 张示例图片。返回 /image-studio 后刷新即可看到。`)
+      }
+
+      async function clearDemoData() {
+        await withStore('readwrite', (store) => {
+          store.clear()
+        })
+        localStorage.removeItem(ORDER_STORAGE_KEY)
+        log('已清空 Image Studio 本地示例数据。')
+      }
+
+      document.getElementById('seed').addEventListener('click', async () => {
+        try {
+          log('正在写入示例数据…')
+          await seedDemoData()
+        } catch (error) {
+          log(`写入失败：${error instanceof Error ? error.message : String(error)}`)
+        }
+      })
+
+      document.getElementById('clear').addEventListener('click', async () => {
+        try {
+          log('正在清空示例数据…')
+          await clearDemoData()
+        } catch (error) {
+          log(`清空失败：${error instanceof Error ? error.message : String(error)}`)
+        }
+      })
+    </script>
+  </body>
+</html>
