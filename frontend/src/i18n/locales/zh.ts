@@ -4432,7 +4432,7 @@ export default {
       sub2apiReuse: '这里会直接调用当前站点 `/api/v1/chat/completions` 接口，只需要填写可用的 API Key，无需登录。',
       external: '默认推荐中转模式；只有在上游明确支持 CORS 时，再切换为浏览器直连。',
       aspectRatio: '先确定画幅，再搭配合适的分辨率预设，桌面端和移动端都会按当前比例自适应展示。',
-      resolution: '标准档兼容性最好。4K 会以明确像素尺寸传给上游，是否成功取决于兼容提供方是否支持。',
+      resolution: '标准档兼容性最好。2K/4K 会优先请求原生大尺寸；如果上游拒绝尺寸，会自动用兼容尺寸生成后本地放大。',
       resolutionSub2api: 'Sub2API 模式当前仍使用内置 Sora 图像尺寸，4K 预设会在外部兼容模式下生效。',
       imageCount: 'Responses 协议最多生成 1 张图，其余模式最多可生成 3 张。',
       referenceImage: '上传文件只保留在当前会话和浏览器本地工作区中，不会持久化到服务器。'
@@ -4441,12 +4441,35 @@ export default {
       title: '参考图（图生图）',
       hint: '最多 {max} 张，单张 ≤ {bytes} MB',
       add: '添加参考图',
+      preview: '预览参考图',
+      previewTitle: '参考图 {current}/{total}',
+      previewHint: '点击空白处或按 Esc 关闭预览。',
+      previewAlt: '参考图预览',
       remove: '移除',
       tooMany: '最多只能上传 {max} 张参考图',
       tooLarge: '图片过大，单张限制 {max} MB',
       notImage: '请选择图片文件',
       readFailed: '读取文件失败',
       empty: '未上传'
+    },
+    promptCompatibility: {
+      title: '提示词可能触发上游风控',
+      description: '检测到这条提示词可能被图像接口安全系统拒绝、排队过久或断流。请选择这次生成的处理方式。',
+      recommendedBadge: '推荐',
+      compatibleActionTitle: '使用兼容版生成',
+      compatibleActionDesc: '保留画面意图，降低被上游拒绝、等待过久或断流的概率。',
+      originalActionTitle: '继续用原提示词',
+      originalActionDesc: '不改写内容，失败或等待时间可能更高。',
+      editActionTitle: '返回修改',
+      editActionDesc: '先回到编辑器，自己调整提示词后再生成。',
+      previewTitle: '提示词预览',
+      originalTitle: '原提示词',
+      originalHint: '保留完整创作意图，但失败概率更高。',
+      compatibleTitle: '兼容版提示词',
+      compatibleHint: '尽量保留姿势、构图、服饰、背景和风格，只弱化容易触发断流的年龄、校园或镜头表达。',
+      cancel: '取消',
+      useOriginal: '继续用原提示词',
+      useCompatible: '使用兼容版生成'
     },
     translate: {
       action: '翻译提示词',
@@ -4499,6 +4522,21 @@ export default {
     banner: {
       switchToBrowserDirect: '切换为浏览器直连',
       dismiss: '关闭'
+    },
+    generationErrors: {
+      genericTitle: '图片生成失败',
+      genericMessage: '这次请求没有拿到可用图片。',
+      genericDetail: '上游返回的原始错误已保留在下方。建议检查模型名、额度、通道配置和提示词后再重试。',
+      backendTitle: '无法连接后端或中转服务',
+      backendMessage: '浏览器没有连上当前配置的服务地址，生成请求还没有稳定到达上游。',
+      backendDetail: '请检查 Base URL、API Key、服务是否启动，以及本机网络或跨域配置。也可以切换为浏览器直连后重试。',
+      upstreamConnectionTitle: '上游中转连接失败',
+      upstreamConnectionMessage: '中转服务或上游接口在请求过程中断开，当前任务没有完成。',
+      upstreamConnectionDetail: '常见原因是上游站点超时、账号排队、网关不稳定或网络断流。建议稍后重试，连续失败时更换中转地址或检查该中转站状态。',
+      streamDisconnectedTitle: '上游连接中断，生成没有完成',
+      streamDisconnectedMessage: '图像接口在返回完整结果前断开了流，所以没有拿到最终图片。',
+      streamDisconnectedDetail: '常见原因：提示词触发上游风控、上游排队超时、中转网关断流。建议开启“风控兼容”开关后重试，或减少年龄、校园、镜头等容易触发风控的表达。',
+      rawPrefix: '上游原始错误：{value}'
     },
     testConnection: {
       idle: '测试连接',
@@ -4559,8 +4597,14 @@ export default {
       clear: '清空',
       optimize: '优化提示词',
       optimizing: '润色中...',
+      upstreamCompatibility: '风控兼容',
+      upstreamCompatibilityOn: '风控兼容：开，检测到高风险组合时会用摄影、服装和分镜语言保留原设定',
+      upstreamCompatibilityOff: '风控兼容：关，检测到高风险组合时仍按原提示词提交',
       randomIdea: '随机灵感',
       inspiring: '生成中...',
+      autoCleanPlaceholders: '自动清理占位符',
+      autoCleanPlaceholdersOn: '自动清理占位符：开',
+      autoCleanPlaceholdersOff: '自动清理占位符：关',
       negativeTitle: '负面提示',
       negativePlaceholder: '补充不希望出现的内容，例如模糊、水印、畸形手部...'
     },
@@ -4693,8 +4737,8 @@ export default {
     },
     resolutionDescriptions: {
       standard: '兼容性最好',
-      twoK: '更高细节',
-      fourK: '最高细节'
+      twoK: '原生优先',
+      fourK: '3840 长边'
     },
     providerModes: {
       sub2api: {
@@ -4736,6 +4780,8 @@ export default {
       soraKeyRequired: '请先输入当前站点 API Key。',
       externalConfigRequired: '第三方模式需要同时填写 Base URL 和 API Key。',
       browserDirectFallback: '浏览器直连失败，已自动切换为中转模式。',
+      nativeResolutionFallback: '原生 {target} 请求失败，已改用 {size} 生成并本地放大输出。',
+      promptCompatibilityApplied: '已用摄影/服装语义重写提示词生成，尽量保留原图设定。',
       generatedCount: '已生成 {count} 张图片。',
       generateFailed: '图片生成失败。',
       selectionRequired: '请先选择至少一张图片。',
@@ -4775,7 +4821,7 @@ export default {
     },
     sidebar: {
       helperTitle: '提示词模型',
-      helperSubtitle: '"优化提示词"和"随机灵感"使用的模型。',
+      helperSubtitle: '"优化提示词"、"随机灵感"、"翻译提示词"使用的模型。',
       helperHint: '配置一个 LLM 模型来润色提示词或生成灵感。支持 OpenAI、Claude 与第三方兼容协议。',
       helperConfigure: '配置模型',
       helperMissing: '尚未配置',
@@ -4786,7 +4832,11 @@ export default {
       helperApiKeyPlaceholder: 'sk-...',
       helperModel: '模型',
       helperModelPlaceholder: '例如 gpt-4o-mini',
-      helperModelHint: '可输入或从下拉中选择推荐模型。',
+      helperModelHint: '该模型会用于"优化提示词"、"随机灵感"和"翻译提示词"。',
+      helperQualityMissing: '建议选择强文本模型；模型越擅长写提示词，优化和灵感质量越稳定。',
+      helperQualityImageModel: '当前像生图模型，更建议换成文字/对话模型，否则优化和灵感质量可能不稳定。',
+      helperQualityStrong: '当前模型适合作提示词助手；更容易给出具体、可画面化的优化结果。',
+      helperQualityGeneric: '如果结果偏短或空泛，建议换成 gpt-4o-mini、Claude Sonnet、Gemini、Qwen 或 DeepSeek 等文字模型。',
       helperCustom: '第三方',
       helperCustomHint: '自定义 OpenAI 兼容协议',
       helperCompatibilityNote: '支持任何 OpenAI 兼容上游：sub2api、NewAPI、CCAPI 等。endpoint 走 /chat/completions。',

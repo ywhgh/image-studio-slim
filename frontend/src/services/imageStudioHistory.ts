@@ -24,6 +24,9 @@ interface StoredImageStudioHistoryItem {
   aspectRatio: string
   count: number
   referenceImageUrl?: string
+  referenceImageUrls?: string[]
+  parentHistoryId?: string
+  parentTileId?: string
   results: StoredImageStudioResult[]
 }
 
@@ -77,10 +80,23 @@ function toStoredResult(result: NormalizedImageResult): StoredImageStudioResult 
   }
 }
 
+function normalizeReferenceImageUrls(item: ImageStudioHistoryItem): string[] {
+  if (item.referenceImageUrls?.length) {
+    return item.referenceImageUrls.filter((url) => typeof url === 'string' && url.length > 0)
+  }
+  return item.referenceImageUrl ? [item.referenceImageUrl] : []
+}
+
 export async function saveImageStudioHistoryItem(item: ImageStudioHistoryItem): Promise<void> {
   const storedResults = item.results
     .map(toStoredResult)
     .filter((result): result is StoredImageStudioResult => !!result)
+
+  if (!storedResults.length) {
+    return
+  }
+
+  const referenceImageUrls = normalizeReferenceImageUrls(item)
 
   const payload: StoredImageStudioHistoryItem = {
     id: item.id,
@@ -90,8 +106,11 @@ export async function saveImageStudioHistoryItem(item: ImageStudioHistoryItem): 
     model: item.model,
     prompt: item.prompt,
     aspectRatio: item.aspectRatio,
-    count: item.count,
-    referenceImageUrl: item.referenceImageUrl,
+    count: storedResults.length,
+    referenceImageUrl: referenceImageUrls[0],
+    referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
+    parentHistoryId: item.parentHistoryId,
+    parentTileId: item.parentTileId,
     results: storedResults,
   }
 
@@ -116,6 +135,8 @@ export async function replaceImageStudioHistoryItems(items: ImageStudioHistoryIt
         return
       }
 
+      const referenceImageUrls = normalizeReferenceImageUrls(item)
+
       store.put({
         id: item.id,
         createdAt: item.createdAt,
@@ -125,7 +146,10 @@ export async function replaceImageStudioHistoryItems(items: ImageStudioHistoryIt
         prompt: item.prompt,
         aspectRatio: item.aspectRatio,
         count: storedResults.length,
-        referenceImageUrl: item.referenceImageUrl,
+        referenceImageUrl: referenceImageUrls[0],
+        referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
+        parentHistoryId: item.parentHistoryId,
+        parentTileId: item.parentTileId,
         results: storedResults,
       } satisfies StoredImageStudioHistoryItem)
     })
@@ -149,6 +173,7 @@ export async function listImageStudioHistoryItems(): Promise<ImageStudioHistoryI
   const records = await withStore<StoredImageStudioHistoryItem[]>('readonly', (store) => store.getAll())
 
   return (records || [])
+    .filter((record) => record.results?.length)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .map((record) => ({
       id: record.id,
@@ -160,6 +185,11 @@ export async function listImageStudioHistoryItems(): Promise<ImageStudioHistoryI
       aspectRatio: record.aspectRatio,
       count: record.count,
       referenceImageUrl: record.referenceImageUrl,
+      referenceImageUrls: record.referenceImageUrls?.length
+        ? record.referenceImageUrls
+        : (record.referenceImageUrl ? [record.referenceImageUrl] : undefined),
+      parentHistoryId: record.parentHistoryId,
+      parentTileId: record.parentTileId,
       results: record.results.map((result) => ({
         id: result.id,
         source: result.source,

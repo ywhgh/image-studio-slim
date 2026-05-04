@@ -460,6 +460,34 @@
                     </button>
 
                     <button
+                      type="button"
+                      class="studio-chip"
+                      :class="{ active: upstreamCompatibilityEnabled }"
+                      :aria-pressed="upstreamCompatibilityEnabled"
+                      :title="upstreamCompatibilityEnabled
+                        ? t('imageStudio.promptPanel.upstreamCompatibilityOn')
+                        : t('imageStudio.promptPanel.upstreamCompatibilityOff')"
+                      @click="upstreamCompatibilityEnabled = !upstreamCompatibilityEnabled"
+                    >
+                      <Icon :name="upstreamCompatibilityEnabled ? 'shield' : 'x'" size="sm" />
+                      <span>{{ t('imageStudio.promptPanel.upstreamCompatibility') }}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      class="studio-chip"
+                      :class="{ active: autoCleanPlaceholders }"
+                      :aria-pressed="autoCleanPlaceholders"
+                      :title="autoCleanPlaceholders
+                        ? t('imageStudio.promptPanel.autoCleanPlaceholdersOn')
+                        : t('imageStudio.promptPanel.autoCleanPlaceholdersOff')"
+                      @click="autoCleanPlaceholders = !autoCleanPlaceholders"
+                    >
+                      <Icon :name="autoCleanPlaceholders ? 'check' : 'x'" size="sm" />
+                      <span>{{ t('imageStudio.promptPanel.autoCleanPlaceholders') }}</span>
+                    </button>
+
+                    <button
                       v-for="chip in promptChips"
                       :key="chip"
                       type="button"
@@ -506,7 +534,16 @@
                 >
                   <div class="studio-generation-banner-body">
                     <Icon name="exclamationTriangle" size="sm" />
-                    <span class="studio-generation-banner-message">{{ generationError.message }}</span>
+                    <span class="studio-generation-banner-copy">
+                      <span class="studio-generation-banner-title">{{ generationError.title }}</span>
+                      <span class="studio-generation-banner-message">{{ generationError.message }}</span>
+                      <span v-if="generationError.detail" class="studio-generation-banner-detail">
+                        {{ generationError.detail }}
+                      </span>
+                      <span v-if="generationError.rawMessage" class="studio-generation-banner-raw">
+                        {{ t('imageStudio.generationErrors.rawPrefix', { value: generationError.rawMessage }) }}
+                      </span>
+                    </span>
                   </div>
                   <div class="studio-generation-banner-actions">
                     <button
@@ -737,12 +774,19 @@
                     :key="`ref-${index}-${src.slice(-12)}`"
                     class="studio-reference-tile"
                   >
-                    <img :src="src" :alt="`reference ${index + 1}`" />
+                    <button
+                      type="button"
+                      class="studio-reference-preview-trigger"
+                      :title="t('imageStudio.referenceImages.preview')"
+                      @click="openReferencePreview(index)"
+                    >
+                      <img :src="src" :alt="`reference ${index + 1}`" />
+                    </button>
                     <button
                       type="button"
                       class="studio-reference-remove"
                       :title="t('imageStudio.referenceImages.remove')"
-                      @click="removeReferenceImage(index)"
+                      @click.stop="removeReferenceImage(index)"
                     >
                       <Icon name="x" size="xs" />
                     </button>
@@ -1080,7 +1124,7 @@
                   {{ t('imageStudio.workbench.selectedCount', { count: selectedTileIds.length }) }}
                 </span>
                 <strong class="studio-progress-value">
-                  {{ generating ? `${Math.max(progress, 6)}%` : t('imageStudio.statusBoard.ready') }}
+                  {{ generating ? `${Math.round(generationProgressPercent)}%` : t('imageStudio.statusBoard.ready') }}
                 </strong>
               </div>
             </div>
@@ -1390,6 +1434,12 @@
                     <option v-for="m in promptHelperModelHints" :key="m" :value="m" />
                   </datalist>
                   <p class="studio-helper">{{ t('imageStudio.sidebar.helperModelHint') }}</p>
+                  <p
+                    class="studio-helper studio-helper-quality"
+                    :class="{ 'is-warning': promptHelperQualityWarning }"
+                  >
+                    {{ promptHelperQualityHint }}
+                  </p>
                 </div>
 
                 <div class="studio-helper-actions">
@@ -1573,6 +1623,60 @@
         </div>
       </div>
     </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="referencePreviewOpen && referencePreviewSrc"
+        class="studio-lightbox studio-reference-preview"
+        @click.self="closeReferencePreview"
+      >
+        <div class="studio-reference-preview-panel">
+          <div class="studio-lightbox-header">
+            <div class="min-w-0">
+              <p class="studio-lightbox-title">
+                {{ t('imageStudio.referenceImages.previewTitle', {
+                  current: referencePreviewDisplayIndex,
+                  total: referenceImages.length,
+                }) }}
+              </p>
+              <p class="studio-lightbox-caption">{{ t('imageStudio.referenceImages.previewHint') }}</p>
+            </div>
+            <div class="studio-lightbox-actions">
+              <button
+                type="button"
+                class="studio-lightbox-button"
+                :disabled="referenceImages.length <= 1"
+                @click="stepReferencePreview(-1)"
+              >
+                <Icon name="chevronLeft" size="sm" />
+                {{ t('imageStudio.workbench.previousPreview') }}
+              </button>
+              <button
+                type="button"
+                class="studio-lightbox-button"
+                :disabled="referenceImages.length <= 1"
+                @click="stepReferencePreview(1)"
+              >
+                <Icon name="chevronRight" size="sm" />
+                {{ t('imageStudio.workbench.nextPreview') }}
+              </button>
+              <button type="button" class="studio-lightbox-button" @click="closeReferencePreview">
+                <Icon name="x" size="sm" />
+                {{ t('imageStudio.workbench.closePreview') }}
+              </button>
+            </div>
+          </div>
+          <div class="studio-reference-preview-stage">
+            <img
+              :src="referencePreviewSrc"
+              :alt="t('imageStudio.referenceImages.previewAlt')"
+              class="studio-reference-preview-image"
+            />
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
   </div>
 </template>
 
@@ -1650,10 +1754,13 @@ const sub2apiApiKey = ref('')
 const externalApiKey = ref('')
 const prompt = ref('')
 const negativePrompt = ref('')
+const upstreamCompatibilityEnabled = ref(true)
+const autoCleanPlaceholders = ref(false)
 const referenceImages = ref<string[]>([])
-const REFERENCE_IMAGE_MAX_COUNT = 3
+const REFERENCE_IMAGE_MAX_COUNT = 6
 const REFERENCE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 const referenceImageError = ref('')
+const referencePreviewIndex = ref<number | null>(null)
 
 function handleReferenceFileSelect(event: Event) {
   const input = event.target as HTMLInputElement
@@ -1666,6 +1773,10 @@ function handleReferenceFileSelect(event: Event) {
   if (remaining <= 0) {
     referenceImageError.value = t('imageStudio.referenceImages.tooMany', { max: REFERENCE_IMAGE_MAX_COUNT })
     return
+  }
+
+  if (files.length > remaining) {
+    referenceImageError.value = t('imageStudio.referenceImages.tooMany', { max: REFERENCE_IMAGE_MAX_COUNT })
   }
 
   files.slice(0, remaining).forEach((file) => {
@@ -1696,23 +1807,70 @@ function handleReferenceFileSelect(event: Event) {
 function removeReferenceImage(index: number) {
   if (index >= 0 && index < referenceImages.value.length) {
     referenceImages.value.splice(index, 1)
+    if (referencePreviewIndex.value !== null) {
+      if (!referenceImages.value.length) {
+        referencePreviewIndex.value = null
+      } else if (referencePreviewIndex.value >= referenceImages.value.length) {
+        referencePreviewIndex.value = referenceImages.value.length - 1
+      }
+    }
   }
   referenceImageError.value = ''
 }
 
 function clearReferenceImages() {
   referenceImages.value = []
+  referencePreviewIndex.value = null
   referenceImageError.value = ''
 }
+
+const referencePreviewOpen = computed(() => referencePreviewIndex.value !== null)
+
+const referencePreviewSrc = computed(() => {
+  const index = referencePreviewIndex.value
+  return index === null ? '' : referenceImages.value[index] || ''
+})
+
+const referencePreviewDisplayIndex = computed(() => (
+  referencePreviewIndex.value === null ? 0 : referencePreviewIndex.value + 1
+))
+
+function openReferencePreview(index: number) {
+  if (index >= 0 && index < referenceImages.value.length) {
+    referencePreviewIndex.value = index
+  }
+}
+
+function closeReferencePreview() {
+  referencePreviewIndex.value = null
+}
+
+function stepReferencePreview(direction: -1 | 1) {
+  if (referencePreviewIndex.value === null || referenceImages.value.length <= 1) {
+    return
+  }
+  const next = referencePreviewIndex.value + direction
+  referencePreviewIndex.value = (next + referenceImages.value.length) % referenceImages.value.length
+}
+
 const randomSeed = ref('')
 const generating = ref(false)
 const progress = ref(0)
+let progressResetTimer: number | null = null
 const generationAbort = ref<AbortController | null>(null)
 const generationStartedAt = ref<number | null>(null)
 const generationElapsedMs = ref(0)
 const lastGenerationDurationMs = ref<number | null>(null)
 const transientTiles = ref<ImageStudioWorkspaceTile[]>([])
-const generationError = ref<{ message: string; kind: 'backend-unreachable' | 'generic' } | null>(null)
+type GenerationErrorKind = 'backend-unreachable' | 'generic'
+type GenerationErrorDescription = {
+  title: string
+  message: string
+  detail?: string
+  rawMessage?: string
+  kind: GenerationErrorKind
+}
+const generationError = ref<GenerationErrorDescription | null>(null)
 const lightboxNaturalSize = ref<{ width: number; height: number } | null>(null)
 const sessionStats = ref({
   successCount: 0,
@@ -1797,7 +1955,7 @@ function translateLanguageName(code: TranslateLang): string {
 }
 
 async function translatePromptAction() {
-  const text = prompt.value.trim()
+  const text = resolvePromptTemplateArguments(prompt.value).trim()
   if (!text) {
     appStore.showWarning(t('imageStudio.toasts.promptRequired'))
     return
@@ -1900,6 +2058,33 @@ const promptHelperConfigured = computed(() => (
 const promptHelperTriggerMeta = computed(() => {
   if (!promptHelperConfigured.value) return t('imageStudio.sidebar.helperMissing')
   return promptHelperConfig.model
+})
+
+const promptHelperModelValue = computed(() => promptHelperConfig.model.trim().toLowerCase())
+
+const promptHelperUsesImageModel = computed(() => (
+  /(?:gpt-image|dall[-_ ]?e|sora|flux|midjourney|stable[-_ ]?diffusion|sdxl)/i.test(promptHelperModelValue.value)
+))
+
+const promptHelperUsesStrongTextModel = computed(() => (
+  /(?:gpt-4|gpt-4o|gpt-4\.1|o3|o4|claude|sonnet|opus|gemini|qwen|deepseek|kimi|glm|doubao)/i.test(promptHelperModelValue.value)
+))
+
+const promptHelperQualityWarning = computed(() => (
+  !!promptHelperModelValue.value && promptHelperUsesImageModel.value
+))
+
+const promptHelperQualityHint = computed(() => {
+  if (!promptHelperConfigured.value) {
+    return t('imageStudio.sidebar.helperQualityMissing')
+  }
+  if (promptHelperUsesImageModel.value) {
+    return t('imageStudio.sidebar.helperQualityImageModel')
+  }
+  if (promptHelperUsesStrongTextModel.value) {
+    return t('imageStudio.sidebar.helperQualityStrong')
+  }
+  return t('imageStudio.sidebar.helperQualityGeneric')
 })
 
 const promptHelperModelHints = PROMPT_HELPER_MODEL_HINTS
@@ -2104,6 +2289,35 @@ const aspectOptions = [
 
 const supportsCustomResolution = computed(() => preferences.providerMode !== 'sub2api')
 
+function resolveGptImage2StandardSize(aspectRatio: string): string {
+  switch (aspectRatio.trim()) {
+    case '1:1':
+      return '1024x1024'
+    case '16:9':
+    case '21:9':
+    case '4:3':
+    case '3:2':
+    case '5:4':
+      return '1792x1024'
+    case '9:16':
+    case '3:4':
+    case '2:3':
+    case '4:5':
+      return '1024x1792'
+    default:
+      return ''
+  }
+}
+
+const usesGptImage2SizeProfile = computed(() => /(^|[/:])gpt-image-2$/i.test(preferences.model.trim()))
+
+function resolveWorkspaceImageSize(preset: ImageStudioResolutionPreset): string {
+  if (preset === 'standard' && usesGptImage2SizeProfile.value) {
+    return resolveGptImage2StandardSize(preferences.aspectRatio)
+  }
+  return resolveImageStudioSize(preferences.aspectRatio, undefined, preset)
+}
+
 const resolutionOptions = computed(() => {
   const buildOption = (
     value: ImageStudioResolutionPreset,
@@ -2113,7 +2327,7 @@ const resolutionOptions = computed(() => {
     value,
     label: t(labelKey),
     description: t(descriptionKey),
-    size: resolveImageStudioSize(preferences.aspectRatio, undefined, value),
+    size: resolveWorkspaceImageSize(value),
   })
 
   return [
@@ -2201,8 +2415,57 @@ const detectedImageModels = ref<string[]>([])
 const detectingModels = ref(false)
 const detectModelsAbort = ref<AbortController | null>(null)
 
+function externalApiBaseCandidates(rawBaseUrl: string): string[] {
+  const baseUrl = rawBaseUrl.trim().replace(/\/+$/, '')
+  if (!baseUrl) {
+    return []
+  }
+
+  const candidates = [baseUrl]
+  try {
+    const parsed = new URL(baseUrl)
+    if (!parsed.pathname || parsed.pathname === '/') {
+      parsed.pathname = '/v1'
+      candidates.push(parsed.toString().replace(/\/+$/, ''))
+    }
+  } catch {
+    // Keep the original value; the fetch call will surface the URL error.
+  }
+
+  return Array.from(new Set(candidates))
+}
+
+async function fetchImageModelIds(baseUrl: string, apiKey: string, signal?: AbortSignal): Promise<string[]> {
+  const response = await fetch(`${baseUrl}/models`, {
+    method: 'GET',
+    headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' },
+    signal,
+  })
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+  const payload = await response.json().catch(() => null)
+  const list: unknown = payload?.data || payload?.models || payload
+  if (!Array.isArray(list)) {
+    throw new Error('unexpected response shape')
+  }
+
+  return Array.from(new Set(list
+    .map((entry) => {
+      if (typeof entry === 'string') return entry
+      if (entry && typeof entry === 'object') {
+        const obj = entry as { id?: unknown; name?: unknown }
+        if (typeof obj.id === 'string') return obj.id
+        if (typeof obj.name === 'string') return obj.name
+      }
+      return ''
+    })
+    .filter((id) => typeof id === 'string' && id.length > 0)
+    .filter((id) => IMAGE_MODEL_KEYWORDS.test(id))))
+}
+
 const modelOptions = computed(() => {
-  if (preferences.providerMode === 'sub2api' || preferences.profile === 'sub2api-sora-compatible') {
+  if (preferences.providerMode === 'sub2api') {
     return ['gpt-image']
   }
   if (detectedImageModels.value.length) {
@@ -2214,9 +2477,9 @@ const modelOptions = computed(() => {
 let detectModelsDebounce = 0
 async function fetchUpstreamImageModels(silent = true) {
   if (preferences.providerMode === 'sub2api') return
-  const baseUrl = preferences.externalBaseUrl.trim().replace(/\/+$/, '')
+  const candidates = externalApiBaseCandidates(preferences.externalBaseUrl)
   const apiKey = externalApiKey.value.trim()
-  if (!baseUrl || !apiKey) {
+  if (!candidates.length || !apiKey) {
     detectedImageModels.value = []
     return
   }
@@ -2228,34 +2491,26 @@ async function fetchUpstreamImageModels(silent = true) {
   detectModelsAbort.value = controller
   detectingModels.value = true
   try {
-    const response = await fetch(`${baseUrl}/models`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' },
-      signal: controller.signal,
-    })
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
+    let unique: string[] = []
+    let resolvedBaseUrl = candidates[0]
+    let lastError: unknown = null
+    for (const candidate of candidates) {
+      try {
+        unique = await fetchImageModelIds(candidate, apiKey, controller.signal)
+        resolvedBaseUrl = candidate
+        break
+      } catch (error) {
+        lastError = error
+      }
     }
-    const payload = await response.json()
-    const list: unknown = payload?.data || payload?.models || payload
-    if (!Array.isArray(list)) {
-      throw new Error('unexpected response shape')
+    if (!unique.length && lastError) {
+      throw lastError
     }
-    const ids = list
-      .map((entry) => {
-        if (typeof entry === 'string') return entry
-        if (entry && typeof entry === 'object') {
-          const obj = entry as { id?: unknown; name?: unknown }
-          if (typeof obj.id === 'string') return obj.id
-          if (typeof obj.name === 'string') return obj.name
-        }
-        return ''
-      })
-      .filter((id) => typeof id === 'string' && id.length > 0)
-      .filter((id) => IMAGE_MODEL_KEYWORDS.test(id))
-    const unique = Array.from(new Set(ids))
     if (unique.length) {
       detectedImageModels.value = unique
+      if (resolvedBaseUrl !== preferences.externalBaseUrl.trim().replace(/\/+$/, '')) {
+        preferences.externalBaseUrl = resolvedBaseUrl
+      }
       if (!unique.includes(preferences.model)) {
         preferences.model = unique[0]
       }
@@ -2300,11 +2555,14 @@ const resolvedSize = computed(() => {
   if (!supportsCustomResolution.value) {
     return ''
   }
-  return resolveImageStudioSize(
-    preferences.aspectRatio,
-    undefined,
-    preferences.resolutionPreset
-  )
+  return resolveWorkspaceImageSize(preferences.resolutionPreset)
+})
+
+const standardGenerationSize = computed(() => {
+  if (!supportsCustomResolution.value) {
+    return ''
+  }
+  return resolveWorkspaceImageSize('standard')
 })
 
 const resolvedSizeDisplay = computed(() => (
@@ -2516,10 +2774,6 @@ const generationProgressPercent = computed<number>(() => {
   if (!generating.value) {
     return progress.value
   }
-  if (lastGenerationDurationMs.value != null && lastGenerationDurationMs.value > 0) {
-    const ratio = generationElapsedMs.value / lastGenerationDurationMs.value
-    return Math.min(95, Math.max(6, ratio * 100))
-  }
   return Math.max(progress.value, 6)
 })
 
@@ -2700,12 +2954,8 @@ watch(
       return
     }
 
-    if (preferences.profile === 'sub2api-sora-compatible') {
-      preferences.profile = 'openai-image-api'
-    }
-
     if (preferences.model === 'gpt-image') {
-      preferences.model = 'gpt-image-1'
+      preferences.model = preferences.profile === 'sub2api-sora-compatible' ? 'gpt-image-2' : 'gpt-image-1'
     }
   },
   { immediate: true }
@@ -2716,6 +2966,9 @@ watch(
   (profile) => {
     if (profile === 'openai-responses' && preferences.providerMode !== 'sub2api') {
       preferences.count = 1
+    }
+    if (profile === 'sub2api-sora-compatible' && preferences.providerMode !== 'sub2api' && preferences.model === 'gpt-image') {
+      preferences.model = 'gpt-image-2'
     }
   },
   { immediate: true }
@@ -3456,6 +3709,10 @@ function handleGlobalKeydown(event: KeyboardEvent) {
       seedPanelOpen.value = false
       return
     }
+    if (referencePreviewOpen.value) {
+      closeReferencePreview()
+      return
+    }
     if (lightboxFreeDrag.value) {
       lightboxFreeDrag.value = false
       refreshLightboxLayout()
@@ -3463,6 +3720,17 @@ function handleGlobalKeydown(event: KeyboardEvent) {
     }
     if (previewLightboxOpen.value) {
       closePreviewLightbox()
+    }
+    return
+  }
+
+  if (referencePreviewOpen.value) {
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      stepReferencePreview(-1)
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      stepReferencePreview(1)
     }
     return
   }
@@ -3536,8 +3804,8 @@ async function applyRandomInspiration() {
   const styleHint = selectedStylePreset.value?.title || ''
   const ratioHint = preferences.aspectRatio
   const localeHint = locale.value === 'zh' ? '中文' : 'English'
-  const systemPrompt = `You are a creative AI image prompt generator. Output exactly one prompt in ${localeHint}. Be concrete: name a subject, action, environment, lighting, composition, mood, and a stylistic anchor. 35-80 words. No quotes, no preface, no markdown, no list.`
-  const userMessage = `Invent a fresh ${styleHint || 'cinematic'} image prompt suitable for aspect ratio ${ratioHint}. Avoid the obvious; surprise me with subject and setting.`
+  const systemPrompt = `You are a senior text-to-image prompt designer. Output exactly one prompt in ${localeHint}. Use visually testable details: subject, action, environment, lighting, lens/composition, palette, mood, and one stylistic anchor. Avoid vague quality-tag piles and contradictions. 35-80 words. No quotes, no preface, no markdown, no list.`
+  const userMessage = `Invent a fresh ${styleHint || 'cinematic'} image prompt suitable for aspect ratio ${ratioHint}. Avoid the obvious; make the subject and setting specific enough to render.`
   try {
     const result = await callPromptHelper([
       { role: 'system', content: systemPrompt },
@@ -3561,7 +3829,8 @@ async function applyPromptOptimization() {
   if (promptHelperBusy.value) {
     return
   }
-  if (!prompt.value.trim()) {
+  const draftPrompt = resolvePromptTemplateArguments(prompt.value).trim()
+  if (!draftPrompt) {
     await applyRandomInspiration()
     return
   }
@@ -3569,8 +3838,10 @@ async function applyPromptOptimization() {
     const addition = locale.value === 'zh'
       ? '构图完整，主体突出，光影自然，细节干净。'
       : 'balanced composition, strong focal subject, natural lighting, clean detail.'
-    if (!prompt.value.includes(addition)) {
-      prompt.value = `${prompt.value.trim()} ${addition}`
+    if (!draftPrompt.includes(addition)) {
+      prompt.value = `${draftPrompt} ${addition}`
+    } else {
+      prompt.value = draftPrompt
     }
     appStore.showWarning(t('imageStudio.toasts.helperConfigure'))
     return
@@ -3579,8 +3850,8 @@ async function applyPromptOptimization() {
   const styleHint = selectedStylePreset.value?.title || ''
   const ratioHint = preferences.aspectRatio
   const localeHint = locale.value === 'zh' ? '中文' : 'English'
-  const systemPrompt = `You polish text-to-image prompts. Rewrite the user's draft in ${localeHint}, keeping the original intent. Add concrete cues for subject, lighting, lens, composition, palette, and mood. 40-90 words. Output only the rewritten prompt; no explanation, no quotes, no preface, no list, no markdown.`
-  const userMessage = `Style preset: ${styleHint || 'cinematic realism'}. Aspect ratio: ${ratioHint}.\nDraft prompt:\n${prompt.value.trim()}`
+  const systemPrompt = `You polish text-to-image prompts. Rewrite the user's draft in ${localeHint}, preserving intent and constraints. Add concrete cues for subject, action, lighting, lens/composition, palette, texture, and mood. Remove contradictions and avoid generic quality-tag stuffing. 40-90 words. Output only the rewritten prompt; no explanation, no quotes, no preface, no list, no markdown.`
+  const userMessage = `Style preset: ${styleHint || 'cinematic realism'}. Aspect ratio: ${ratioHint}.\nDraft prompt:\n${draftPrompt}`
   try {
     const result = await callPromptHelper([
       { role: 'system', content: systemPrompt },
@@ -3610,11 +3881,24 @@ function resolveSub2ApiModel(aspectRatio: string): string {
   return 'gpt-image'
 }
 
+function clearProgressResetTimer() {
+  if (progressResetTimer !== null) {
+    window.clearTimeout(progressResetTimer)
+    progressResetTimer = null
+  }
+}
+
 function startProgressAnimation(): () => void {
-  progress.value = 8
+  clearProgressResetTimer()
+  progress.value = 6
+  const startedAt = performance.now()
   const timer = window.setInterval(() => {
-    progress.value = Math.min(progress.value < 60 ? progress.value + 9 : progress.value + 3, 92)
-  }, 650)
+    const elapsedSeconds = (performance.now() - startedAt) / 1000
+    const target = elapsedSeconds < 18
+      ? 6 + elapsedSeconds * 3.2
+      : 64 + Math.min(31, (elapsedSeconds - 18) * 0.55)
+    progress.value = Math.min(96, Math.max(progress.value + 0.4, target))
+  }, 500)
 
   return () => {
     window.clearInterval(timer)
@@ -3672,8 +3956,463 @@ function triggerBlobDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
+function parsePixelSize(value: string): { width: number; height: number } | null {
+  const match = /^\s*(\d+)\s*x\s*(\d+)\s*$/i.exec(value)
+  if (!match) {
+    return null
+  }
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null
+  }
+  return { width, height }
+}
+
+function outputMimeTypeForFormat(format: string, fallback?: string): string {
+  switch (format) {
+    case 'jpeg':
+      return 'image/jpeg'
+    case 'webp':
+      return 'image/webp'
+    case 'png':
+      return 'image/png'
+    default:
+      return fallback?.startsWith('image/') ? fallback : 'image/png'
+  }
+}
+
+function appendResolutionSuffix(filename: string, preset: ImageStudioResolutionPreset): string {
+  if (preset === 'standard') {
+    return filename
+  }
+
+  const suffix = `-${preset}`
+  const dotIndex = filename.lastIndexOf('.')
+  const base = dotIndex > 0 ? filename.slice(0, dotIndex) : filename
+  const extension = dotIndex > 0 ? filename.slice(dotIndex) : ''
+  if (base.endsWith(suffix)) {
+    return filename
+  }
+  return `${base}${suffix}${extension}`
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob)
+          return
+        }
+        reject(new Error('Failed to render the resized image.'))
+      },
+      mimeType,
+      mimeType === 'image/jpeg' || mimeType === 'image/webp' ? 0.94 : undefined
+    )
+  })
+}
+
+async function resizeResultToPixelSize(
+  result: NormalizedImageResult,
+  target: { width: number; height: number },
+  preset: ImageStudioResolutionPreset
+): Promise<NormalizedImageResult> {
+  const sourceBlob = await ensureResultBlob(result)
+  const bitmap = await createImageBitmap(sourceBlob)
+
+  try {
+    if (bitmap.width === target.width && bitmap.height === target.height) {
+      return result
+    }
+
+    const canvas = document.createElement('canvas')
+    canvas.width = target.width
+    canvas.height = target.height
+    const context = canvas.getContext('2d')
+    if (!context) {
+      throw new Error('Canvas 2D rendering is unavailable in this browser.')
+    }
+
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
+    context.drawImage(bitmap, 0, 0, target.width, target.height)
+
+    const mimeType = outputMimeTypeForFormat(preferences.format, result.mimeType || sourceBlob.type)
+    const resizedBlob = await canvasToBlob(canvas, mimeType)
+    const resizedUrl = URL.createObjectURL(resizedBlob)
+    if (result.url.startsWith('blob:')) {
+      URL.revokeObjectURL(result.url)
+    }
+
+    result.originalUrl = result.originalUrl || result.url
+    result.url = resizedUrl
+    result.source = 'data-url'
+    result.mimeType = mimeType
+    result.blob = resizedBlob
+    result.filename = appendResolutionSuffix(result.filename, preset)
+    return result
+  } finally {
+    bitmap.close()
+  }
+}
+
+async function applyOutputResolutionPreset(results: NormalizedImageResult[]): Promise<NormalizedImageResult[]> {
+  if (!supportsCustomResolution.value || preferences.resolutionPreset === 'standard') {
+    return results
+  }
+
+  const target = parsePixelSize(resolvedSize.value)
+  if (!target) {
+    return results
+  }
+
+  for (const result of results) {
+    await resizeResultToPixelSize(result, target, preferences.resolutionPreset)
+  }
+  return results
+}
+
+function unescapePromptTemplateAttribute(value: string): string {
+  return value
+    .replace(/\\"/g, '"')
+    .replace(/\\'/g, "'")
+    .replace(/\\\\/g, '\\')
+    .trim()
+}
+
+function readPromptTemplateAttribute(attributes: string, key: 'name' | 'default'): string {
+  const normalized = attributes.replace(/\\"/g, '"').replace(/\\'/g, "'")
+  const matcher = new RegExp(
+    `${key}\\s*=\\s*(?:"((?:\\\\.|[^"\\\\])*)"|'((?:\\\\.|[^'\\\\])*)'|([^\\s}]+))`,
+    'i'
+  )
+  const match = normalized.match(matcher)
+  if (!match) {
+    return ''
+  }
+  return unescapePromptTemplateAttribute(match[1] || match[2] || match[3] || '')
+}
+
+function resolvePromptTemplateArguments(rawPrompt: string): string {
+  return rawPrompt.replace(/\{\s*argument\b([^{}]*)\}/gi, (_match, attributes: string) => {
+    const fallback = readPromptTemplateAttribute(attributes, 'name')
+    return readPromptTemplateAttribute(attributes, 'default') || fallback
+  })
+}
+
+interface PromptCompatibilityResult {
+  prompt: string
+  applied: boolean
+}
+
+interface PromptDescriptorRule {
+  pattern: RegExp
+  text: string
+}
+
+function normalizePromptWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function compactLongPromptForUpstream(rawPrompt: string, maxLength = 720): string {
+  const normalized = normalizePromptWhitespace(rawPrompt)
+  if (normalized.length <= maxLength) {
+    return normalized
+  }
+
+  const sentences = normalized
+    .split(/(?<=[.!?。！？])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+  if (!sentences.length) {
+    return `${normalized.slice(0, maxLength).trim()}`
+  }
+
+  const selected: string[] = []
+  let total = 0
+  for (const sentence of sentences) {
+    if (selected.length >= 6 || total + sentence.length > maxLength) {
+      break
+    }
+    selected.push(sentence)
+    total += sentence.length + 1
+  }
+
+  return selected.length ? selected.join(' ') : normalized.slice(0, maxLength).trim()
+}
+
+function matchesPrompt(rawPrompt: string, pattern: RegExp): boolean {
+  return pattern.test(rawPrompt)
+}
+
+function pushPromptPart(parts: string[], value: string) {
+  if (value && !parts.includes(value)) {
+    parts.push(value)
+  }
+}
+
+function collectPromptParts(rawPrompt: string, rules: PromptDescriptorRule[]): string[] {
+  const parts: string[] = []
+  for (const rule of rules) {
+    if (matchesPrompt(rawPrompt, rule.pattern)) {
+      pushPromptPart(parts, rule.text)
+    }
+  }
+  return parts
+}
+
+function buildStylePromptPart(rawPrompt: string): string {
+  const parts: string[] = []
+  const hasAnime = /anime|manga|动漫|动画|二次元|アニメ|漫画/i.test(rawPrompt)
+  const hasRealistic = /photo[-\s]?realistic|realistic|真实|写实|照片级|リアル|フォトリアル/i.test(rawPrompt)
+  const hasDetailed = /highly detailed|detailed|intricate|精细|细节|高细节|詳細|精密/i.test(rawPrompt)
+
+  if (hasDetailed) {
+    pushPromptPart(parts, 'highly detailed')
+  }
+
+  if (hasAnime && hasRealistic) {
+    pushPromptPart(parts, 'photorealistic anime-style')
+  } else if (hasAnime) {
+    pushPromptPart(parts, 'anime-style')
+  } else if (hasRealistic) {
+    pushPromptPart(parts, 'photorealistic')
+  }
+
+  if (/cinematic|电影感|影视感|シネマ|映画/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'cinematic')
+  }
+
+  return `${parts.length ? parts.join(' ') : 'detailed'} portrait`
+}
+
+function buildSubjectPromptPart(rawPrompt: string, hasExplicitMinor: boolean): string {
+  if (hasExplicitMinor) {
+    if (/\b(?:boy|male)\b|男|男性|男孩|少年|男の子|男性|少年/i.test(rawPrompt)) {
+      return 'age-appropriate fully clothed male subject'
+    }
+    if (/\b(?:woman|girl|female)\b|女性|女子|女孩|少女|她|女の子|女性|少女|彼女/i.test(rawPrompt)) {
+      return 'age-appropriate fully clothed female subject'
+    }
+    return 'age-appropriate fully clothed person'
+  }
+
+  if (/\b(?:man|male)\b|男|男性|男子|彼|男性/i.test(rawPrompt)) {
+    return '25-year-old adult male fashion model'
+  }
+
+  if (/\b(?:woman|girl|female)\b|女性|女子|女孩|少女|她|女の子|女性|少女|彼女/i.test(rawPrompt)) {
+    return '25-year-old adult female fashion model'
+  }
+
+  return '25-year-old adult fashion model'
+}
+
+function buildHairPromptPart(rawPrompt: string): string {
+  const parts: string[] = []
+  const colorRules: PromptDescriptorRule[] = [
+    { pattern: /ash[-\s]?blonde|亚麻|浅金|灰金|アッシュブロンド/i, text: 'ash-blonde' },
+    { pattern: /blonde|golden hair|金发|金色|金髪|ブロンド/i, text: 'blonde' },
+    { pattern: /black hair|黑发|黑色头发|黒髪|黒い髪/i, text: 'black' },
+    { pattern: /brown hair|棕发|棕色头发|茶髪|ブラウン/i, text: 'brown' },
+    { pattern: /silver hair|white hair|银发|白发|銀髪|白髪/i, text: 'silver-white' },
+    { pattern: /pink hair|粉发|粉色头发|ピンク髪/i, text: 'pink' },
+    { pattern: /blue hair|蓝发|蓝色头发|青髪/i, text: 'blue' },
+    { pattern: /red hair|auburn|红发|红色头发|赤髪/i, text: 'red' },
+    { pattern: /purple hair|violet hair|紫发|紫色头发|紫髪/i, text: 'purple' },
+  ]
+  const color = collectPromptParts(rawPrompt, colorRules)[0]
+  if (color) {
+    pushPromptPart(parts, color)
+  }
+
+  if (/long hair|长发|長髪|ロングヘア/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'long')
+  } else if (/short hair|短发|短髪|ショートヘア/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'short')
+  }
+
+  if (/flowing|blowing|wind|飘|吹|风中|風|なび/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'flowing gently in the wind')
+  } else if (/wavy|卷发|波浪|ウェーブ/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'softly wavy')
+  } else if (/straight hair|直发|直髪|ストレート/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'straight')
+  }
+
+  return parts.length ? `${parts.join(' ')} hair` : 'hair details matching the original prompt'
+}
+
+function buildOutfitPromptPart(rawPrompt: string, hasExplicitMinor: boolean): string {
+  const hasCampusStyle = /school|campus|uniform|schoolyard|校服|学校|校园|制服|スクール|学校|制服|キャンパス/i.test(rawPrompt)
+  const details = collectPromptParts(rawPrompt, [
+    { pattern: /light gr[ae]y cardigan|灰色开衫|浅灰开衫|ライトグレー.*カーディガン/i, text: 'light grey cardigan' },
+    { pattern: /cardigan|开衫|カーディガン/i, text: 'cardigan' },
+    { pattern: /white (?:shirt|blouse)|白衬衫|白色衬衫|白いシャツ|白いブラウス/i, text: 'white blouse' },
+    { pattern: /bow tie|ribbon|领结|蝴蝶结|リボン|蝶ネクタイ/i, text: 'bow tie' },
+    { pattern: /dark plaid|plaid|tartan|格纹|格子|チェック/i, text: 'dark plaid accents' },
+    { pattern: /pleated skirt|百褶裙|褶裙|プリーツスカート/i, text: hasExplicitMinor ? 'knee-length pleated skirt' : 'dark plaid pleated skirt' },
+    { pattern: /knee[-\s]?high|long socks|stockings|及膝|长袜|过膝|ニーハイ|ハイソックス/i, text: hasExplicitMinor ? 'opaque socks' : 'dark knee-high socks' },
+    { pattern: /loafers|leather shoes|乐福|皮鞋|ローファー/i, text: 'black loafers' },
+    { pattern: /blazer|西装外套|制服外套|ブレザー/i, text: 'tailored blazer' },
+    { pattern: /hoodie|卫衣|パーカー/i, text: 'hoodie' },
+    { pattern: /dress|连衣裙|ワンピース|ドレス/i, text: 'dress' },
+    { pattern: /kimono|和服|着物/i, text: 'kimono-inspired outfit' },
+    { pattern: /hanfu|汉服|漢服/i, text: 'hanfu-inspired outfit' },
+  ])
+
+  const base = hasCampusStyle
+    ? (hasExplicitMinor ? 'age-appropriate uniform-inspired outfit' : 'Japanese school-uniform-inspired fashion styling')
+    : 'modest contemporary fashion outfit'
+  const detailText = details.length ? ` with ${details.join(', ')}` : ' matching the original clothing colors and fabric details'
+  return `${base}${detailText}, treated as adult editorial fashion styling, fully clothed, non-suggestive`
+}
+
+function buildPosePromptPart(rawPrompt: string, hasExplicitMinor: boolean): string {
+  if (hasExplicitMinor) {
+    return 'natural age-appropriate editorial pose, calm body language, non-suggestive framing'
+  }
+
+  const parts: string[] = []
+  if (/kneel|kneeling|跪|跪姿|膝立ち/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'compact editorial kneeling pose')
+  } else if (/crouch|crouching|squat|squatting|蹲|蹲下|しゃが/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'compact editorial crouching pose')
+  } else if (/sitting|seated|坐|坐着|座る|座って/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'composed seated fashion pose')
+  } else if (/standing|stand|站|站立|立つ|立って/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'composed standing fashion pose')
+  } else if (/walking|running|walk|run|走路|行走|奔跑|歩く|走る/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'dynamic walking or running fashion pose')
+  } else {
+    pushPromptPart(parts, 'relaxed natural fashion pose')
+  }
+
+  if (/arms?.{0,24}knees?|手臂.{0,12}膝|胳膊.{0,12}膝|腕.{0,12}膝/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'arms resting naturally on the knees')
+  }
+
+  if (/looking slightly down|looking down|look down|低头|俯视|向下看|見下ろ|下を見る/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'subtle downward gaze toward the camera')
+  } else if (/looking at (?:the )?camera|看镜头|看向镜头|カメラ目線|カメラを見る/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'looking toward the camera')
+  }
+
+  pushPromptPart(parts, 'calm composed body language')
+  return parts.join(', ')
+}
+
+function buildCameraPromptPart(rawPrompt: string, hasExplicitMinor: boolean): string {
+  const parts: string[] = []
+
+  if (!hasExplicitMinor && /low[-\s]?angle|low camera|低角度|仰拍|ローアングル/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'low-position camera perspective for dramatic fashion composition')
+    pushPromptPart(parts, 'modest non-voyeuristic framing')
+  } else {
+    pushPromptPart(parts, 'balanced camera angle with modest framing')
+  }
+
+  if (/close[-\s]?up|特写|近景|クローズアップ/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'portrait close-up composition')
+  } else if (/full[-\s]?body|全身|全身像/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'full-body composition')
+  } else if (/upper body|half body|半身|上半身/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'upper-body composition')
+  }
+
+  if (/blurred|bokeh|depth of field|虚化|景深|ボケ/i.test(rawPrompt)) {
+    pushPromptPart(parts, 'soft depth of field')
+  }
+
+  return parts.join(', ')
+}
+
+function buildBackgroundPromptPart(rawPrompt: string, hasExplicitMinor: boolean): string {
+  const parts = collectPromptParts(rawPrompt, [
+    { pattern: /bright|明亮|晴朗|明るい/i, text: 'bright outdoor atmosphere' },
+    { pattern: /blue sky|clear sky|蓝天|晴空|青空/i, text: 'clear blue sky' },
+    { pattern: /cloud|云|雲/i, text: 'scattered soft clouds' },
+    { pattern: /chain[-\s]?link fence|fence|围栏|铁丝网|フェンス/i, text: 'softly blurred chain-link fence' },
+    { pattern: /green trees|trees|tree|绿树|树木|木|樹/i, text: 'green trees' },
+    { pattern: /schoolyard|campus|school|校园|操场|学校|校庭|キャンパス/i, text: hasExplicitMinor ? 'outdoor courtyard setting' : 'campus-like outdoor courtyard atmosphere' },
+    { pattern: /city|street|城市|街道|都市|通り/i, text: 'city street background' },
+    { pattern: /forest|woods|森林|树林|森/i, text: 'forest background' },
+    { pattern: /beach|sea|ocean|海边|海滩|海|ビーチ/i, text: 'coastal background' },
+    { pattern: /room|indoor|bedroom|室内|房间|屋内|部屋/i, text: 'indoor background' },
+    { pattern: /cafe|coffee shop|咖啡|カフェ/i, text: 'cafe background' },
+  ])
+
+  return parts.length ? parts.join(', ') : 'background elements matching the original prompt'
+}
+
+function buildLightingPromptPart(rawPrompt: string): string {
+  const parts = collectPromptParts(rawPrompt, [
+    { pattern: /natural daylight|daylight|自然光|日光|昼光/i, text: 'natural daylight' },
+    { pattern: /soft light|soft lighting|柔光|柔和光|ソフトライト/i, text: 'soft lighting' },
+    { pattern: /cinematic shadows|cinematic shadow|电影感阴影|影视阴影|シネマ.*影/i, text: 'soft cinematic shadows' },
+    { pattern: /sunset|golden hour|夕阳|黄昏|日落|夕焼け/i, text: 'warm golden-hour light' },
+    { pattern: /neon|霓虹|ネオン/i, text: 'neon lighting' },
+  ])
+
+  if (!parts.length) {
+    return 'natural lighting, realistic fabric and skin texture'
+  }
+
+  pushPromptPart(parts, 'realistic fabric and skin texture')
+  return parts.join(', ')
+}
+
+function buildPersonPromptCompatibility(rawPrompt: string, hasExplicitMinor: boolean): string {
+  const parts = [
+    `${buildStylePromptPart(rawPrompt)} of ${buildSubjectPromptPart(rawPrompt, hasExplicitMinor)}`,
+    'adult fashion editorial tone',
+    buildHairPromptPart(rawPrompt),
+    buildOutfitPromptPart(rawPrompt, hasExplicitMinor),
+    buildPosePromptPart(rawPrompt, hasExplicitMinor),
+    buildCameraPromptPart(rawPrompt, hasExplicitMinor),
+    buildBackgroundPromptPart(rawPrompt, hasExplicitMinor),
+    buildLightingPromptPart(rawPrompt),
+  ]
+
+  return parts.filter(Boolean).join(', ')
+}
+
+function resolveUpstreamCompatiblePrompt(rawPrompt: string): PromptCompatibilityResult {
+  const normalized = normalizePromptWhitespace(resolvePromptTemplateArguments(rawPrompt))
+  if (!normalized) {
+    return { prompt: '', applied: false }
+  }
+
+  const lower = normalized.toLowerCase()
+  const hasPerson = /woman|girl|female|portrait|person|man|male|女性|女子|女孩|少女|人物|肖像|她|女の子|女性|少女|人物|ポートレート|彼女|男性|男子|男孩|少年|男の子|彼/.test(lower)
+  const hasSchoolFashion = /school|campus|uniform|schoolyard|cardigan|pleated skirt|knee[-\s]?high|loafers|校服|学校|校园|操场|开衫|百褶裙|及膝|长袜|乐福|制服|キャンパス|校庭|カーディガン|プリーツスカート|ニーハイ|ローファー/.test(lower)
+  const hasYouthCodedTerms = /young|girl|boy|schoolgirl|schoolboy|少女|女孩|男孩|少年|女の子|男の子|少女|少年/.test(lower)
+  const hasExplicitMinor = /child|kid|minor|underage|preteen|teenage|teenager|schoolgirl|schoolboy|未成年|儿童|孩子|小孩|小学生|中学生|高中生|高校生|小学生|中学生|子供|未成年|児童|\b(?:[1-9]|1[0-7])[-\s]*(?:years?[-\s]*old|yo|y\/o)\b|(?:[1-9]|1[0-7])岁|(?:[1-9]|1[0-7])歳/.test(lower)
+  const hasFragilePose = /crouch|crouching|squat|squatting|kneel|kneeling|low[-\s]?angle|low camera|looking down|knees|蹲|跪|低角度|仰拍|俯视|膝盖|しゃが|膝立ち|ローアングル|見下ろ|膝/.test(lower)
+  const hasSensitiveClothing = /skirt|stockings|thigh[-\s]?high|knee[-\s]?high|pleated|短裙|裙|丝袜|长袜|过膝|ニーハイ|スカート/.test(lower)
+  const shouldStabilizePersonPrompt = hasPerson && (
+    ((hasSchoolFashion || hasYouthCodedTerms) && (hasFragilePose || hasSensitiveClothing || normalized.length > 220)) ||
+    (hasFragilePose && hasSensitiveClothing)
+  )
+
+  if (shouldStabilizePersonPrompt) {
+    return {
+      prompt: buildPersonPromptCompatibility(normalized, hasExplicitMinor),
+      applied: true,
+    }
+  }
+
+  const compacted = compactLongPromptForUpstream(normalized)
+  return {
+    prompt: compacted,
+    applied: compacted !== normalized,
+  }
+}
+
 function buildPromptText(basePrompt?: string): string {
-  const seedPrompt = (basePrompt ?? prompt.value).trim()
+  const seedPrompt = resolvePromptTemplateArguments(basePrompt ?? prompt.value).trim()
   if (!seedPrompt) {
     return ''
   }
@@ -3691,7 +4430,12 @@ function buildPromptText(basePrompt?: string): string {
   return parts.join('\n')
 }
 
-function createExternalRequest(model: string, resolvedPromptText: string, imageInputs?: string[]): ExternalImageStudioRequest {
+function createExternalRequest(
+  model: string,
+  resolvedPromptText: string,
+  imageInputs?: string[],
+  sizeOverride?: string
+): ExternalImageStudioRequest {
   const cleaned = (imageInputs || []).filter((s) => typeof s === 'string' && s.length > 0)
   const aspectValue = preferences.aspectRatio === 'default' ? '' : preferences.aspectRatio
   return {
@@ -3703,7 +4447,7 @@ function createExternalRequest(model: string, resolvedPromptText: string, imageI
     count: effectiveCount.value,
     image_input: cleaned[0],
     image_inputs: cleaned.length ? cleaned : undefined,
-    size: resolvedSize.value || undefined,
+    size: (sizeOverride ?? resolvedSize.value) || undefined,
     aspect_ratio: aspectValue || undefined,
     quality: preferences.quality,
     background: preferences.background,
@@ -3793,26 +4537,163 @@ function isAbortLikeError(error: unknown): boolean {
   return false
 }
 
-function classifyGenerationError(error: unknown): { message: string; kind: 'backend-unreachable' | 'generic' } {
-  const fallbackMessage = t('imageStudio.toasts.generateFailed')
+function normalizeErrorMessage(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+function createGenerationErrorDescription(options: {
+  title: string
+  message: string
+  detail?: string
+  rawText?: string
+  kind?: GenerationErrorKind
+}): GenerationErrorDescription {
+  const rawMessage = options.rawText ? normalizeErrorMessage(options.rawText) : ''
+  return {
+    title: options.title,
+    message: options.message,
+    detail: options.detail,
+    rawMessage: rawMessage || undefined,
+    kind: options.kind ?? 'generic',
+  }
+}
+
+function classifyGenerationError(error: unknown): GenerationErrorDescription {
+  const fallbackTitle = t('imageStudio.generationErrors.genericTitle')
+  const fallbackMessage = t('imageStudio.generationErrors.genericMessage')
   if (!error) {
-    return { message: fallbackMessage, kind: 'generic' }
+    return createGenerationErrorDescription({
+      title: fallbackTitle,
+      message: fallbackMessage,
+    })
   }
+
   const candidate = error as { status?: number; message?: string }
-  if (candidate.status === 0) {
-    return { message: candidate.message || fallbackMessage, kind: 'backend-unreachable' }
-  }
   const text = error instanceof Error ? error.message : (typeof candidate.message === 'string' ? candidate.message : '')
-  if (text && /Network Error|ECONNREFUSED|Failed to fetch/i.test(text)) {
-    return { message: text, kind: 'backend-unreachable' }
+
+  if (text && /stream disconnected|before completion/i.test(text)) {
+    return createGenerationErrorDescription({
+      title: t('imageStudio.generationErrors.streamDisconnectedTitle'),
+      message: t('imageStudio.generationErrors.streamDisconnectedMessage'),
+      detail: t('imageStudio.generationErrors.streamDisconnectedDetail'),
+      rawText: text,
+    })
   }
-  if (error instanceof Error) {
-    return { message: error.message || fallbackMessage, kind: 'generic' }
+
+  if (candidate.status === 0 || (text && /Network Error|ECONNREFUSED|Failed to fetch/i.test(text))) {
+    return createGenerationErrorDescription({
+      title: t('imageStudio.generationErrors.backendTitle'),
+      message: t('imageStudio.generationErrors.backendMessage'),
+      detail: t('imageStudio.generationErrors.backendDetail'),
+      rawText: text,
+      kind: 'backend-unreachable',
+    })
   }
+
+  if (text && /failed to reach upstream provider|wsarecv|connection attempt failed|failed to respond|host has failed to respond|connection reset|eof/i.test(text)) {
+    return createGenerationErrorDescription({
+      title: t('imageStudio.generationErrors.upstreamConnectionTitle'),
+      message: t('imageStudio.generationErrors.upstreamConnectionMessage'),
+      detail: t('imageStudio.generationErrors.upstreamConnectionDetail'),
+      rawText: text,
+      kind: 'backend-unreachable',
+    })
+  }
+
   if (text) {
-    return { message: text, kind: 'generic' }
+    return createGenerationErrorDescription({
+      title: fallbackTitle,
+      message: fallbackMessage,
+      detail: t('imageStudio.generationErrors.genericDetail'),
+      rawText: text,
+    })
   }
-  return { message: fallbackMessage, kind: 'generic' }
+
+  return createGenerationErrorDescription({
+    title: fallbackTitle,
+    message: fallbackMessage,
+  })
+}
+
+function errorMessageText(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : typeof (error as { message?: unknown })?.message === 'string'
+      ? String((error as { message?: unknown }).message)
+      : ''
+}
+
+function isRetryableImageTransportError(error: unknown): boolean {
+  const text = errorMessageText(error)
+  return /stream disconnected|before completion|receive timeout|timeout|timed out|status code 50[0-9]|status 50[0-9]|gateway|bad gateway|service unavailable|network error|failed to fetch|eof|wsarecv|connection attempt failed|failed to respond|host has failed to respond|connection reset/i.test(text)
+}
+
+function isRetryableNativeResolutionError(error: unknown): boolean {
+  const text = errorMessageText(error)
+
+  return /invalid size|unsupported size|longest edge|image size|invalid_value|尺寸|分辨率/i.test(text) ||
+    isRetryableImageTransportError(error)
+}
+
+function canFallbackToStandardResolution(error: unknown): boolean {
+  return (
+    supportsCustomResolution.value &&
+    preferences.resolutionPreset !== 'standard' &&
+    !!standardGenerationSize.value &&
+    standardGenerationSize.value !== resolvedSize.value &&
+    isRetryableNativeResolutionError(error)
+  )
+}
+
+async function generateWithExternalProvider(
+  model: string,
+  requestPromptText: string,
+  imageInputs: string[],
+  signal: AbortSignal
+): Promise<NormalizedImageResult[]> {
+  const runRelay = (sizeOverride?: string) => generateImageWithExternalRelay(
+    createExternalRequest(model, requestPromptText, imageInputs, sizeOverride),
+    { signal }
+  )
+
+  const runBrowser = async (sizeOverride?: string) => {
+    try {
+      return await generateImageWithExternalBrowser(
+        createExternalRequest(model, requestPromptText, imageInputs, sizeOverride),
+        { signal }
+      )
+    } catch (error) {
+      if (
+        (error instanceof BrowserDirectGenerationError && error.fallbackSuggested) ||
+        isRetryableImageTransportError(error)
+      ) {
+        appStore.showWarning(t('imageStudio.toasts.browserDirectFallback'))
+        preferences.providerMode = 'external-relay'
+        return await runRelay(sizeOverride)
+      }
+      throw error
+    }
+  }
+
+  const runCurrentMode = (sizeOverride?: string) => (
+    preferences.providerMode === 'external-relay'
+      ? runRelay(sizeOverride)
+      : runBrowser(sizeOverride)
+  )
+
+  try {
+    return await runCurrentMode()
+  } catch (error) {
+    if (!canFallbackToStandardResolution(error)) {
+      throw error
+    }
+
+    appStore.showWarning(t('imageStudio.toasts.nativeResolutionFallback', {
+      size: standardGenerationSize.value,
+      target: resolvedSize.value,
+    }))
+    return await runCurrentMode(standardGenerationSize.value)
+  }
 }
 
 function buildSyntheticTile(
@@ -3865,7 +4746,15 @@ async function generateImages(options: {
     return
   }
 
-  const resolvedPromptText = (options.promptText || buildPromptText()).trim()
+  if (!options.promptText && autoCleanPlaceholders.value) {
+    const cleanedEditorPrompt = resolvePromptTemplateArguments(prompt.value).trim()
+    if (cleanedEditorPrompt && cleanedEditorPrompt !== prompt.value.trim()) {
+      prompt.value = cleanedEditorPrompt
+    }
+  }
+  const resolvedPromptText = resolvePromptTemplateArguments(options.promptText || buildPromptText()).trim()
+  const upstreamPrompt = resolveUpstreamCompatiblePrompt(resolvedPromptText)
+  let requestPromptText = resolvedPromptText
   const overrideRaw = options.referenceImageData
   const overrideArray = Array.isArray(overrideRaw)
     ? overrideRaw
@@ -3889,7 +4778,15 @@ async function generateImages(options: {
     return
   }
 
+  if (upstreamCompatibilityEnabled.value && upstreamPrompt.applied && upstreamPrompt.prompt !== resolvedPromptText) {
+    requestPromptText = upstreamPrompt.prompt
+    appStore.showWarning(t('imageStudio.toasts.promptCompatibilityApplied'))
+  }
+
   generationError.value = null
+  clearProgressResetTimer()
+  progress.value = 0
+  generationElapsedMs.value = 0
   generating.value = true
   const controller = new AbortController()
   generationAbort.value = controller
@@ -3898,10 +4795,9 @@ async function generateImages(options: {
 
   try {
     let generatedResults: NormalizedImageResult[] = []
-    const resolvedModel =
-      preferences.providerMode === 'sub2api' || preferences.profile === 'sub2api-sora-compatible'
-        ? resolveSub2ApiModel(preferences.aspectRatio)
-        : preferences.model
+    const resolvedModel = preferences.providerMode === 'sub2api'
+      ? resolveSub2ApiModel(preferences.aspectRatio)
+      : preferences.model
 
     if (preferences.providerMode === 'sub2api') {
       const sub2apiPayload = {
@@ -3909,7 +4805,7 @@ async function generateImages(options: {
         api_key: sub2apiApiKey.value,
         profile: 'sub2api-sora-compatible' as const,
         model: resolvedModel,
-        prompt: resolvedPromptText,
+        prompt: requestPromptText,
         count: effectiveCount.value,
         image_input: imageInput,
         aspect_ratio: preferences.aspectRatio,
@@ -3931,32 +4827,26 @@ async function generateImages(options: {
         }
       }
     } else if (preferences.providerMode === 'external-relay') {
-      generatedResults = await generateImageWithExternalRelay(
-        createExternalRequest(resolvedModel, resolvedPromptText, imageInputs),
-        { signal: controller.signal }
+      generatedResults = await generateWithExternalProvider(
+        resolvedModel,
+        requestPromptText,
+        imageInputs,
+        controller.signal
       )
     } else {
-      try {
-        generatedResults = await generateImageWithExternalBrowser(
-          createExternalRequest(resolvedModel, resolvedPromptText, imageInputs),
-          { signal: controller.signal }
-        )
-      } catch (error) {
-        if (isAbortLikeError(error)) {
-          throw error
-        }
-        if (error instanceof BrowserDirectGenerationError && error.fallbackSuggested) {
-          appStore.showWarning(t('imageStudio.toasts.browserDirectFallback'))
-          preferences.providerMode = 'external-relay'
-          generatedResults = await generateImageWithExternalRelay(
-            createExternalRequest(resolvedModel, resolvedPromptText, imageInputs),
-            { signal: controller.signal }
-          )
-        } else {
-          throw error
-        }
-      }
+      generatedResults = await generateWithExternalProvider(
+        resolvedModel,
+        requestPromptText,
+        imageInputs,
+        controller.signal
+      )
     }
+
+    if (!generatedResults.length) {
+      throw new Error(t('imageStudio.toasts.generateFailed'))
+    }
+
+    generatedResults = await applyOutputResolutionPreset(generatedResults)
 
     const finalElapsed = generationStartedAt.value != null
       ? performance.now() - generationStartedAt.value
@@ -4006,8 +4896,8 @@ async function generateImages(options: {
     )
       .catch((error) => {
         const description = classifyGenerationError(error)
-        generationError.value = { message: description.message, kind: 'generic' }
-        appStore.showError(description.message)
+        generationError.value = { ...description, kind: 'generic' }
+        appStore.showError(description.title)
       })
 
     if (preferences.providerMode === 'sub2api') {
@@ -4020,16 +4910,17 @@ async function generateImages(options: {
       sessionStats.value = {
         ...sessionStats.value,
         failureCount: sessionStats.value.failureCount + 1,
-        lastFailureMessage: description.message,
+        lastFailureMessage: description.title,
       }
-      appStore.showError(description.message)
+      appStore.showError(description.title)
     }
   } finally {
     stopProgress()
     stopElapsed()
     generationStartedAt.value = null
-    window.setTimeout(() => {
+    progressResetTimer = window.setTimeout(() => {
       progress.value = 0
+      progressResetTimer = null
     }, 260)
     generating.value = false
     generationAbort.value = null
@@ -4062,25 +4953,34 @@ const testConnectionLabel = computed(() => {
 })
 
 async function testUpstreamConnection() {
-  const baseUrl = preferences.externalBaseUrl.trim()
+  const candidates = externalApiBaseCandidates(preferences.externalBaseUrl)
   const apiKey = externalApiKey.value.trim()
-  if (!baseUrl || !apiKey) {
+  if (!candidates.length || !apiKey) {
     return
   }
   testConnectionState.value = { kind: 'busy' }
   try {
-    const url = `${baseUrl.replace(/\/+$/, '')}/models`
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), 8000)
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' },
-      signal: controller.signal,
-    })
+    let modelIds: string[] = []
+    let resolvedBaseUrl = candidates[0]
+    let lastError: unknown = null
+    for (const candidate of candidates) {
+      try {
+        modelIds = await fetchImageModelIds(candidate, apiKey, controller.signal)
+        resolvedBaseUrl = candidate
+        break
+      } catch (error) {
+        lastError = error
+      }
+    }
     window.clearTimeout(timeout)
-    if (!response.ok) {
-      testConnectionState.value = { kind: 'fail', message: t('imageStudio.testConnection.httpError', { status: response.status }) }
-      return
+    if (!modelIds.length && lastError) {
+      throw lastError
+    }
+    detectedImageModels.value = modelIds
+    if (resolvedBaseUrl !== preferences.externalBaseUrl.trim().replace(/\/+$/, '')) {
+      preferences.externalBaseUrl = resolvedBaseUrl
     }
     testConnectionState.value = { kind: 'ok' }
     window.setTimeout(() => {
@@ -4475,7 +5375,11 @@ async function generateVariantFromPreview() {
   try {
     const blob = await ensureResultBlob(previewTile.value.result)
     const dataUrl = await blobToDataUrl(blob)
-    const basePrompt = prompt.value.trim() || previewTile.value.prompt
+    const rawBasePrompt = prompt.value.trim() || previewTile.value.prompt
+    const basePrompt = resolvePromptTemplateArguments(rawBasePrompt).trim()
+    if (autoCleanPlaceholders.value && prompt.value.trim() && prompt.value.trim() !== basePrompt) {
+      prompt.value = basePrompt
+    }
     const variantPrompt = locale.value === 'zh'
       ? `${basePrompt}\n保持主体构图与氛围，生成新的风格变体版本。`
       : `${basePrompt}\nKeep the overall composition and mood, but generate a fresh style variation.`
@@ -4599,6 +5503,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('mousemove', handleGlobalMouseMove)
   window.removeEventListener('mouseup', handleGlobalMouseUp)
   window.removeEventListener('resize', handleWindowResize)
+  clearProgressResetTimer()
   revokeImageStudioHistoryItems(historyItems.value)
 })
 </script>
@@ -5422,7 +6327,7 @@ onBeforeUnmount(() => {
 }
 
 .studio-chip {
-  @apply inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-medium text-slate-600 transition;
+  @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-slate-600 transition disabled:cursor-not-allowed disabled:opacity-60;
   background: #ffffff;
   border: 1px solid var(--studio-border);
 }
@@ -5432,7 +6337,13 @@ onBeforeUnmount(() => {
   color: var(--studio-text);
 }
 
-.studio-chip.accent {
+.studio-chip:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--studio-accent) 72%, transparent);
+  outline-offset: 2px;
+}
+
+.studio-chip.accent,
+.studio-chip.active {
   border-color: #93c5fd;
   background: var(--studio-accent-soft);
   color: var(--studio-accent-deep);
@@ -6558,6 +7469,7 @@ onBeforeUnmount(() => {
 .studio-preview-tab.active,
 .studio-history-card.active,
 .studio-variant-card.active,
+.studio-chip.active,
 .studio-appearance-segment.active,
 .studio-appearance-toggle.active,
 .studio-accent-card.active {
@@ -6572,6 +7484,7 @@ onBeforeUnmount(() => {
 .studio-preview-tab.active,
 .studio-variant-card.active,
 .studio-chip.accent,
+.studio-chip.active,
 .studio-panel-link-button:hover,
 .studio-inline-button:hover,
 .studio-ghost-link:hover,
@@ -6589,7 +7502,8 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--studio-soft-background) 72%, transparent);
 }
 
-.studio-chip.accent {
+.studio-chip.accent,
+.studio-chip.active {
   border-color: var(--studio-border-strong);
   background: var(--studio-accent-soft);
 }
@@ -6889,6 +7803,10 @@ onBeforeUnmount(() => {
   border-color: var(--studio-border);
 }
 
+.studio-reference-preview-trigger {
+  @apply block h-full w-full cursor-zoom-in overflow-hidden;
+}
+
 .studio-reference-tile img {
   @apply h-full w-full object-cover;
 }
@@ -6918,6 +7836,23 @@ onBeforeUnmount(() => {
 .studio-reference-error {
   @apply mt-2 text-xs;
   color: rgb(220, 38, 38);
+}
+
+.studio-reference-preview-panel {
+  @apply flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-[24px] border border-white/10 text-white shadow-[0_30px_100px_rgba(15,23,42,0.48)];
+  background: linear-gradient(180deg, rgba(7, 11, 27, 0.98) 0%, rgba(8, 13, 30, 0.94) 100%);
+}
+
+.studio-reference-preview-stage {
+  @apply flex min-h-[50vh] items-center justify-center overflow-auto p-4;
+  background:
+    radial-gradient(circle at 18% 16%, rgba(96, 165, 250, 0.13), transparent 26%),
+    radial-gradient(circle at 84% 84%, rgba(148, 163, 184, 0.1), transparent 24%),
+    linear-gradient(180deg, #050816 0%, #0b1120 100%);
+}
+
+.studio-reference-preview-image {
+  @apply block max-h-[76vh] max-w-full rounded-2xl object-contain shadow-[0_26px_72px_rgba(2,6,23,0.36)];
 }
 
 /* === New compact settings strip (above status indicator) === */
@@ -7037,7 +7972,7 @@ onBeforeUnmount(() => {
 }
 
 .studio-generation-banner {
-  @apply mt-3 flex items-start gap-2 rounded-2xl border px-3 py-2 text-xs;
+  @apply mt-3 flex items-start gap-2 rounded-2xl border px-3 py-3 text-xs;
   border-color: rgba(220, 38, 38, 0.32);
   background: rgba(254, 242, 242, 0.92);
   color: rgb(127, 29, 29);
@@ -7050,11 +7985,29 @@ onBeforeUnmount(() => {
 }
 
 .studio-generation-banner-body {
-  @apply flex flex-1 items-start gap-2;
+  @apply flex min-w-0 flex-1 items-start gap-2;
+}
+
+.studio-generation-banner-copy {
+  @apply flex min-w-0 flex-1 flex-col gap-1;
+}
+
+.studio-generation-banner-title {
+  @apply font-semibold leading-5;
 }
 
 .studio-generation-banner-message {
   @apply leading-5;
+}
+
+.studio-generation-banner-detail {
+  @apply leading-5;
+}
+
+.studio-generation-banner-raw {
+  @apply mt-1 break-words rounded-xl border px-2 py-1 font-mono text-[11px] leading-5;
+  border-color: rgba(220, 38, 38, 0.22);
+  background: rgba(255, 255, 255, 0.62);
 }
 
 .studio-generation-banner-actions {
@@ -7455,6 +8408,14 @@ onBeforeUnmount(() => {
 .studio-helper-provider-meta {
   color: var(--studio-muted);
   font-size: 10.5px;
+}
+
+.studio-helper-quality {
+  margin-top: 4px;
+}
+
+.studio-helper-quality.is-warning {
+  color: rgb(180, 83, 9);
 }
 
 .studio-helper-actions {

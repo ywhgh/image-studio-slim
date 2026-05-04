@@ -20,6 +20,11 @@ services:
       # Increase if your upstream is slow (e.g. large gpt-image-1 batches).
       UPSTREAM_TIMEOUT: 240s
       DOWNLOAD_TIMEOUT: 60s
+      # Background image generation queue. Three jobs run in parallel; extra
+      # requests wait in memory until one finishes.
+      IMAGE_JOB_CONCURRENCY: 3
+      IMAGE_JOB_QUEUE_SIZE: 100
+      IMAGE_JOB_RETENTION: 2h
       # Set to "true" only when your upstream is on the same private LAN as
       # the server. Default rejects loopback / RFC1918 / link-local hosts.
       ALLOW_PRIVATE_UPSTREAM: "false"

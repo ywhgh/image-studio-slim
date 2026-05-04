@@ -1,21 +1,24 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, type PluginOption } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import checker from 'vite-plugin-checker'
 import { resolve } from 'path'
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const backendUrl = env.VITE_DEV_PROXY_TARGET || 'http://localhost:8090'
   const devPort = Number(env.VITE_DEV_PORT || 3000)
+  const plugins: PluginOption[] = [vue()]
+
+  if (command === 'serve') {
+    plugins.push(
+      checker({
+        vueTsc: true,
+      })
+    )
+  }
 
   return {
-    plugins: [
-      vue(),
-      checker({
-        typescript: true,
-        vueTsc: true,
-      }),
-    ],
+    plugins,
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src'),
@@ -40,7 +43,6 @@ export default defineConfig(({ mode }) => {
               ) {
                 return 'vendor-vue'
               }
-              if (id.includes('/@vueuse/')) return 'vendor-ui'
               if (id.includes('/vue-i18n/') || id.includes('/@intlify/')) return 'vendor-i18n'
               return 'vendor-misc'
             }

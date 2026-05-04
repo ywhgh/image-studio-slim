@@ -114,8 +114,11 @@ All settings are environment variables. See [.env.example](./.env.example).
 | -------------------------- | ---------------------- | ------------------------------------------------ |
 | `HOST`                     | `0.0.0.0`              | Bind address inside container                    |
 | `PORT`                     | `8090`                 | Listen port                                      |
-| `UPSTREAM_TIMEOUT`         | `180s`                 | Total time per upstream call                     |
+| `UPSTREAM_TIMEOUT`         | `15m` (compose: `240s`) | Total time per upstream call                    |
 | `DOWNLOAD_TIMEOUT`         | `60s`                  | Total time for `/download` proxy                 |
+| `IMAGE_JOB_CONCURRENCY`    | `3`                    | Parallel background image jobs                   |
+| `IMAGE_JOB_QUEUE_SIZE`     | `100`                  | Max queued image jobs waiting in memory          |
+| `IMAGE_JOB_RETENTION`      | `2h`                   | Finished job result retention                    |
 | `ALLOW_PRIVATE_UPSTREAM`   | `false`                | Allow loopback / RFC1918 hosts (SSRF guard off)  |
 | `STATIC_DIR`               | (embedded)             | Serve frontend from this directory instead       |
 

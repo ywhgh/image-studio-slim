@@ -91,7 +91,7 @@ apiClient.interceptors.request.use(
 
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => {
-    // Unwrap standard API response format { code, message, data }
+    // Unwrap standard API response format { code, message/msg, data }
     const apiResponse = response.data as ApiResponse<unknown>
     if (apiResponse && typeof apiResponse === 'object' && 'code' in apiResponse) {
       if (apiResponse.code === 0) {
@@ -102,7 +102,7 @@ apiClient.interceptors.response.use(
         return Promise.reject({
           status: response.status,
           code: apiResponse.code,
-          message: apiResponse.message || 'Unknown error'
+          message: apiResponse.message || apiResponse.msg || apiResponse.detail || apiResponse.error || 'Unknown error'
         })
       }
     }
@@ -146,7 +146,7 @@ apiClient.interceptors.response.use(
         return Promise.reject({
           status,
           code: 'OPS_DISABLED',
-          message: apiData.message || error.message,
+          message: apiData.message || apiData.msg || apiData.detail || apiData.error || apiData.err_code || error.message,
           url
         })
       }
@@ -176,7 +176,7 @@ apiClient.interceptors.response.use(
                   reject({
                     status,
                     code: apiData.code,
-                    message: apiData.message || apiData.detail || error.message
+                    message: apiData.message || apiData.msg || apiData.detail || apiData.error || apiData.err_code || error.message
                   })
                 }
               })
@@ -269,7 +269,7 @@ apiClient.interceptors.response.use(
         status,
         code: apiData.code,
         error: apiData.error,
-        message: apiData.message || apiData.detail || error.message
+        message: apiData.message || apiData.msg || apiData.detail || apiData.error || apiData.err_code || error.message
       })
     }
 

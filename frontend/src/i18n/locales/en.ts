@@ -4260,7 +4260,7 @@ export default {
       sub2apiReuse: 'This calls the current site `/api/v1/chat/completions` endpoint directly. Paste a working API key and you can generate without signing in.',
       external: 'Relay mode is recommended by default. Switch to browser direct only when the upstream supports CORS.',
       aspectRatio: 'Pick the frame first, then choose the resolution preset that best fits your provider.',
-      resolution: 'Standard keeps the best compatibility. 4K is forwarded as an explicit pixel size and depends on upstream support.',
+      resolution: 'Standard keeps the best compatibility. 2K/4K tries native large output first; if the upstream rejects the size, it generates a compatible image and upscales locally.',
       resolutionSub2api: 'Sub2API mode uses built-in Sora image sizes. The 4K preset becomes effective when you use an external compatible provider.',
       imageCount: 'The Responses profile is limited to one image. Other modes allow up to three.',
       referenceImage: 'Uploads stay in the active session and browser-local history only. Nothing is persisted on the server.'
@@ -4269,12 +4269,35 @@ export default {
       title: 'Reference Images (img-to-img)',
       hint: 'Up to {max} images · {bytes} MB each',
       add: 'Add reference',
+      preview: 'Preview reference image',
+      previewTitle: 'Reference {current}/{total}',
+      previewHint: 'Click outside or press Esc to close.',
+      previewAlt: 'Reference image preview',
       remove: 'Remove',
       tooMany: 'Maximum {max} reference images allowed',
       tooLarge: 'Image too large, max {max} MB per image',
       notImage: 'Please select an image file',
       readFailed: 'Failed to read file',
       empty: 'None uploaded'
+    },
+    promptCompatibility: {
+      title: 'Prompt May Trigger Upstream Safety Checks',
+      description: 'This prompt may be rejected by the image provider safety system, wait too long, or disconnect mid-generation. Choose how to handle this generation.',
+      recommendedBadge: 'Recommended',
+      compatibleActionTitle: 'Use Compatible Version',
+      compatibleActionDesc: 'Keep the visual intent while lowering rejection, long wait, or disconnect risk.',
+      originalActionTitle: 'Use Original Prompt',
+      originalActionDesc: 'Send the prompt unchanged. Failure or long waits may be more likely.',
+      editActionTitle: 'Go Back and Edit',
+      editActionDesc: 'Return to the editor and adjust the prompt yourself before generating.',
+      previewTitle: 'Prompt Preview',
+      originalTitle: 'Original Prompt',
+      originalHint: 'Keeps the full creative intent, but has a higher chance of failing.',
+      compatibleTitle: 'Compatible Prompt',
+      compatibleHint: 'Preserves pose, composition, outfit, background, and style where possible while softening age, campus, or camera wording that often disconnects.',
+      cancel: 'Cancel',
+      useOriginal: 'Use Original Prompt',
+      useCompatible: 'Use Compatible Version'
     },
     translate: {
       action: 'Translate prompt',
@@ -4327,6 +4350,21 @@ export default {
     banner: {
       switchToBrowserDirect: 'Use Browser Direct',
       dismiss: 'Dismiss'
+    },
+    generationErrors: {
+      genericTitle: 'Image generation failed',
+      genericMessage: 'This request did not return a usable image.',
+      genericDetail: 'The raw upstream error is kept below. Check the model name, quota, provider settings, and prompt before retrying.',
+      backendTitle: 'Cannot reach backend or relay',
+      backendMessage: 'The browser could not connect to the configured service address, so the request did not reliably reach upstream.',
+      backendDetail: 'Check the Base URL, API key, service status, local network, and CORS settings. You can also switch to Browser Direct and retry.',
+      upstreamConnectionTitle: 'Upstream relay connection failed',
+      upstreamConnectionMessage: 'The relay or upstream API disconnected during the request, so this job did not finish.',
+      upstreamConnectionDetail: 'Common causes include upstream timeout, account queueing, unstable gateway, or network interruption. Retry later; if it keeps failing, change the relay endpoint or check relay status.',
+      streamDisconnectedTitle: 'Upstream stream disconnected before completion',
+      streamDisconnectedMessage: 'The image API closed the stream before returning the final image, so no completed output was received.',
+      streamDisconnectedDetail: 'Common causes: prompt safety checks, upstream queue timeout, or relay gateway interruption. Enable “Safety compatible” and retry, or reduce age, campus, camera-angle, and other wording that often triggers safety checks.',
+      rawPrefix: 'Raw upstream error: {value}'
     },
     testConnection: {
       idle: 'Test connection',
@@ -4387,8 +4425,14 @@ export default {
       clear: 'Clear',
       optimize: 'Optimize Prompt',
       optimizing: 'Polishing...',
+      upstreamCompatibility: 'Safety compatible',
+      upstreamCompatibilityOn: 'Safety compatible: on. High-risk combinations are reframed with photography, outfit, and storyboard language while preserving the original setup.',
+      upstreamCompatibilityOff: 'Safety compatible: off. High-risk prompts are sent unchanged.',
       randomIdea: 'Random Idea',
       inspiring: 'Generating...',
+      autoCleanPlaceholders: 'Auto clean placeholders',
+      autoCleanPlaceholdersOn: 'Auto clean placeholders: on',
+      autoCleanPlaceholdersOff: 'Auto clean placeholders: off',
       negativeTitle: 'Negative Prompt',
       negativePlaceholder: 'Add things to avoid, such as blur, watermark, extra limbs...'
     },
@@ -4521,8 +4565,8 @@ export default {
     },
     resolutionDescriptions: {
       standard: 'Best compatibility',
-      twoK: 'Higher detail',
-      fourK: 'Maximum detail'
+      twoK: 'Native first',
+      fourK: '3840 long edge'
     },
     providerModes: {
       sub2api: {
@@ -4564,6 +4608,8 @@ export default {
       soraKeyRequired: 'Enter a current-site API key first.',
       externalConfigRequired: 'Third-party mode needs both Base URL and API key.',
       browserDirectFallback: 'Browser direct mode failed. Switched to relay mode automatically.',
+      nativeResolutionFallback: 'Native {target} failed; generated at {size} and upscaled locally instead.',
+      promptCompatibilityApplied: 'Reframed the prompt with photography and outfit language while preserving the original setup.',
       generatedCount: 'Generated {count} image(s).',
       generateFailed: 'Image generation failed.',
       selectionRequired: 'Select at least one image first.',
@@ -4603,7 +4649,7 @@ export default {
     },
     sidebar: {
       helperTitle: 'Prompt assistant',
-      helperSubtitle: 'Model used by Optimize prompt and Random idea.',
+      helperSubtitle: 'Model used by Optimize prompt, Random idea, and Translate prompt.',
       helperHint: 'Pick an LLM to polish prompts or seed ideas. Supports OpenAI, Claude, and OpenAI-compatible third parties.',
       helperConfigure: 'Configure model',
       helperMissing: 'Not configured',
@@ -4614,7 +4660,11 @@ export default {
       helperApiKeyPlaceholder: 'sk-...',
       helperModel: 'Model',
       helperModelPlaceholder: 'e.g. gpt-4o-mini',
-      helperModelHint: 'Type a model id or pick from suggestions.',
+      helperModelHint: 'Used by Optimize prompt, Random idea, and Translate prompt.',
+      helperQualityMissing: 'Choose a strong text model; better prompt-writing models make optimization and ideas more stable.',
+      helperQualityImageModel: 'This looks like an image model. Use a text/chat model for steadier prompt optimization and ideas.',
+      helperQualityStrong: 'This model is a good fit for the prompt assistant and should produce concrete visual wording.',
+      helperQualityGeneric: 'If results feel short or generic, try a text model like gpt-4o-mini, Claude Sonnet, Gemini, Qwen, or DeepSeek.',
       helperCustom: 'Custom',
       helperCustomHint: 'OpenAI-compatible upstream',
       helperCompatibilityNote: 'Works with any OpenAI-compatible upstream: sub2api, NewAPI, CCAPI, etc. Endpoint is /chat/completions.',

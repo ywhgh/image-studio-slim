@@ -23,6 +23,36 @@ interface RelayImageStudioResponse {
   results: RelayImageStudioResult[]
 }
 
+type RelayImageJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled'
+
+interface RelayImageJobError {
+  code: number
+  msg: string
+  err_code?: string
+}
+
+interface RelayImageJobResponse {
+  id: string
+  status: RelayImageJobStatus
+  profile?: string
+  queue_position?: number
+  queue_length: number
+  running: number
+  concurrency: number
+  created_at: string
+  started_at?: string
+  finished_at?: string
+  results?: RelayImageStudioResult[]
+  error?: RelayImageJobError
+}
+
+export class ImageGenerationJobCanceledError extends Error {
+  constructor() {
+    super('Image generation was canceled.')
+    this.name = 'ImageGenerationJobCanceledError'
+  }
+}
+
 export class BrowserDirectGenerationError extends Error {
   code: string
   fallbackSuggested: boolean
@@ -250,7 +280,7 @@ function resolvePresetLongEdge(preset: ImageStudioResolutionPreset): number | nu
     case '2k':
       return 2048
     case '4k':
-      return 4096
+      return 3840
     default:
       return null
   }
@@ -379,6 +409,41 @@ function normalizeImageStudioResults(payload: unknown, formatHint?: string): Nor
     })
   }
 
+  const addTextContent = (text: string, revisedPrompt?: string) => {
+    const value = text.trim()
+    if (!value) {
+      return
+    }
+
+    try {
+      const nested = getObject(JSON.parse(value))
+      if (nested) {
+        const nestedUrl = getString(nested.url) || getString(nested.image_url) || getString(nested.media_url)
+        if (nestedUrl) {
+          addResult(nestedUrl, 'remote-url', getString(nested.mime_type), revisedPrompt)
+        }
+        const nestedB64 = getString(nested.result) || getString(nested.b64_json)
+        if (nestedB64) {
+          const mimeType = getString(nested.mime_type) || defaultMime
+          addResult(buildDataUrl(nestedB64, mimeType), 'data-url', mimeType, revisedPrompt)
+        }
+      }
+    } catch {
+      // Plain text chat responses often contain markdown or bare URLs.
+    }
+
+    value.split(/\s+/).forEach((part) => {
+      const token = part.trim().replace(/^[`"'(<\[{]+|[`"')>\]}.,;!]+$/g, '')
+      if (token.startsWith('data:image/')) {
+        addResult(token, 'data-url', parseMimeTypeFromDataUrl(token), revisedPrompt)
+        return
+      }
+      if (token.startsWith('http://') || token.startsWith('https://')) {
+        addResult(token, 'remote-url', undefined, revisedPrompt)
+      }
+    })
+  }
+
   const mediaUrl = getString(root.media_url)
   if (mediaUrl) {
     addResult(mediaUrl, 'remote-url')
@@ -438,6 +503,49 @@ function normalizeImageStudioResults(payload: unknown, formatHint?: string): Nor
         if (!contentRecord) return
 
         const contentUrl = getString(contentRecord.url) || getString(contentRecord.image_url)
+        if (contentUrl) {
+          addResult(contentUrl, 'remote-url', getString(contentRecord.mime_type), revisedPrompt)
+        }
+
+        const contentB64 = getString(contentRecord.result) || getString(contentRecord.b64_json)
+        if (contentB64) {
+          const mimeType = getString(contentRecord.mime_type) || defaultMime
+          addResult(buildDataUrl(contentB64, mimeType), 'data-url', mimeType, revisedPrompt)
+        }
+      })
+    })
+  }
+
+  if (Array.isArray(root.choices)) {
+    root.choices.forEach((item) => {
+      const record = getObject(item)
+      const message = getObject(record?.message)
+      if (!message) return
+
+      const revisedPrompt = getString(message.revised_prompt) || getString(message.revisedPrompt)
+      const content = message.content
+      if (typeof content === 'string') {
+        addTextContent(content, revisedPrompt)
+        return
+      }
+      if (!Array.isArray(content)) {
+        return
+      }
+      content.forEach((contentItem) => {
+        const contentRecord = getObject(contentItem)
+        if (!contentRecord) return
+
+        const text = getString(contentRecord.text) || getString(contentRecord.content)
+        if (text) {
+          addTextContent(text, revisedPrompt)
+        }
+
+        const imageUrlValue = contentRecord.image_url
+        const imageUrlRecord = getObject(imageUrlValue)
+        const contentUrl =
+          getString(contentRecord.url) ||
+          getString(contentRecord.image_url) ||
+          getString(imageUrlRecord?.url)
         if (contentUrl) {
           addResult(contentUrl, 'remote-url', getString(contentRecord.mime_type), revisedPrompt)
         }
@@ -602,6 +710,7 @@ function parseFetchErrorBody(payload: unknown): string {
   return (
     getString(nestedError?.message) ||
     getString(root.message) ||
+    getString(root.msg) ||
     getString(root.detail) ||
     getString(root.error)
   )
@@ -611,16 +720,109 @@ export interface ImageStudioGenerationOptions {
   signal?: AbortSignal
 }
 
+const IMAGE_GENERATION_RELAY_TIMEOUT_MS = 16 * 60 * 1000
+const IMAGE_GENERATION_JOB_POLL_MS = 1500
+
+function waitForJobPoll(signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'))
+      return
+    }
+    const timer = window.setTimeout(() => {
+      cleanup()
+      resolve()
+    }, IMAGE_GENERATION_JOB_POLL_MS)
+    const onAbort = () => {
+      cleanup()
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+    const cleanup = () => {
+      window.clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+async function cancelRelayJob(jobId: string): Promise<void> {
+  try {
+    await apiClient.delete(`/image-studio/generate-external/jobs/${encodeURIComponent(jobId)}`)
+  } catch {
+    // Best-effort cancellation. The poll loop will still stop locally.
+  }
+}
+
+async function generateImageWithExternalRelayJob(
+  request: ExternalImageStudioRequest,
+  options: ImageStudioGenerationOptions = {}
+): Promise<NormalizedImageResult[]> {
+  const { data: created } = await apiClient.post<RelayImageJobResponse>(
+    '/image-studio/generate-external/jobs',
+    request,
+    {
+      signal: options.signal,
+      timeout: 30000,
+    }
+  )
+
+  const jobId = created.id
+  if (!jobId) {
+    throw new Error('Image generation job was not created.')
+  }
+
+  const abortHandler = () => {
+    void cancelRelayJob(jobId)
+  }
+  options.signal?.addEventListener('abort', abortHandler, { once: true })
+
+  try {
+    let current = created
+    while (current.status === 'queued' || current.status === 'running') {
+      await waitForJobPoll(options.signal)
+      const { data } = await apiClient.get<RelayImageJobResponse>(
+        `/image-studio/generate-external/jobs/${encodeURIComponent(jobId)}`,
+        {
+          signal: options.signal,
+          timeout: 30000,
+        }
+      )
+      current = data
+    }
+
+    if (current.status === 'succeeded') {
+      return normalizeImageStudioResults({ results: current.results || [] }, request.format)
+    }
+    if (current.status === 'canceled') {
+      throw new ImageGenerationJobCanceledError()
+    }
+    throw new Error(current.error?.msg || 'Image generation failed.')
+  } finally {
+    options.signal?.removeEventListener('abort', abortHandler)
+  }
+}
+
 export async function generateImageWithExternalRelay(
   request: ExternalImageStudioRequest,
   options: ImageStudioGenerationOptions = {}
 ): Promise<NormalizedImageResult[]> {
-  const { data } = await apiClient.post<RelayImageStudioResponse>(
-    '/image-studio/generate-external',
-    request,
-    { signal: options.signal }
-  )
-  return normalizeImageStudioResults(data, request.format)
+  try {
+    return await generateImageWithExternalRelayJob(request, options)
+  } catch (error) {
+    const candidate = error as { status?: number; code?: string }
+    if (candidate.status === 404 || candidate.status === 405 || candidate.code === 'JOB_NOT_FOUND') {
+      const { data } = await apiClient.post<RelayImageStudioResponse>(
+        '/image-studio/generate-external',
+        request,
+        {
+          signal: options.signal,
+          timeout: IMAGE_GENERATION_RELAY_TIMEOUT_MS,
+        }
+      )
+      return normalizeImageStudioResults(data, request.format)
+    }
+    throw error
+  }
 }
 
 export async function generateImageWithExternalBrowser(

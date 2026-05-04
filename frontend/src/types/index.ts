@@ -297,8 +297,11 @@ export interface UserStats {
 
 export interface ApiResponse<T = unknown> {
   code: number
-  message: string
-  data: T
+  message?: string
+  msg?: string
+  detail?: string
+  error?: string
+  data?: T
 }
 
 export interface ApiError {
