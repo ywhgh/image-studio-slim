@@ -116,7 +116,7 @@ All settings are environment variables. See [.env.example](./.env.example).
 | `PORT`                     | `8090`                 | Listen port                                      |
 | `UPSTREAM_TIMEOUT`         | `15m` (compose: `240s`) | Total time per upstream call                    |
 | `DOWNLOAD_TIMEOUT`         | `60s`                  | Total time for `/download` proxy                 |
-| `IMAGE_JOB_CONCURRENCY`    | `3`                    | Parallel background image jobs                   |
+| `IMAGE_JOB_CONCURRENCY`    | `5`                    | Parallel background image jobs                   |
 | `IMAGE_JOB_QUEUE_SIZE`     | `100`                  | Max queued image jobs waiting in memory          |
 | `IMAGE_JOB_RETENTION`      | `2h`                   | Finished job result retention                    |
 | `ALLOW_PRIVATE_UPSTREAM`   | `false`                | Allow loopback / RFC1918 hosts (SSRF guard off)  |
@@ -175,3 +175,4 @@ multi-platform-account features and requires PostgreSQL + Redis. None of
 that is needed to "type a prompt → see an image." The legacy code is
 preserved in `_legacy/` for reference; you can delete the folder once the
 slim deployment is working.
+

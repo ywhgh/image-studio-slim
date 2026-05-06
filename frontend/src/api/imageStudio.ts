@@ -46,6 +46,32 @@ interface RelayImageJobResponse {
   error?: RelayImageJobError
 }
 
+export interface ImageStudioBatchProgress {
+  total: number
+  completed: number
+  failed: number
+  running: number
+  queued: number
+  queueLength?: number
+  concurrency?: number
+  items: ImageStudioBatchItemProgress[]
+}
+
+export interface ImageStudioBatchItemProgress {
+  index: number
+  status: BatchTaskStatus
+  attempt: number
+  startedAt?: number
+  finishedAt?: number
+  resultCount?: number
+}
+
+export interface ImageStudioBatchResultMeta {
+  index: number
+  total: number
+  attempt: number
+}
+
 export class ImageGenerationJobCanceledError extends Error {
   constructor() {
     super('Image generation was canceled.')
@@ -587,7 +613,7 @@ function collectImageInputs(request: ExternalImageStudioRequest): string[] {
 }
 
 function mapExternalPayload(request: ExternalImageStudioRequest) {
-  const count = Math.max(1, Math.min(10, request.count || 1))
+  const count = normalizeImageRequestCount(request.count)
   const size = resolveSizeFromAspect(request.aspect_ratio, request.size)
   const imageInputs = collectImageInputs(request)
 
@@ -718,10 +744,197 @@ function parseFetchErrorBody(payload: unknown): string {
 
 export interface ImageStudioGenerationOptions {
   signal?: AbortSignal
+  onBatchProgress?: (progress: ImageStudioBatchProgress) => void
+  onImageResult?: (
+    results: NormalizedImageResult[],
+    meta: ImageStudioBatchResultMeta
+  ) => void | Promise<void>
+}
+
+interface InternalImageStudioGenerationOptions extends ImageStudioGenerationOptions {
+  onJobProgress?: (job: RelayImageJobResponse) => void
 }
 
 const IMAGE_GENERATION_RELAY_TIMEOUT_MS = 16 * 60 * 1000
 const IMAGE_GENERATION_JOB_POLL_MS = 1500
+const MAX_BATCH_IMAGE_COUNT = 5
+
+export type BatchTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled'
+
+interface BatchTaskState {
+  status: BatchTaskStatus
+  attempt: number
+  startedAt?: number
+  finishedAt?: number
+  resultCount?: number
+}
+
+function normalizeImageRequestCount(count?: number): number {
+  if (!Number.isFinite(count) || !count || count <= 0) {
+    return 1
+  }
+  return Math.max(1, Math.min(MAX_BATCH_IMAGE_COUNT, Math.round(count)))
+}
+
+function createSingleImageRequest(request: ExternalImageStudioRequest): ExternalImageStudioRequest {
+  return {
+    ...request,
+    count: 1,
+  }
+}
+
+function batchStatusFromJob(status: RelayImageJobStatus): BatchTaskStatus {
+  switch (status) {
+    case 'succeeded':
+      return 'succeeded'
+    case 'failed':
+      return 'failed'
+    case 'canceled':
+      return 'canceled'
+    case 'running':
+      return 'running'
+    default:
+      return 'queued'
+  }
+}
+
+function emitBatchProgress(
+  options: ImageStudioGenerationOptions,
+  states: BatchTaskState[],
+  meta: { queueLength?: number; concurrency?: number } = {}
+) {
+  if (!options.onBatchProgress) {
+    return
+  }
+  const completed = states.filter((state) => state.status === 'succeeded').length
+  const failed = states.filter((state) => state.status === 'failed' || state.status === 'canceled').length
+  const running = states.filter((state) => state.status === 'running').length
+  const queued = states.filter((state) => state.status === 'queued').length
+  options.onBatchProgress({
+    total: states.length,
+    completed,
+    failed,
+    running,
+    queued,
+    queueLength: meta.queueLength,
+    concurrency: meta.concurrency,
+    items: states.map((state, index) => ({
+      index,
+      status: state.status,
+      attempt: state.attempt,
+      startedAt: state.startedAt,
+      finishedAt: state.finishedAt,
+      resultCount: state.resultCount,
+    })),
+  })
+}
+
+function updateBatchTaskState(
+  states: BatchTaskState[],
+  index: number,
+  status: BatchTaskStatus,
+  options: ImageStudioGenerationOptions,
+  meta: { queueLength?: number; concurrency?: number },
+  patch: Partial<BatchTaskState> = {}
+) {
+  const now = Date.now()
+  const current = states[index]
+  const next: BatchTaskState = {
+    ...current,
+    ...patch,
+    status,
+  }
+  if (status === 'queued') {
+    next.startedAt = undefined
+    next.finishedAt = undefined
+    next.resultCount = undefined
+  } else if (status === 'running' && !next.startedAt) {
+    next.startedAt = now
+    next.finishedAt = undefined
+  } else if (status === 'succeeded' || status === 'failed' || status === 'canceled') {
+    next.finishedAt = now
+  }
+  states[index] = next
+  emitBatchProgress(options, states, meta)
+}
+
+async function runExternalImageBatch(
+  request: ExternalImageStudioRequest,
+  options: ImageStudioGenerationOptions,
+  runSingle: (
+    request: ExternalImageStudioRequest,
+    options: InternalImageStudioGenerationOptions
+  ) => Promise<NormalizedImageResult[]>
+): Promise<NormalizedImageResult[]> {
+  const total = normalizeImageRequestCount(request.count)
+  if (total <= 1) {
+    return runSingle(createSingleImageRequest(request), options)
+  }
+
+  const states: BatchTaskState[] = Array.from({ length: total }, () => ({
+    status: 'queued',
+    attempt: 0,
+  }))
+  const meta: { queueLength?: number; concurrency?: number } = {}
+  emitBatchProgress(options, states, meta)
+  const maxAttempts = 2
+
+  const tasks = states.map(async (_state, index) => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      updateBatchTaskState(states, index, 'running', options, meta, { attempt })
+
+      try {
+        const results = await runSingle(createSingleImageRequest(request), {
+          ...options,
+          onJobProgress: (job) => {
+            const status = batchStatusFromJob(job.status)
+            meta.queueLength = job.queue_length
+            meta.concurrency = job.concurrency
+            if (status === 'queued' || status === 'running') {
+              updateBatchTaskState(states, index, status, options, meta, { attempt })
+            }
+          },
+        })
+        if (!results.length) {
+          throw new Error('Image generation returned no image.')
+        }
+        try {
+          await options.onImageResult?.(results, { index, total, attempt })
+        } catch {
+          // The caller still receives final results even if early insertion fails.
+        }
+        updateBatchTaskState(states, index, 'succeeded', options, meta, {
+          attempt,
+          resultCount: results.length,
+        })
+        return results
+      } catch (error) {
+        if (options.signal?.aborted) {
+          updateBatchTaskState(states, index, 'canceled', options, meta, { attempt })
+          throw error
+        }
+        if (attempt < maxAttempts) {
+          updateBatchTaskState(states, index, 'queued', options, meta, { attempt })
+          continue
+        }
+        updateBatchTaskState(states, index, 'failed', options, meta, { attempt })
+        throw error
+      }
+    }
+    throw new Error('Image generation failed.')
+  })
+
+  const settled = await Promise.allSettled(tasks)
+  const results = settled.flatMap((item) => item.status === 'fulfilled' ? item.value : [])
+  if (results.length > 0) {
+    return results
+  }
+  const firstFailure = settled.find((item): item is PromiseRejectedResult => item.status === 'rejected')
+  if (firstFailure) {
+    throw firstFailure.reason
+  }
+  throw new Error('Image generation failed.')
+}
 
 function waitForJobPoll(signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -755,7 +968,7 @@ async function cancelRelayJob(jobId: string): Promise<void> {
 
 async function generateImageWithExternalRelayJob(
   request: ExternalImageStudioRequest,
-  options: ImageStudioGenerationOptions = {}
+  options: InternalImageStudioGenerationOptions = {}
 ): Promise<NormalizedImageResult[]> {
   const { data: created } = await apiClient.post<RelayImageJobResponse>(
     '/image-studio/generate-external/jobs',
@@ -770,6 +983,7 @@ async function generateImageWithExternalRelayJob(
   if (!jobId) {
     throw new Error('Image generation job was not created.')
   }
+  options.onJobProgress?.(created)
 
   const abortHandler = () => {
     void cancelRelayJob(jobId)
@@ -788,6 +1002,7 @@ async function generateImageWithExternalRelayJob(
         }
       )
       current = data
+      options.onJobProgress?.(current)
     }
 
     if (current.status === 'succeeded') {
@@ -802,9 +1017,9 @@ async function generateImageWithExternalRelayJob(
   }
 }
 
-export async function generateImageWithExternalRelay(
+async function generateImageWithExternalRelaySingle(
   request: ExternalImageStudioRequest,
-  options: ImageStudioGenerationOptions = {}
+  options: InternalImageStudioGenerationOptions = {}
 ): Promise<NormalizedImageResult[]> {
   try {
     return await generateImageWithExternalRelayJob(request, options)
@@ -825,9 +1040,20 @@ export async function generateImageWithExternalRelay(
   }
 }
 
-export async function generateImageWithExternalBrowser(
+export async function generateImageWithExternalRelay(
   request: ExternalImageStudioRequest,
   options: ImageStudioGenerationOptions = {}
+): Promise<NormalizedImageResult[]> {
+  const count = normalizeImageRequestCount(request.count)
+  if (count > 1) {
+    return runExternalImageBatch({ ...request, count }, options, generateImageWithExternalRelaySingle)
+  }
+  return generateImageWithExternalRelaySingle({ ...request, count }, options)
+}
+
+async function generateImageWithExternalBrowserSingle(
+  request: ExternalImageStudioRequest,
+  options: InternalImageStudioGenerationOptions = {}
 ): Promise<NormalizedImageResult[]> {
   const mapped = mapExternalPayload(request)
   const requestHeaders = new Headers()
@@ -863,6 +1089,17 @@ export async function generateImageWithExternalBrowser(
   }
 
   return normalizeImageStudioResults(payload, request.format)
+}
+
+export async function generateImageWithExternalBrowser(
+  request: ExternalImageStudioRequest,
+  options: ImageStudioGenerationOptions = {}
+): Promise<NormalizedImageResult[]> {
+  const count = normalizeImageRequestCount(request.count)
+  if (count > 1) {
+    return runExternalImageBatch({ ...request, count }, options, generateImageWithExternalBrowserSingle)
+  }
+  return generateImageWithExternalBrowserSingle({ ...request, count }, options)
 }
 
 export async function fetchImageStudioUsage(apiKey: string): Promise<ImageStudioUsageResponse> {

@@ -4262,7 +4262,7 @@ export default {
       aspectRatio: 'Pick the frame first, then choose the resolution preset that best fits your provider.',
       resolution: 'Standard keeps the best compatibility. 2K/4K tries native large output first; if the upstream rejects the size, it generates a compatible image and upscales locally.',
       resolutionSub2api: 'Sub2API mode uses built-in Sora image sizes. The 4K preset becomes effective when you use an external compatible provider.',
-      imageCount: 'The Responses profile is limited to one image. Other modes allow up to three.',
+      imageCount: 'The Responses profile is limited to one image. Other modes allow up to five.',
       referenceImage: 'Uploads stay in the active session and browser-local history only. Nothing is persisted on the server.'
     },
     referenceImages: {
@@ -4426,8 +4426,14 @@ export default {
       optimize: 'Optimize Prompt',
       optimizing: 'Polishing...',
       upstreamCompatibility: 'Safety compatible',
-      upstreamCompatibilityOn: 'Safety compatible: on. High-risk combinations are reframed with photography, outfit, and storyboard language while preserving the original setup.',
+      upstreamCompatibilityRewriting: 'Rewriting...',
+      upstreamCompatibilityOn: 'Safety compatible: on. Calls the prompt model before generation and reframes the setup with photography, outfit, and storyboard language.',
       upstreamCompatibilityOff: 'Safety compatible: off. High-risk prompts are sent unchanged.',
+      upstreamCompatibilityHint: 'Off by default. When enabled, the configured prompt model rewrites the prompt before it is sent to the image provider.',
+      upstreamCompatibilityMissing: 'Configure the prompt model on the right before enabling safety-compatible generation.',
+      quickCountLabel: 'Images',
+      quickCountOption: '{count}',
+      quickCountHint: 'Up to 5 images. Jobs enter the background queue and run by concurrency.',
       randomIdea: 'Random Idea',
       inspiring: 'Generating...',
       autoCleanPlaceholders: 'Auto clean placeholders',
@@ -4526,7 +4532,8 @@ export default {
     },
     loading: {
       generatingTitle: 'Generating now',
-      generatingText: 'The running task is being prepared. Final images will appear in the workbench as soon as they finish.'
+      generatingText: 'The running task is being prepared. Final images will appear in the workbench as soon as they finish.',
+      batchGeneratingText: 'Generating {done}/{total} images. Results enter the workbench one by one.'
     },
     workbench: {
       title: 'Workbench',
@@ -4555,6 +4562,12 @@ export default {
       elapsedSeconds: 'Elapsed {value}s',
       durationSeconds: 'Took {value}s',
       generatingHeading: 'Generating...',
+      batchGeneratingHeading: 'Batch generating {done}/{total}',
+      batchProgressLabel: '{done}/{total}',
+      batchProgressDetail: 'Running {running}, queued {queued}',
+      batchProgressDetailWithFailed: 'Running {running}, queued {queued}, failed {failed}',
+      currentImageProgress: 'Current image',
+      currentBatchImageProgress: 'Current {current}/{total}',
       etaSeconds: 'About {value}s remaining',
       etaUnknown: 'Prompt parsed, rendering image...'
     },
@@ -4610,7 +4623,11 @@ export default {
       browserDirectFallback: 'Browser direct mode failed. Switched to relay mode automatically.',
       nativeResolutionFallback: 'Native {target} failed; generated at {size} and upscaled locally instead.',
       promptCompatibilityApplied: 'Reframed the prompt with photography and outfit language while preserving the original setup.',
+      promptCompatibilityFailed: 'Safety-compatible rewrite failed',
+      upstreamCompatibilityConfigure: 'Configure the prompt model before generating with Safety compatible enabled.',
+      upstreamCompatibilityBusy: 'The prompt model is still processing. Try again shortly.',
       generatedCount: 'Generated {count} image(s).',
+      batchGeneratedPartial: 'Completed {done}/{total} images; {failed} task(s) failed.',
       generateFailed: 'Image generation failed.',
       selectionRequired: 'Select at least one image first.',
       selectedDownloaded: 'Started downloading {count} selected image(s).',

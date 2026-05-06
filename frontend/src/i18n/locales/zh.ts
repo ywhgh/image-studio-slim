@@ -4434,7 +4434,7 @@ export default {
       aspectRatio: '先确定画幅，再搭配合适的分辨率预设，桌面端和移动端都会按当前比例自适应展示。',
       resolution: '标准档兼容性最好。2K/4K 会优先请求原生大尺寸；如果上游拒绝尺寸，会自动用兼容尺寸生成后本地放大。',
       resolutionSub2api: 'Sub2API 模式当前仍使用内置 Sora 图像尺寸，4K 预设会在外部兼容模式下生效。',
-      imageCount: 'Responses 协议最多生成 1 张图，其余模式最多可生成 3 张。',
+      imageCount: 'Responses 协议最多生成 1 张图，其余模式最多可生成 5 张。',
       referenceImage: '上传文件只保留在当前会话和浏览器本地工作区中，不会持久化到服务器。'
     },
     referenceImages: {
@@ -4598,8 +4598,14 @@ export default {
       optimize: '优化提示词',
       optimizing: '润色中...',
       upstreamCompatibility: '风控兼容',
-      upstreamCompatibilityOn: '风控兼容：开，检测到高风险组合时会用摄影、服装和分镜语言保留原设定',
+      upstreamCompatibilityRewriting: '兼容重写中...',
+      upstreamCompatibilityOn: '风控兼容：开，生成前调用提示词模型，用摄影、服装和分镜语言保留原设定',
       upstreamCompatibilityOff: '风控兼容：关，检测到高风险组合时仍按原提示词提交',
+      upstreamCompatibilityHint: '默认关闭。开启后会先调用右侧“提示词模型”重写，再提交给生图接口；适合容易被上游误判的提示词。',
+      upstreamCompatibilityMissing: '开启风控兼容前，请先在右侧配置提示词模型。',
+      quickCountLabel: '生成张数',
+      quickCountOption: '{count} 张',
+      quickCountHint: '最多 5 张，会进入后台队列并按并发执行。',
       randomIdea: '随机灵感',
       inspiring: '生成中...',
       autoCleanPlaceholders: '自动清理占位符',
@@ -4698,7 +4704,8 @@ export default {
     },
     loading: {
       generatingTitle: '正在生成图片',
-      generatingText: '正在运行的任务会先占位显示，完成后会自动加入工作区。'
+      generatingText: '正在运行的任务会先占位显示，完成后会自动加入工作区。',
+      batchGeneratingText: '正在生成 {done}/{total} 张，结果会逐张进入工作区。'
     },
     workbench: {
       title: '工作区',
@@ -4727,6 +4734,12 @@ export default {
       elapsedSeconds: '已耗时 {value}s',
       durationSeconds: '用时 {value}s',
       generatingHeading: '生成中...',
+      batchGeneratingHeading: '批量生成中 {done}/{total}',
+      batchProgressLabel: '{done}/{total}',
+      batchProgressDetail: '运行 {running}，排队 {queued}',
+      batchProgressDetailWithFailed: '运行 {running}，排队 {queued}，失败 {failed}',
+      currentImageProgress: '当前图',
+      currentBatchImageProgress: '当前第 {current}/{total} 张',
       etaSeconds: '预计剩余 {value} 秒',
       etaUnknown: '提示词解析完成，正在生成图像...'
     },
@@ -4782,7 +4795,11 @@ export default {
       browserDirectFallback: '浏览器直连失败，已自动切换为中转模式。',
       nativeResolutionFallback: '原生 {target} 请求失败，已改用 {size} 生成并本地放大输出。',
       promptCompatibilityApplied: '已用摄影/服装语义重写提示词生成，尽量保留原图设定。',
+      promptCompatibilityFailed: '风控兼容重写失败',
+      upstreamCompatibilityConfigure: '请先配置提示词模型，再开启风控兼容生成。',
+      upstreamCompatibilityBusy: '提示词模型正在处理，请稍后再生成。',
       generatedCount: '已生成 {count} 张图片。',
+      batchGeneratedPartial: '已完成 {done}/{total} 张，有 {failed} 个任务失败。',
       generateFailed: '图片生成失败。',
       selectionRequired: '请先选择至少一张图片。',
       selectedDownloaded: '已开始下载 {count} 张选中图片。',

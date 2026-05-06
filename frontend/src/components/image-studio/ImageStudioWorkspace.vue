@@ -407,7 +407,7 @@
                           v-model.number="preferences.count"
                           type="range"
                           min="1"
-                          max="10"
+                          max="5"
                           class="studio-range"
                         />
                       </div>
@@ -464,13 +464,21 @@
                       class="studio-chip"
                       :class="{ active: upstreamCompatibilityEnabled }"
                       :aria-pressed="upstreamCompatibilityEnabled"
+                      :disabled="promptHelperBusy === 'compatibility'"
                       :title="upstreamCompatibilityEnabled
                         ? t('imageStudio.promptPanel.upstreamCompatibilityOn')
                         : t('imageStudio.promptPanel.upstreamCompatibilityOff')"
                       @click="upstreamCompatibilityEnabled = !upstreamCompatibilityEnabled"
                     >
-                      <Icon :name="upstreamCompatibilityEnabled ? 'shield' : 'x'" size="sm" />
-                      <span>{{ t('imageStudio.promptPanel.upstreamCompatibility') }}</span>
+                      <Icon
+                        :name="promptHelperBusy === 'compatibility'
+                          ? 'sync'
+                          : (upstreamCompatibilityEnabled ? 'shield' : 'x')"
+                        size="sm"
+                      />
+                      <span>{{ promptHelperBusy === 'compatibility'
+                        ? t('imageStudio.promptPanel.upstreamCompatibilityRewriting')
+                        : t('imageStudio.promptPanel.upstreamCompatibility') }}</span>
                     </button>
 
                     <button
@@ -497,6 +505,14 @@
                       {{ chip }}
                     </button>
                   </div>
+                  <p
+                    class="studio-compatibility-note"
+                    :class="{ 'is-warning': upstreamCompatibilityEnabled && !promptHelperConfigured }"
+                  >
+                    {{ upstreamCompatibilityEnabled && !promptHelperConfigured
+                      ? t('imageStudio.promptPanel.upstreamCompatibilityMissing')
+                      : t('imageStudio.promptPanel.upstreamCompatibilityHint') }}
+                  </p>
 
                   <template v-if="preferences.providerMode !== 'sub2api'">
                     <div class="studio-negative-header">
@@ -566,6 +582,25 @@
                 </div>
 
                 <div class="studio-prompt-actions">
+                  <div v-if="!countSliderDisabled" class="studio-count-quick">
+                    <span class="studio-count-quick-label">{{ t('imageStudio.promptPanel.quickCountLabel') }}</span>
+                    <button
+                      v-for="countOption in quickCountOptions"
+                      :key="countOption"
+                      type="button"
+                      class="studio-count-quick-button"
+                      :class="{ active: effectiveCount === countOption }"
+                      :aria-pressed="effectiveCount === countOption"
+                      :disabled="generating"
+                      @click="preferences.count = countOption"
+                    >
+                      {{ t('imageStudio.promptPanel.quickCountOption', { count: countOption }) }}
+                    </button>
+                    <span class="studio-count-quick-hint">
+                      {{ t('imageStudio.promptPanel.quickCountHint') }}
+                    </span>
+                  </div>
+
                   <button
                     v-if="!generating"
                     type="button"
@@ -984,7 +1019,7 @@
                 <div class="studio-preview-generating-shine"></div>
                 <div class="studio-preview-generating-label">
                   <Icon name="sparkles" size="sm" />
-                  <span>{{ t('imageStudio.workbench.generatingHeading') }}</span>
+                  <span>{{ generationPreviewLabel }}</span>
                 </div>
               </div>
             </div>
@@ -1097,7 +1132,7 @@
                 <div class="studio-preview-skeleton-shine"></div>
                 <div class="studio-preview-generating-label">
                   <Icon name="sparkles" size="sm" />
-                  <span>{{ t('imageStudio.workbench.generatingHeading') }}</span>
+                  <span>{{ generationPreviewLabel }}</span>
                 </div>
               </div>
               <div v-else class="studio-empty-preview">
@@ -1124,7 +1159,7 @@
                   {{ t('imageStudio.workbench.selectedCount', { count: selectedTileIds.length }) }}
                 </span>
                 <strong class="studio-progress-value">
-                  {{ generating ? `${Math.round(generationProgressPercent)}%` : t('imageStudio.statusBoard.ready') }}
+                  {{ generationProgressLabel }}
                 </strong>
               </div>
             </div>
@@ -1155,11 +1190,23 @@
 
             <div v-if="generating" class="studio-progress-info">
               <div class="studio-progress-info-text">
-                <strong>{{ t('imageStudio.workbench.generatingHeading') }}</strong>
-                <span v-if="estimatedRemainingSeconds != null">
-                  {{ t('imageStudio.workbench.etaSeconds', { value: estimatedRemainingSeconds }) }}
-                </span>
-                <span v-else>{{ t('imageStudio.workbench.etaUnknown') }}</span>
+                <strong>{{ generationPreviewLabel }}</strong>
+                <span v-if="generationBatchActive">{{ generationBatchDetailText }}</span>
+                <template v-else>
+                  <span v-if="estimatedRemainingSeconds != null">
+                    {{ t('imageStudio.workbench.etaSeconds', { value: estimatedRemainingSeconds }) }}
+                  </span>
+                  <span v-else>{{ t('imageStudio.workbench.etaUnknown') }}</span>
+                </template>
+                <div class="studio-current-progress">
+                  <div class="studio-current-progress-meta">
+                    <span>{{ currentImageProgressText }}</span>
+                    <strong>{{ Math.round(currentImageProgressPercent) }}%</strong>
+                  </div>
+                  <div class="studio-current-progress-track">
+                    <span :style="{ width: `${currentImageProgressPercent}%` }"></span>
+                  </div>
+                </div>
               </div>
               <button
                 type="button"
@@ -1693,6 +1740,7 @@ import {
   generateImageWithExternalRelay,
   resolveImageStudioSize,
 } from '@/api/imageStudio'
+import type { ImageStudioBatchProgress, ImageStudioGenerationOptions } from '@/api/imageStudio'
 import { useImageStudioAppearance } from '@/composables/useImageStudioAppearance'
 import { useImageStudioPreferences } from '@/composables/useImageStudioPreferences'
 import {
@@ -1754,7 +1802,7 @@ const sub2apiApiKey = ref('')
 const externalApiKey = ref('')
 const prompt = ref('')
 const negativePrompt = ref('')
-const upstreamCompatibilityEnabled = ref(true)
+const upstreamCompatibilityEnabled = ref(false)
 const autoCleanPlaceholders = ref(false)
 const referenceImages = ref<string[]>([])
 const REFERENCE_IMAGE_MAX_COUNT = 6
@@ -1861,6 +1909,8 @@ const generationAbort = ref<AbortController | null>(null)
 const generationStartedAt = ref<number | null>(null)
 const generationElapsedMs = ref(0)
 const lastGenerationDurationMs = ref<number | null>(null)
+const lastGenerationImageCount = ref(1)
+const generationBatchProgress = ref<ImageStudioBatchProgress | null>(null)
 const transientTiles = ref<ImageStudioWorkspaceTile[]>([])
 type GenerationErrorKind = 'backend-unreachable' | 'generic'
 type GenerationErrorDescription = {
@@ -2095,7 +2145,7 @@ function resetPromptHelperConfig() {
   promptHelperConfig.model = ''
 }
 
-const promptHelperBusy = ref<'optimize' | 'inspire' | null>(null)
+const promptHelperBusy = ref<'optimize' | 'inspire' | 'compatibility' | null>(null)
 
 interface OpenAIChatMessage {
   role: 'system' | 'user' | 'assistant'
@@ -2142,6 +2192,43 @@ async function callPromptHelper(messages: OpenAIChatMessage[], signal?: AbortSig
     throw new Error(t('imageStudio.toasts.helperEmpty'))
   }
   return content.trim()
+}
+
+function sanitizePromptHelperOutput(value: string): string {
+  const trimmed = value.trim()
+  return trimmed
+    .replace(/^```(?:text|txt)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .replace(/^["'“”]+|["'“”]+$/g, '')
+    .trim()
+}
+
+async function rewritePromptForCompatibility(
+  resolvedPromptText: string,
+  localCompatiblePrompt: string,
+  signal?: AbortSignal
+): Promise<string> {
+  const localeHint = locale.value === 'zh' ? '中文' : 'English'
+  const systemPrompt = `You are a senior text-to-image prompt editor. Rewrite the user's prompt in ${localeHint}. Keep the original visual setup, but translate risky wording into neutral professional photography or fashion language. Preserve subject, clothes, pose, composition, lighting, environment, and style as much as possible. If the prompt includes a person, make the subject an explicit adult. Keep the final output to one single prompt only, no bullets, no quotes, no markdown, no explanations.`
+  const userMessage = [
+    'Original prompt:',
+    resolvedPromptText,
+    '',
+    'Preferred safe rewrite:',
+    localCompatiblePrompt || '(none)',
+    '',
+    'Rules:',
+    '- Keep the same visual scene and composition as much as possible.',
+    '- Rephrase sensitive wording into neutral photography or fashion wording.',
+    '- Do not remove the outfit, background, pose, or mood unless needed for safety.',
+    '- Output only the final prompt text.',
+  ].join('\n')
+  const result = await callPromptHelper([
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userMessage },
+  ], signal)
+  const cleaned = sanitizePromptHelperOutput(result)
+  return cleaned || localCompatiblePrompt || resolvedPromptText
 }
 const workbenchSurfaceRef = ref<HTMLElement | null>(null)
 const lightboxStageRef = ref<HTMLElement | null>(null)
@@ -2360,6 +2447,8 @@ const formatOptions = computed(() => [
   { value: 'webp', label: t('imageStudio.formats.webp') },
 ])
 
+const quickCountOptions = [1, 2, 3, 4, 5]
+
 const promptChips = computed(() => (
   locale.value === 'zh'
     ? ['清晨', '湖泊', '雪山', '倒影', '木栈道', '薄雾', '超写实']
@@ -2544,7 +2633,7 @@ const effectiveCount = computed(() => {
   if (preferences.providerMode !== 'sub2api' && preferences.profile === 'openai-responses') {
     return 1
   }
-  return Math.max(1, Math.min(10, preferences.count))
+  return Math.max(1, Math.min(5, preferences.count))
 })
 
 const countSliderDisabled = computed(() => (
@@ -2770,11 +2859,124 @@ const estimatedRemainingSeconds = computed<number | null>(() => {
   return Math.max(0, Math.round(remaining))
 })
 
+const generationBatchActive = computed(() => (
+  generating.value && !!generationBatchProgress.value && generationBatchProgress.value.total > 1
+))
+
+const generationBatchFinishedCount = computed(() => {
+  const batch = generationBatchProgress.value
+  return batch ? batch.completed + batch.failed : 0
+})
+
+const generationBatchTotalCount = computed(() => (
+  generationBatchProgress.value?.total || effectiveCount.value
+))
+
+const generationCurrentBatchItem = computed(() => {
+  const items = generationBatchProgress.value?.items || []
+  return (
+    items.find((item) => item.status === 'running') ||
+    items.find((item) => item.status === 'queued') ||
+    null
+  )
+})
+
+const currentImageEstimateMs = computed(() => {
+  const items = generationBatchProgress.value?.items || []
+  const finishedDurations = items
+    .filter((item) => item.startedAt && item.finishedAt)
+    .map((item) => Math.max(1000, (item.finishedAt || 0) - (item.startedAt || 0)))
+
+  if (finishedDurations.length) {
+    const average = finishedDurations.reduce((sum, value) => sum + value, 0) / finishedDurations.length
+    return Math.max(15000, Math.min(240000, average))
+  }
+
+  if (lastGenerationDurationMs.value) {
+    return Math.max(15000, Math.min(240000, lastGenerationDurationMs.value / Math.max(1, lastGenerationImageCount.value)))
+  }
+
+  return 90000
+})
+
+const currentImageProgressPercent = computed(() => {
+  if (!generating.value) {
+    return 100
+  }
+
+  const batchItem = generationCurrentBatchItem.value
+  if (batchItem?.status === 'queued') {
+    return 0
+  }
+
+  const startedAt = batchItem?.startedAt
+  const progressTick = generationElapsedMs.value
+  const elapsed = startedAt
+    ? Math.max(0, Date.now() - startedAt + progressTick * 0)
+    : progressTick
+  const raw = (elapsed / currentImageEstimateMs.value) * 100
+  return Math.min(96, Math.max(3, raw))
+})
+
+const currentImageProgressText = computed(() => {
+  if (generationBatchActive.value) {
+    const current = (generationCurrentBatchItem.value?.index ?? generationBatchFinishedCount.value) + 1
+    return t('imageStudio.workbench.currentBatchImageProgress', {
+      current: Math.min(current, generationBatchTotalCount.value),
+      total: generationBatchTotalCount.value,
+    })
+  }
+  return t('imageStudio.workbench.currentImageProgress')
+})
+
 const generationProgressPercent = computed<number>(() => {
   if (!generating.value) {
     return progress.value
   }
+  const batch = generationBatchProgress.value
+  if (batch && batch.total > 1) {
+    const settledPercent = ((batch.completed + batch.failed) / batch.total) * 100
+    const activeSlice = (batch.running > 0 || batch.queued > 0)
+      ? (progress.value / 100) * (100 / batch.total)
+      : 0
+    return Math.min(100, Math.max(6, settledPercent + activeSlice))
+  }
   return Math.max(progress.value, 6)
+})
+
+const generationProgressLabel = computed(() => {
+  if (generationBatchActive.value) {
+    return t('imageStudio.workbench.batchProgressLabel', {
+      done: generationBatchFinishedCount.value,
+      total: generationBatchTotalCount.value,
+    })
+  }
+  return generating.value ? `${Math.round(generationProgressPercent.value)}%` : t('imageStudio.statusBoard.ready')
+})
+
+const generationPreviewLabel = computed(() => {
+  if (generationBatchActive.value) {
+    return t('imageStudio.workbench.batchGeneratingHeading', {
+      done: generationBatchFinishedCount.value,
+      total: generationBatchTotalCount.value,
+    })
+  }
+  return t('imageStudio.workbench.generatingHeading')
+})
+
+const generationBatchDetailText = computed(() => {
+  const batch = generationBatchProgress.value
+  if (!batch || batch.total <= 1) {
+    return ''
+  }
+  const key = batch.failed > 0
+    ? 'imageStudio.workbench.batchProgressDetailWithFailed'
+    : 'imageStudio.workbench.batchProgressDetail'
+  return t(key, {
+    running: batch.running,
+    queued: batch.queued,
+    failed: batch.failed,
+  })
 })
 
 const previewIsTransient = computed(() => previewTileId.value?.startsWith('tmp:') ?? false)
@@ -2801,6 +3003,12 @@ const selectedTiles = computed(() => (
 ))
 
 const generationSummaryText = computed(() => {
+  if (generationBatchActive.value) {
+    return t('imageStudio.loading.batchGeneratingText', {
+      done: generationBatchFinishedCount.value,
+      total: generationBatchTotalCount.value,
+    })
+  }
   if (generating.value) {
     return t('imageStudio.loading.generatingText')
   }
@@ -2969,6 +3177,17 @@ watch(
     }
     if (profile === 'sub2api-sora-compatible' && preferences.providerMode !== 'sub2api' && preferences.model === 'gpt-image') {
       preferences.model = 'gpt-image-2'
+    }
+  },
+  { immediate: true }
+)
+
+watch(
+  () => preferences.count,
+  (value) => {
+    const normalized = Math.max(1, Math.min(5, Number.isFinite(value) ? Math.round(value) : 1))
+    if (value !== normalized) {
+      preferences.count = normalized
     }
   },
   { immediate: true }
@@ -4649,18 +4868,18 @@ async function generateWithExternalProvider(
   model: string,
   requestPromptText: string,
   imageInputs: string[],
-  signal: AbortSignal
+  generationOptions: ImageStudioGenerationOptions
 ): Promise<NormalizedImageResult[]> {
   const runRelay = (sizeOverride?: string) => generateImageWithExternalRelay(
     createExternalRequest(model, requestPromptText, imageInputs, sizeOverride),
-    { signal }
+    generationOptions
   )
 
   const runBrowser = async (sizeOverride?: string) => {
     try {
       return await generateImageWithExternalBrowser(
         createExternalRequest(model, requestPromptText, imageInputs, sizeOverride),
-        { signal }
+        generationOptions
       )
     } catch (error) {
       if (
@@ -4723,6 +4942,17 @@ function buildSyntheticTile(
   }
 }
 
+function prependSyntheticTiles(tiles: ImageStudioWorkspaceTile[]) {
+  if (!tiles.length) {
+    return
+  }
+  transientTiles.value = [...tiles, ...transientTiles.value]
+  workspaceTiles.value = [...tiles, ...workspaceTiles.value]
+  previewTileId.value = tiles[0].id
+  activeHistoryId.value = tiles[0].historyId
+  selectedTileIds.value = [tiles[0].id]
+}
+
 function startElapsedTracker() {
   generationStartedAt.value = performance.now()
   generationElapsedMs.value = 0
@@ -4734,6 +4964,10 @@ function startElapsedTracker() {
   return () => {
     window.clearInterval(timer)
   }
+}
+
+function updateGenerationBatchProgress(next: ImageStudioBatchProgress) {
+  generationBatchProgress.value = next.total > 1 ? { ...next } : null
 }
 
 async function generateImages(options: {
@@ -4753,7 +4987,6 @@ async function generateImages(options: {
     }
   }
   const resolvedPromptText = resolvePromptTemplateArguments(options.promptText || buildPromptText()).trim()
-  const upstreamPrompt = resolveUpstreamCompatiblePrompt(resolvedPromptText)
   let requestPromptText = resolvedPromptText
   const overrideRaw = options.referenceImageData
   const overrideArray = Array.isArray(overrideRaw)
@@ -4778,15 +5011,55 @@ async function generateImages(options: {
     return
   }
 
-  if (upstreamCompatibilityEnabled.value && upstreamPrompt.applied && upstreamPrompt.prompt !== resolvedPromptText) {
-    requestPromptText = upstreamPrompt.prompt
-    appStore.showWarning(t('imageStudio.toasts.promptCompatibilityApplied'))
+  if (upstreamCompatibilityEnabled.value) {
+    if (!promptHelperConfigured.value) {
+      promptHelperPanelOpen.value = true
+      appStore.showWarning(t('imageStudio.toasts.upstreamCompatibilityConfigure'))
+      return
+    }
+    if (promptHelperBusy.value) {
+      appStore.showWarning(t('imageStudio.toasts.upstreamCompatibilityBusy'))
+      return
+    }
+
+    const localCompatiblePrompt = resolveUpstreamCompatiblePrompt(resolvedPromptText)
+    promptHelperBusy.value = 'compatibility'
+    try {
+      const rewrittenPrompt = await rewritePromptForCompatibility(
+        resolvedPromptText,
+        localCompatiblePrompt.applied ? localCompatiblePrompt.prompt : ''
+      )
+      if (rewrittenPrompt && rewrittenPrompt !== resolvedPromptText) {
+        requestPromptText = rewrittenPrompt
+        appStore.showWarning(t('imageStudio.toasts.promptCompatibilityApplied'))
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t('imageStudio.toasts.promptCompatibilityFailed')
+      appStore.showError(`${t('imageStudio.toasts.promptCompatibilityFailed')}: ${message}`)
+      return
+    } finally {
+      promptHelperBusy.value = null
+    }
   }
 
   generationError.value = null
   clearProgressResetTimer()
   progress.value = 0
   generationElapsedMs.value = 0
+  generationBatchProgress.value = effectiveCount.value > 1
+    ? {
+        total: effectiveCount.value,
+        completed: 0,
+        failed: 0,
+        running: 0,
+        queued: effectiveCount.value,
+        items: Array.from({ length: effectiveCount.value }, (_item, index) => ({
+          index,
+          status: 'queued' as const,
+          attempt: 0,
+        })),
+      }
+    : null
   generating.value = true
   const controller = new AbortController()
   generationAbort.value = controller
@@ -4798,6 +5071,44 @@ async function generateImages(options: {
     const resolvedModel = preferences.providerMode === 'sub2api'
       ? resolveSub2ApiModel(preferences.aspectRatio)
       : preferences.model
+    const profileForTiles = (preferences.providerMode === 'sub2api'
+      ? 'sub2api-sora-compatible'
+      : preferences.profile) as ImageStudioProtocolProfile
+    const displayedResultIds = new Set<string>()
+    const displayedResults: NormalizedImageResult[] = []
+    const appendGeneratedResults = async (results: NormalizedImageResult[]) => {
+      const uniqueResults = results.filter((result) => !displayedResultIds.has(result.id))
+      if (!uniqueResults.length) {
+        return
+      }
+
+      const preparedResults = await applyOutputResolutionPreset(uniqueResults)
+      preparedResults.forEach((result) => {
+        displayedResultIds.add(result.id)
+        displayedResults.push(result)
+      })
+
+      const createdAt = new Date().toISOString()
+      const synthetic = preparedResults.map((result) =>
+        buildSyntheticTile(result, {
+          model: resolvedModel,
+          prompt: resolvedPromptText,
+          aspectRatio: preferences.aspectRatio,
+          profile: profileForTiles,
+          createdAt,
+          parentHistoryId: options.parentHistoryId,
+          parentTileId: options.parentTileId,
+        })
+      )
+      prependSyntheticTiles(synthetic)
+    }
+    const generationOptions: ImageStudioGenerationOptions = {
+      signal: controller.signal,
+      onBatchProgress: updateGenerationBatchProgress,
+      onImageResult: async (results) => {
+        await appendGeneratedResults(results)
+      },
+    }
 
     if (preferences.providerMode === 'sub2api') {
       const sub2apiPayload = {
@@ -4814,14 +5125,14 @@ async function generateImages(options: {
         format: preferences.format,
       }
       try {
-        generatedResults = await generateImageWithExternalBrowser(sub2apiPayload, { signal: controller.signal })
+        generatedResults = await generateImageWithExternalBrowser(sub2apiPayload, generationOptions)
       } catch (error) {
         if (isAbortLikeError(error)) {
           throw error
         }
         if (error instanceof BrowserDirectGenerationError && error.fallbackSuggested) {
           appStore.showWarning(t('imageStudio.toasts.browserDirectFallback'))
-          generatedResults = await generateImageWithExternalRelay(sub2apiPayload, { signal: controller.signal })
+          generatedResults = await generateImageWithExternalRelay(sub2apiPayload, generationOptions)
         } else {
           throw error
         }
@@ -4831,27 +5142,30 @@ async function generateImages(options: {
         resolvedModel,
         requestPromptText,
         imageInputs,
-        controller.signal
+        generationOptions
       )
     } else {
       generatedResults = await generateWithExternalProvider(
         resolvedModel,
         requestPromptText,
         imageInputs,
-        controller.signal
+        generationOptions
       )
     }
 
-    if (!generatedResults.length) {
+    if (!generatedResults.length && !displayedResults.length) {
       throw new Error(t('imageStudio.toasts.generateFailed'))
     }
 
-    generatedResults = await applyOutputResolutionPreset(generatedResults)
+    await appendGeneratedResults(generatedResults)
+    generatedResults = [...displayedResults]
+    const finalBatchProgress = generationBatchProgress.value
 
     const finalElapsed = generationStartedAt.value != null
       ? performance.now() - generationStartedAt.value
       : generationElapsedMs.value
     lastGenerationDurationMs.value = finalElapsed
+    lastGenerationImageCount.value = Math.max(1, generatedResults.length)
     sessionStats.value = {
       ...sessionStats.value,
       successCount: sessionStats.value.successCount + generatedResults.length,
@@ -4861,31 +5175,15 @@ async function generateImages(options: {
     }
     progress.value = 100
 
-    const createdAt = new Date().toISOString()
-    const profileForTiles = (preferences.providerMode === 'sub2api'
-      ? 'sub2api-sora-compatible'
-      : preferences.profile) as ImageStudioProtocolProfile
-    const synthetic = generatedResults.map((result) =>
-      buildSyntheticTile(result, {
-        model: resolvedModel,
-        prompt: resolvedPromptText,
-        aspectRatio: preferences.aspectRatio,
-        profile: profileForTiles,
-        createdAt,
-        parentHistoryId: options.parentHistoryId,
-        parentTileId: options.parentTileId,
-      })
-    )
-
-    if (synthetic.length) {
-      transientTiles.value = [...synthetic, ...transientTiles.value]
-      workspaceTiles.value = [...synthetic, ...workspaceTiles.value]
-      previewTileId.value = synthetic[0].id
-      activeHistoryId.value = synthetic[0].historyId
-      selectedTileIds.value = [synthetic[0].id]
+    if (finalBatchProgress && finalBatchProgress.failed > 0 && generatedResults.length > 0) {
+      appStore.showWarning(t('imageStudio.toasts.batchGeneratedPartial', {
+        done: generatedResults.length,
+        total: finalBatchProgress.total,
+        failed: finalBatchProgress.failed,
+      }))
+    } else {
+      appStore.showSuccess(t('imageStudio.toasts.generatedCount', { count: generatedResults.length }))
     }
-
-    appStore.showSuccess(t('imageStudio.toasts.generatedCount', { count: generatedResults.length }))
 
     void persistCurrentResults(
       resolvedModel,
@@ -4920,6 +5218,7 @@ async function generateImages(options: {
     generationStartedAt.value = null
     progressResetTimer = window.setTimeout(() => {
       progress.value = 0
+      generationBatchProgress.value = null
       progressResetTimer = null
     }, 260)
     generating.value = false
@@ -6326,6 +6625,15 @@ onBeforeUnmount(() => {
   @apply mt-3 flex flex-wrap gap-2;
 }
 
+.studio-compatibility-note {
+  @apply mt-2 text-xs leading-5;
+  color: var(--studio-muted);
+}
+
+.studio-compatibility-note.is-warning {
+  color: rgb(146 64 14);
+}
+
 .studio-chip {
   @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-slate-600 transition disabled:cursor-not-allowed disabled:opacity-60;
   background: #ffffff;
@@ -6355,6 +6663,40 @@ onBeforeUnmount(() => {
 
 .studio-prompt-actions {
   @apply flex flex-col gap-3;
+}
+
+.studio-count-quick {
+  @apply flex flex-wrap items-center gap-2 rounded-2xl border p-2;
+  border-color: var(--studio-border);
+  background: color-mix(in srgb, var(--studio-soft-background) 72%, var(--studio-surface) 28%);
+}
+
+.studio-count-quick-label {
+  @apply px-1 text-xs font-semibold;
+  color: var(--studio-text);
+}
+
+.studio-count-quick-button {
+  @apply inline-flex h-8 min-w-10 items-center justify-center rounded-xl border px-2.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-55;
+  border-color: var(--studio-border);
+  background: var(--studio-surface);
+  color: color-mix(in srgb, var(--studio-text) 78%, transparent);
+}
+
+.studio-count-quick-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--studio-accent) 35%, var(--studio-border) 65%);
+  color: var(--studio-text);
+}
+
+.studio-count-quick-button.active {
+  border-color: color-mix(in srgb, var(--studio-accent) 62%, var(--studio-border) 38%);
+  background: var(--studio-accent-soft);
+  color: var(--studio-accent-deep);
+}
+
+.studio-count-quick-hint {
+  @apply min-w-0 flex-1 text-xs leading-5;
+  color: var(--studio-muted);
 }
 
 .studio-generate-button,
@@ -8128,13 +8470,39 @@ onBeforeUnmount(() => {
 }
 
 .studio-progress-info-text {
-  @apply flex flex-col gap-0.5 text-xs;
+  @apply flex min-w-0 flex-1 flex-col gap-0.5 text-xs;
   color: var(--studio-muted);
 }
 
 .studio-progress-info-text strong {
   @apply text-sm font-semibold;
   color: var(--studio-text);
+}
+
+.studio-current-progress {
+  @apply mt-1.5 w-full max-w-[360px];
+}
+
+.studio-current-progress-meta {
+  @apply mb-1 flex items-center justify-between gap-3 text-[11px] leading-none;
+  color: var(--studio-muted);
+}
+
+.studio-current-progress-meta strong {
+  @apply text-[11px] font-semibold tabular-nums;
+  color: var(--studio-accent);
+}
+
+.studio-current-progress-track {
+  @apply h-1.5 overflow-hidden rounded-full;
+  background: color-mix(in srgb, var(--studio-border) 70%, transparent);
+}
+
+.studio-current-progress-track span {
+  @apply block h-full rounded-full;
+  width: 0%;
+  background: var(--studio-accent);
+  transition: width 220ms ease;
 }
 
 .studio-progress-cancel {

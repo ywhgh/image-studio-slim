@@ -39,9 +39,9 @@ const (
 	defaultUpstreamTimeout             = 15 * time.Minute
 	maxUpstreamBodyBytes         int64 = 256 << 20
 	maxRequestBodyBytes          int64 = 96 << 20
-	imageStudioMaxImageCount           = 10
+	imageStudioMaxImageCount           = 5
 	imageStudioDefaultImageCount       = 1
-	defaultImageJobConcurrency         = 3
+	defaultImageJobConcurrency         = 5
 	defaultImageJobQueueSize           = 100
 	defaultImageJobRetention           = 2 * time.Hour
 	maxExternalGenerateAttempts        = 2
