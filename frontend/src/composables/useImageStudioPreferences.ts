@@ -7,6 +7,8 @@ function getDefaultPreferences(): ImageStudioPreferences {
   return {
     providerMode: 'external-relay',
     profile: 'openai-image-api',
+    currentSiteProfile: 'sub2api-sora-compatible',
+    currentSiteBaseUrl: '',
     model: 'gpt-image-1',
     aspectRatio: 'default',
     resolutionPreset: 'standard',
@@ -40,11 +42,12 @@ export function useImageStudioPreferences() {
     ...loadPreferences(),
   })
 
-  if (preferences.providerMode === 'sub2api') {
-    // sub2api mode is not supported in slim build; downgrade saved preferences
-    preferences.providerMode = 'external-relay'
-    preferences.profile = 'openai-image-api'
-    preferences.model = 'gpt-image-1'
+  if (!preferences.currentSiteProfile) {
+    preferences.currentSiteProfile = 'sub2api-sora-compatible'
+  }
+
+  if (typeof preferences.currentSiteBaseUrl !== 'string') {
+    preferences.currentSiteBaseUrl = ''
   }
 
   if (!preferences.externalBaseUrl.trim()) {

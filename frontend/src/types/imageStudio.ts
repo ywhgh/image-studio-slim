@@ -4,6 +4,7 @@ export type ImageStudioProtocolProfile =
   | 'openai-image-api'
   | 'openai-responses'
   | 'sub2api-sora-compatible'
+  | 'chatgpt2api'
 
 export type ImageStudioResolutionPreset = 'standard' | '2k' | '4k'
 
@@ -23,10 +24,20 @@ export interface ImageStudioHistoryItem {
   createdAt: string
   providerMode: ImageStudioProviderMode
   profile: ImageStudioProtocolProfile
+  currentSiteProfile?: ImageStudioProtocolProfile
   model: string
   prompt: string
   aspectRatio: string
   count: number
+  resolutionPreset?: ImageStudioResolutionPreset
+  requestedSize?: string
+  quality?: string
+  background?: string
+  format?: string
+  seed?: string
+  stylePresetId?: string
+  stylePresetTitle?: string
+  durationMs?: number
   referenceImageUrl?: string
   referenceImageUrls?: string[]
   parentHistoryId?: string
@@ -51,6 +62,8 @@ export interface ImageStudioWorkspaceTile {
 export interface ImageStudioPreferences {
   providerMode: ImageStudioProviderMode
   profile: ImageStudioProtocolProfile
+  currentSiteProfile: ImageStudioProtocolProfile
+  currentSiteBaseUrl: string
   model: string
   aspectRatio: string
   resolutionPreset: ImageStudioResolutionPreset
@@ -83,6 +96,7 @@ export interface ExternalImageStudioRequest {
   quality?: string
   background?: string
   format?: string
+  seed?: string
 }
 
 export interface ImageStudioUsageWindow {
@@ -131,6 +145,14 @@ export interface ImageStudioSubscriptionInfo {
   weekly_limit_usd?: number
   monthly_limit_usd?: number
   expires_at?: string
+}
+
+export interface ImageStudioChatgpt2ApiImageQuota {
+  totalAccounts: number
+  availableAccounts: number
+  remaining: number
+  unlimited: boolean
+  unknown: boolean
 }
 
 export interface ImageStudioUsageResponse {

@@ -11,6 +11,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"io/fs"
 	"log"
@@ -50,6 +54,7 @@ const (
 	profileOpenAIImageAPI    = "openai-image-api"
 	profileOpenAIResponses   = "openai-responses"
 	profileSub2APICompatible = "sub2api-sora-compatible"
+	profileChatGPT2API       = "chatgpt2api"
 )
 
 type externalGenerateRequest struct {
@@ -66,6 +71,7 @@ type externalGenerateRequest struct {
 	Quality     string   `json:"quality,omitempty"`
 	Background  string   `json:"background,omitempty"`
 	Format      string   `json:"format,omitempty"`
+	Seed        string   `json:"seed,omitempty"`
 }
 
 type normalizedResult struct {
@@ -300,6 +306,7 @@ type imageGenerationJob struct {
 	ID         string
 	Status     imageJobStatus
 	Profile    string
+	Request    imageGenerationLogContext
 	APIKey     string
 	Attempts   []externalImageAttempt
 	Results    []normalizedResult
@@ -331,8 +338,22 @@ type imageGenerationJobResponse struct {
 type imageGenerationRun struct {
 	ID       string
 	Context  context.Context
+	Request  imageGenerationLogContext
 	APIKey   string
 	Attempts []externalImageAttempt
+}
+
+type imageGenerationLogContext struct {
+	Profile     string
+	Model       string
+	Count       int
+	Size        string
+	AspectRatio string
+	Quality     string
+	Background  string
+	Format      string
+	References  int
+	PromptChars int
 }
 
 type imageGenerationQueue struct {
@@ -383,6 +404,7 @@ func (q *imageGenerationQueue) enqueue(req externalGenerateRequest, attempts []e
 		ID:        newJobID(),
 		Status:    imageJobQueued,
 		Profile:   req.Profile,
+		Request:   imageGenerationLogContextFromRequest(req),
 		APIKey:    req.APIKey,
 		Attempts:  attempts,
 		CreatedAt: now,
@@ -399,7 +421,25 @@ func (q *imageGenerationQueue) enqueue(req externalGenerateRequest, attempts []e
 	q.jobs[job.ID] = job
 	q.pending = append(q.pending, job.ID)
 	resp := q.responseForLocked(job)
+	queueLength := len(q.pending)
 	q.mu.Unlock()
+
+	log.Printf(
+		"image job queued id=%s profile=%s model=%s count=%d size=%s aspect=%s quality=%s background=%s format=%s refs=%d prompt_chars=%d attempts=%d queue_length=%d",
+		job.ID,
+		job.Request.Profile,
+		job.Request.Model,
+		job.Request.Count,
+		emptyLogValue(job.Request.Size),
+		emptyLogValue(job.Request.AspectRatio),
+		emptyLogValue(job.Request.Quality),
+		emptyLogValue(job.Request.Background),
+		emptyLogValue(job.Request.Format),
+		job.Request.References,
+		job.Request.PromptChars,
+		len(attempts),
+		queueLength,
+	)
 
 	q.queue <- job.ID
 	return resp, true
@@ -411,7 +451,16 @@ func (q *imageGenerationQueue) worker() {
 		if !ok {
 			continue
 		}
-		results, errStatus, errCode, errMsg := callExternalImageUpstream(run.Context, q.client, run.Attempts, run.APIKey)
+		log.Printf(
+			"image job started id=%s profile=%s model=%s count=%d size=%s attempts=%d",
+			run.ID,
+			run.Request.Profile,
+			run.Request.Model,
+			run.Request.Count,
+			emptyLogValue(run.Request.Size),
+			len(run.Attempts),
+		)
+		results, errStatus, errCode, errMsg := callExternalImageUpstream(run.Context, q.client, run.Attempts, run.APIKey, run.ID)
 		q.finish(run.ID, results, errStatus, errCode, errMsg)
 	}
 }
@@ -438,6 +487,7 @@ func (q *imageGenerationQueue) start(id string) (imageGenerationRun, bool) {
 	return imageGenerationRun{
 		ID:       job.ID,
 		Context:  ctx,
+		Request:  job.Request,
 		APIKey:   job.APIKey,
 		Attempts: append([]externalImageAttempt(nil), job.Attempts...),
 	}, true
@@ -461,9 +511,11 @@ func (q *imageGenerationQueue) finish(id string, results []normalizedResult, err
 			job.ErrStatus = errStatus
 			job.ErrCode = errCode
 			job.ErrMsg = errMsg
+			log.Printf("image job failed id=%s status=%d code=%s msg=%s", id, errStatus, errCode, errMsg)
 		} else {
 			job.Status = imageJobSucceeded
-			job.Results = results
+			job.Results = clampImageResultsForRequest(id, results, job.Request)
+			log.Printf("image job succeeded id=%s results=%d duration_ms=%d", id, len(job.Results), now.Sub(job.StartedAt).Milliseconds())
 		}
 	}
 	job.APIKey = ""
@@ -506,6 +558,7 @@ func (q *imageGenerationQueue) cancel(id string) (imageGenerationJobResponse, bo
 		if wasRunning {
 			q.running = maxInt(0, q.running-1)
 		}
+		log.Printf("image job canceled id=%s was_running=%t", id, wasRunning)
 	}
 	return q.responseForLocked(job), true
 }
@@ -687,6 +740,7 @@ func prepareExternalGenerateRequest(req externalGenerateRequest, cfg config) (ex
 	req.Quality = strings.TrimSpace(req.Quality)
 	req.Background = strings.TrimSpace(req.Background)
 	req.Format = strings.ToLower(strings.TrimSpace(req.Format))
+	req.Seed = strings.TrimSpace(req.Seed)
 
 	if req.BaseURL == "" || req.APIKey == "" || req.Profile == "" || req.Model == "" || req.Prompt == "" {
 		return req, nil, http.StatusBadRequest, "INVALID_REQUEST", "base_url, api_key, profile, model and prompt are required"
@@ -705,6 +759,68 @@ func prepareExternalGenerateRequest(req externalGenerateRequest, cfg config) (ex
 	return req, attempts, 0, "", ""
 }
 
+func imageGenerationLogContextFromRequest(req externalGenerateRequest) imageGenerationLogContext {
+	return imageGenerationLogContext{
+		Profile:     req.Profile,
+		Model:       req.Model,
+		Count:       normalizeCount(req.Count),
+		Size:        resolveSize(req.Size, req.AspectRatio),
+		AspectRatio: req.AspectRatio,
+		Quality:     req.Quality,
+		Background:  req.Background,
+		Format:      req.Format,
+		References:  len(req.ImageInputs),
+		PromptChars: len([]rune(req.Prompt)),
+	}
+}
+
+func emptyLogValue(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return value
+}
+
+func logImageGenerationRequest(prefix string, req externalGenerateRequest, attempts []externalImageAttempt) {
+	ctx := imageGenerationLogContextFromRequest(req)
+	log.Printf(
+		"%s profile=%s model=%s count=%d size=%s aspect=%s quality=%s background=%s format=%s refs=%d prompt_chars=%d attempts=%d",
+		prefix,
+		ctx.Profile,
+		ctx.Model,
+		ctx.Count,
+		emptyLogValue(ctx.Size),
+		emptyLogValue(ctx.AspectRatio),
+		emptyLogValue(ctx.Quality),
+		emptyLogValue(ctx.Background),
+		emptyLogValue(ctx.Format),
+		ctx.References,
+		ctx.PromptChars,
+		len(attempts),
+	)
+}
+
+func clampImageResultsForRequest(jobID string, results []normalizedResult, req imageGenerationLogContext) []normalizedResult {
+	requestedCount := req.Count
+	if requestedCount <= 0 {
+		requestedCount = imageStudioDefaultImageCount
+	}
+	if requestedCount >= len(results) {
+		return results
+	}
+	clamped := append([]normalizedResult(nil), results[:requestedCount]...)
+	log.Printf(
+		"image results clamped job=%s profile=%s model=%s upstream_results=%d requested_count=%d kept=%d",
+		jobID,
+		req.Profile,
+		req.Model,
+		len(results),
+		requestedCount,
+		len(clamped),
+	)
+	return clamped
+}
+
 func handleGenerateExternal(client *http.Client, cfg config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req externalGenerateRequest
@@ -719,16 +835,22 @@ func handleGenerateExternal(client *http.Client, cfg config) http.HandlerFunc {
 			return
 		}
 
+		logImageGenerationRequest("image generate direct", req, attempts)
+
 		results, errStatus, errCode, errMsg := callExternalImageUpstream(
 			r.Context(),
 			client,
 			attempts,
 			req.APIKey,
+			"direct",
 		)
 		if errMsg != "" {
 			writeError(w, errStatus, errCode, errMsg)
 			return
 		}
+
+		results = clampImageResultsForRequest("direct", results, imageGenerationLogContextFromRequest(req))
+		log.Printf("image generate direct succeeded profile=%s model=%s results=%d", req.Profile, req.Model, len(results))
 
 		writeJSON(w, http.StatusOK, externalGenerateResponse{
 			Code: 0,
@@ -746,6 +868,7 @@ func callExternalImageUpstream(
 	client *http.Client,
 	attempts []externalImageAttempt,
 	apiKey string,
+	jobID string,
 ) ([]normalizedResult, int, string, string) {
 	lastStatus := http.StatusBadGateway
 	lastCode := "UPSTREAM_REQUEST_FAILED"
@@ -757,6 +880,19 @@ func callExternalImageUpstream(
 
 	for variantIndex, variant := range attempts {
 		for attempt := 1; attempt <= maxExternalGenerateAttempts; attempt++ {
+			startedAt := time.Now()
+			log.Printf(
+				"image upstream attempt job=%s variant=%d/%d attempt=%d/%d name=%s endpoint=%s content_type=%s body_bytes=%d",
+				jobID,
+				variantIndex+1,
+				len(attempts),
+				attempt,
+				maxExternalGenerateAttempts,
+				variant.Name,
+				safeEndpointForLog(variant.EndpointURL),
+				variant.ContentType,
+				len(variant.Body),
+			)
 			upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, variant.EndpointURL, bytes.NewReader(variant.Body))
 			if err != nil {
 				return nil, http.StatusInternalServerError, "REQUEST_BUILD_FAILED", "failed to build upstream request"
@@ -770,6 +906,7 @@ func callExternalImageUpstream(
 				lastStatus = http.StatusBadGateway
 				lastCode = "UPSTREAM_REQUEST_FAILED"
 				lastMsg = fmt.Sprintf("failed to reach upstream provider: %v", err)
+				log.Printf("image upstream transport_error job=%s variant=%s attempt=%d duration_ms=%d msg=%s", jobID, variant.Name, attempt, time.Since(startedAt).Milliseconds(), lastMsg)
 				if shouldRetryExternalGenerate(attempt, 0, lastMsg) && waitBeforeExternalRetry(ctx, lastMsg, attempt) {
 					continue
 				}
@@ -783,6 +920,7 @@ func callExternalImageUpstream(
 				lastStatus = http.StatusBadGateway
 				lastCode = "UPSTREAM_READ_FAILED"
 				lastMsg = fmt.Sprintf("failed to read upstream response: %v", readErr)
+				log.Printf("image upstream read_error job=%s variant=%s attempt=%d status=%d duration_ms=%d msg=%s", jobID, variant.Name, attempt, resp.StatusCode, time.Since(startedAt).Milliseconds(), lastMsg)
 				if shouldRetryExternalGenerate(attempt, resp.StatusCode, lastMsg) && waitBeforeExternalRetry(ctx, lastMsg, attempt) {
 					continue
 				}
@@ -790,6 +928,7 @@ func callExternalImageUpstream(
 			}
 
 			if tooLarge {
+				log.Printf("image upstream response_too_large job=%s variant=%s attempt=%d status=%d duration_ms=%d body_bytes=%d", jobID, variant.Name, attempt, resp.StatusCode, time.Since(startedAt).Milliseconds(), len(respBody))
 				return nil,
 					http.StatusBadGateway,
 					"UPSTREAM_RESPONSE_TOO_LARGE",
@@ -804,6 +943,7 @@ func callExternalImageUpstream(
 				lastStatus = mappedStatus
 				lastCode = "UPSTREAM_ERROR"
 				lastMsg = parseUpstreamErrorMessage(resp.StatusCode, respBody)
+				log.Printf("image upstream error job=%s variant=%s attempt=%d status=%d duration_ms=%d body_bytes=%d msg=%s", jobID, variant.Name, attempt, resp.StatusCode, time.Since(startedAt).Milliseconds(), len(respBody), compactLogText(lastMsg, 220))
 				if shouldRetryCurrentExternalAttemptBeforeFallback(attempt, resp.StatusCode, lastMsg) && waitBeforeExternalRetry(ctx, lastMsg, attempt) {
 					continue
 				}
@@ -821,6 +961,7 @@ func callExternalImageUpstream(
 				lastStatus = http.StatusBadGateway
 				lastCode = "UPSTREAM_RESPONSE_INVALID"
 				lastMsg = err.Error()
+				log.Printf("image upstream invalid_response job=%s variant=%s attempt=%d status=%d duration_ms=%d body_bytes=%d msg=%s", jobID, variant.Name, attempt, resp.StatusCode, time.Since(startedAt).Milliseconds(), len(respBody), compactLogText(lastMsg, 220))
 				if shouldRetryCurrentExternalAttemptBeforeFallback(attempt, resp.StatusCode, lastMsg) && waitBeforeExternalRetry(ctx, lastMsg, attempt) {
 					continue
 				}
@@ -833,6 +974,7 @@ func callExternalImageUpstream(
 				return nil, lastStatus, lastCode, lastMsg
 			}
 
+			log.Printf("image upstream success job=%s variant=%s attempt=%d status=%d duration_ms=%d body_bytes=%d results=%d", jobID, variant.Name, attempt, resp.StatusCode, time.Since(startedAt).Milliseconds(), len(respBody), len(results))
 			return results, 0, "", ""
 		}
 	}
@@ -882,6 +1024,40 @@ func readLimitedResponseBody(body io.Reader, limit int64) ([]byte, bool, error) 
 		return data[:limit], true, nil
 	}
 	return data, false, nil
+}
+
+func safeEndpointForLog(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func compactLogText(value string, maxLen int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if maxLen <= 0 || len([]rune(value)) <= maxLen {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:maxLen]) + "..."
+}
+
+func imageDimensions(body []byte) (int, int, string) {
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(body))
+	if err != nil {
+		return 0, 0, ""
+	}
+	return cfg.Width, cfg.Height, format
+}
+
+func formatDimensions(width, height int) string {
+	if width <= 0 || height <= 0 {
+		return "unknown"
+	}
+	return fmt.Sprintf("%dx%d", width, height)
 }
 
 func shouldRetryExternalGenerate(attempt int, status int, message string) bool {
@@ -1038,20 +1214,39 @@ func handleDownload(client *http.Client, cfg config) http.HandlerFunc {
 		if contentType == "" {
 			contentType = "application/octet-stream"
 		}
-		w.Header().Set("Content-Type", contentType)
-		if cl := strings.TrimSpace(resp.Header.Get("Content-Length")); cl != "" {
-			w.Header().Set("Content-Length", cl)
-		}
-
 		filename := sanitizeFilename(r.URL.Query().Get("filename"))
 		if filename == "" {
 			parsed, _ := url.Parse(normalizedURL)
 			filename = inferFilename(parsed, contentType)
 		}
+
+		body, tooLarge, readErr := readLimitedResponseBody(resp.Body, maxUpstreamBodyBytes)
+		if readErr != nil {
+			writeError(w, http.StatusBadGateway, "DOWNLOAD_FAILED", fmt.Sprintf("failed to read image: %v", readErr))
+			return
+		}
+		if tooLarge {
+			writeError(w, http.StatusBadGateway, "DOWNLOAD_TOO_LARGE", fmt.Sprintf("download exceeded %d MB", maxUpstreamBodyBytes/(1<<20)))
+			return
+		}
+
+		width, height, imageFormat := imageDimensions(body)
+		log.Printf(
+			"image download complete filename=%s content_type=%s bytes=%d dimensions=%s format=%s source=%s",
+			filename,
+			contentType,
+			len(body),
+			formatDimensions(width, height),
+			emptyLogValue(imageFormat),
+			safeEndpointForLog(normalizedURL),
+		)
+
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 		w.WriteHeader(http.StatusOK)
 
-		if _, err := io.Copy(w, resp.Body); err != nil {
+		if _, err := w.Write(body); err != nil {
 			log.Printf("download stream error: %v", err)
 		}
 	}
@@ -1216,7 +1411,7 @@ func buildExternalImageAttempts(req externalGenerateRequest, baseURL string) ([]
 	builder := externalAttemptBuilder{seen: make(map[string]struct{})}
 
 	switch req.Profile {
-	case profileOpenAIImageAPI:
+	case profileOpenAIImageAPI, profileChatGPT2API:
 		if len(req.ImageInputs) == 0 {
 			endpoint, err := joinURL(baseURL, "/images/generations")
 			if err != nil {
@@ -1348,6 +1543,9 @@ func (b *externalAttemptBuilder) addOpenAIImageMultipart(
 	if size != "" {
 		_ = writer.WriteField("size", size)
 	}
+	if req.Seed != "" {
+		_ = writer.WriteField("seed", req.Seed)
+	}
 	for key, value := range optionFields {
 		_ = writer.WriteField(key, value)
 	}
@@ -1412,6 +1610,9 @@ func baseOpenAIImagePayload(req externalGenerateRequest, count int, size string)
 	if size != "" {
 		payload["size"] = size
 	}
+	if req.Seed != "" {
+		payload["seed"] = req.Seed
+	}
 	return payload
 }
 
@@ -1423,6 +1624,9 @@ func buildResponsesPayload(req externalGenerateRequest, count int, size string, 
 	addExternalImageOptions(tool, req, mode, "format")
 	if count > 1 {
 		tool["n"] = count
+	}
+	if req.Seed != "" {
+		tool["seed"] = req.Seed
 	}
 
 	payload := map[string]any{
@@ -1462,6 +1666,9 @@ func buildSub2APICompatiblePayloads(req externalGenerateRequest, count int) []ma
 	if len(req.ImageInputs) > 0 {
 		payload["image_input"] = req.ImageInputs[0]
 		payload["image_inputs"] = req.ImageInputs
+	}
+	if req.Seed != "" {
+		payload["seed"] = req.Seed
 	}
 	if count > 1 {
 		payload["n_variants"] = count

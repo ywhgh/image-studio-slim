@@ -6,6 +6,7 @@ import { resolve } from 'path'
 export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const backendUrl = env.VITE_DEV_PROXY_TARGET || 'http://localhost:8090'
+  const currentSiteV1ProxyTarget = env.VITE_CURRENT_SITE_V1_PROXY_TARGET || backendUrl
   const devPort = Number(env.VITE_DEV_PORT || 3000)
   const plugins: PluginOption[] = [vue()]
 
@@ -56,6 +57,10 @@ export default defineConfig(({ command, mode }) => {
       proxy: {
         '/api': {
           target: backendUrl,
+          changeOrigin: true,
+        },
+        '/v1': {
+          target: currentSiteV1ProxyTarget,
           changeOrigin: true,
         },
       },

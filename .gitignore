@@ -52,6 +52,11 @@ temp/
 *.tmp
 *.bak
 .cache/
+tmp-screens/
+frontend/.edge-shot-profile/
+frontend/tmp-edge-history-card-sfc-*/
+frontend/*-check*.png
+frontend/current-image-studio-compare.png
 
 # Legacy backup (the old sub2api monolith — too big, not needed for slim deploy)
 _legacy/

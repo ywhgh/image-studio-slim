@@ -2,6 +2,7 @@ import { apiClient } from './client'
 import type {
   ExternalImageStudioRequest,
   ImageStudioApiKeyUsage,
+  ImageStudioChatgpt2ApiImageQuota,
   ImageStudioQuotaInfo,
   ImageStudioRateLimitInfo,
   ImageStudioResolutionPreset,
@@ -18,9 +19,11 @@ interface RelayImageStudioResult {
   revised_prompt?: string
 }
 
-interface RelayImageStudioResponse {
-  profile: string
-  results: RelayImageStudioResult[]
+interface Chatgpt2ApiAccount {
+  type?: string
+  status?: string
+  quota?: number
+  image_quota_unknown?: boolean
 }
 
 type RelayImageJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled'
@@ -278,6 +281,44 @@ function normalizeUsageResponse(payload: unknown): ImageStudioUsageResponse {
     rate_limits: normalizeRateLimits(root.rate_limits),
     subscription: normalizeSubscriptionInfo(root.subscription),
     usage: normalizeApiKeyUsage(root.usage),
+  }
+}
+
+function normalizeChatgpt2ApiAccounts(payload: unknown): Chatgpt2ApiAccount[] {
+  const root = getObject(payload)
+  const rawItems = Array.isArray(root?.items)
+    ? root.items
+    : Array.isArray(payload) ? payload : []
+
+  return rawItems
+    .map((item) => getObject(item))
+    .filter((item): item is Record<string, unknown> => !!item)
+    .map((item) => ({
+      type: getString(item.type).toLowerCase(),
+      status: getString(item.status),
+      quota: getNumber(item.quota) ?? 0,
+      image_quota_unknown: Boolean(item.image_quota_unknown),
+    }))
+}
+
+function normalizeChatgpt2ApiImageQuota(payload: unknown): ImageStudioChatgpt2ApiImageQuota {
+  const accounts = normalizeChatgpt2ApiAccounts(payload)
+  const availableAccounts = accounts.filter((account) => {
+    const status = (account.status || '').trim()
+    return status !== '禁用' && status !== '限流' && status !== '异常'
+      && status.toLowerCase() !== 'disabled'
+      && status.toLowerCase() !== 'limited'
+      && status.toLowerCase() !== 'rate_limited'
+      && status.toLowerCase() !== 'abnormal'
+      && status.toLowerCase() !== 'error'
+  })
+
+  return {
+    totalAccounts: accounts.length,
+    availableAccounts: availableAccounts.length,
+    remaining: availableAccounts.reduce((sum, account) => sum + Math.max(0, account.quota || 0), 0),
+    unlimited: availableAccounts.some((account) => account.type === 'pro' || account.type === 'prolite'),
+    unknown: availableAccounts.some((account) => account.image_quota_unknown),
   }
 }
 
@@ -617,7 +658,7 @@ function mapExternalPayload(request: ExternalImageStudioRequest) {
   const size = resolveSizeFromAspect(request.aspect_ratio, request.size)
   const imageInputs = collectImageInputs(request)
 
-  if (request.profile === 'openai-image-api') {
+  if (request.profile === 'openai-image-api' || request.profile === 'chatgpt2api') {
     if (imageInputs.length === 0) {
       return {
         url: joinEndpoint(request.base_url, '/images/generations'),
@@ -626,6 +667,7 @@ function mapExternalPayload(request: ExternalImageStudioRequest) {
           prompt: request.prompt,
           n: count,
           ...(size ? { size } : {}),
+          ...(request.seed ? { seed: request.seed } : {}),
           ...(request.quality ? { quality: request.quality } : {}),
           ...(request.background ? { background: request.background } : {}),
           ...(request.format ? { output_format: request.format } : {}),
@@ -642,6 +684,9 @@ function mapExternalPayload(request: ExternalImageStudioRequest) {
     formData.set('n', String(count))
     if (size) {
       formData.set('size', size)
+    }
+    if (request.seed) {
+      formData.set('seed', request.seed)
     }
     if (request.quality) {
       formData.set('quality', request.quality)
@@ -675,6 +720,7 @@ function mapExternalPayload(request: ExternalImageStudioRequest) {
       ...(request.quality ? { quality: request.quality } : {}),
       ...(request.background ? { background: request.background } : {}),
       ...(request.format ? { format: request.format } : {}),
+      ...(request.seed ? { seed: request.seed } : {}),
       ...(count > 1 ? { n: count } : {}),
     }
 
@@ -707,6 +753,7 @@ function mapExternalPayload(request: ExternalImageStudioRequest) {
       messages: [{ role: 'user', content: request.prompt }],
       stream: false,
       ...(imageInputs.length ? { image_input: imageInputs[0], image_inputs: imageInputs } : {}),
+      ...(request.seed ? { seed: request.seed } : {}),
       ...(count > 1 ? { n_variants: count } : {}),
     }),
     headers: {
@@ -755,7 +802,6 @@ interface InternalImageStudioGenerationOptions extends ImageStudioGenerationOpti
   onJobProgress?: (job: RelayImageJobResponse) => void
 }
 
-const IMAGE_GENERATION_RELAY_TIMEOUT_MS = 16 * 60 * 1000
 const IMAGE_GENERATION_JOB_POLL_MS = 1500
 const MAX_BATCH_IMAGE_COUNT = 5
 
@@ -867,10 +913,6 @@ async function runExternalImageBatch(
   ) => Promise<NormalizedImageResult[]>
 ): Promise<NormalizedImageResult[]> {
   const total = normalizeImageRequestCount(request.count)
-  if (total <= 1) {
-    return runSingle(createSingleImageRequest(request), options)
-  }
-
   const states: BatchTaskState[] = Array.from({ length: total }, () => ({
     status: 'queued',
     attempt: 0,
@@ -1021,23 +1063,7 @@ async function generateImageWithExternalRelaySingle(
   request: ExternalImageStudioRequest,
   options: InternalImageStudioGenerationOptions = {}
 ): Promise<NormalizedImageResult[]> {
-  try {
-    return await generateImageWithExternalRelayJob(request, options)
-  } catch (error) {
-    const candidate = error as { status?: number; code?: string }
-    if (candidate.status === 404 || candidate.status === 405 || candidate.code === 'JOB_NOT_FOUND') {
-      const { data } = await apiClient.post<RelayImageStudioResponse>(
-        '/image-studio/generate-external',
-        request,
-        {
-          signal: options.signal,
-          timeout: IMAGE_GENERATION_RELAY_TIMEOUT_MS,
-        }
-      )
-      return normalizeImageStudioResults(data, request.format)
-    }
-    throw error
-  }
+  return generateImageWithExternalRelayJob(request, options)
 }
 
 export async function generateImageWithExternalRelay(
@@ -1045,10 +1071,7 @@ export async function generateImageWithExternalRelay(
   options: ImageStudioGenerationOptions = {}
 ): Promise<NormalizedImageResult[]> {
   const count = normalizeImageRequestCount(request.count)
-  if (count > 1) {
-    return runExternalImageBatch({ ...request, count }, options, generateImageWithExternalRelaySingle)
-  }
-  return generateImageWithExternalRelaySingle({ ...request, count }, options)
+  return runExternalImageBatch({ ...request, count }, options, generateImageWithExternalRelaySingle)
 }
 
 async function generateImageWithExternalBrowserSingle(
@@ -1116,6 +1139,33 @@ export async function fetchImageStudioUsage(apiKey: string): Promise<ImageStudio
   }
 
   return normalizeUsageResponse(payload)
+}
+
+export async function fetchChatgpt2ApiImageQuota(
+  baseUrl: string,
+  apiKey: string,
+  signal?: AbortSignal
+): Promise<ImageStudioChatgpt2ApiImageQuota> {
+  const rootUrl = baseUrl.trim().replace(/\/+$/, '').replace(/\/v1$/i, '')
+  if (!rootUrl) {
+    throw new Error('chatgpt2api base url is required')
+  }
+
+  const response = await fetch(`${rootUrl}/api/accounts`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${apiKey.trim()}`,
+      'Accept': 'application/json',
+    },
+    signal,
+  })
+
+  const payload = await response.json().catch(() => null)
+  if (!response.ok) {
+    throw new Error(parseFetchErrorBody(payload) || `chatgpt2api quota request failed (${response.status})`)
+  }
+
+  return normalizeChatgpt2ApiImageQuota(payload)
 }
 
 export async function downloadRemoteImage(url: string, filename: string): Promise<Blob> {

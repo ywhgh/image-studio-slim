@@ -19,10 +19,20 @@ interface StoredImageStudioHistoryItem {
   createdAt: string
   providerMode: ImageStudioHistoryItem['providerMode']
   profile: ImageStudioHistoryItem['profile']
+  currentSiteProfile?: ImageStudioHistoryItem['profile']
   model: string
   prompt: string
   aspectRatio: string
   count: number
+  resolutionPreset?: ImageStudioHistoryItem['resolutionPreset']
+  requestedSize?: string
+  quality?: string
+  background?: string
+  format?: string
+  seed?: string
+  stylePresetId?: string
+  stylePresetTitle?: string
+  durationMs?: number
   referenceImageUrl?: string
   referenceImageUrls?: string[]
   parentHistoryId?: string
@@ -103,10 +113,20 @@ export async function saveImageStudioHistoryItem(item: ImageStudioHistoryItem): 
     createdAt: item.createdAt,
     providerMode: item.providerMode,
     profile: item.profile,
+    currentSiteProfile: item.currentSiteProfile,
     model: item.model,
     prompt: item.prompt,
     aspectRatio: item.aspectRatio,
     count: storedResults.length,
+    resolutionPreset: item.resolutionPreset,
+    requestedSize: item.requestedSize,
+    quality: item.quality,
+    background: item.background,
+    format: item.format,
+    seed: item.seed,
+    stylePresetId: item.stylePresetId,
+    stylePresetTitle: item.stylePresetTitle,
+    durationMs: item.durationMs,
     referenceImageUrl: referenceImageUrls[0],
     referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
     parentHistoryId: item.parentHistoryId,
@@ -142,10 +162,20 @@ export async function replaceImageStudioHistoryItems(items: ImageStudioHistoryIt
         createdAt: item.createdAt,
         providerMode: item.providerMode,
         profile: item.profile,
+        currentSiteProfile: item.currentSiteProfile,
         model: item.model,
         prompt: item.prompt,
         aspectRatio: item.aspectRatio,
         count: storedResults.length,
+        resolutionPreset: item.resolutionPreset,
+        requestedSize: item.requestedSize,
+        quality: item.quality,
+        background: item.background,
+        format: item.format,
+        seed: item.seed,
+        stylePresetId: item.stylePresetId,
+        stylePresetTitle: item.stylePresetTitle,
+        durationMs: item.durationMs,
         referenceImageUrl: referenceImageUrls[0],
         referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
         parentHistoryId: item.parentHistoryId,
@@ -180,10 +210,20 @@ export async function listImageStudioHistoryItems(): Promise<ImageStudioHistoryI
       createdAt: record.createdAt,
       providerMode: record.providerMode,
       profile: record.profile,
+      currentSiteProfile: record.currentSiteProfile,
       model: record.model,
       prompt: record.prompt,
       aspectRatio: record.aspectRatio,
       count: record.count,
+      resolutionPreset: record.resolutionPreset,
+      requestedSize: record.requestedSize,
+      quality: record.quality,
+      background: record.background,
+      format: record.format,
+      seed: record.seed,
+      stylePresetId: record.stylePresetId,
+      stylePresetTitle: record.stylePresetTitle,
+      durationMs: record.durationMs,
       referenceImageUrl: record.referenceImageUrl,
       referenceImageUrls: record.referenceImageUrls?.length
         ? record.referenceImageUrls

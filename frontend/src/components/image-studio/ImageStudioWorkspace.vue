@@ -43,9 +43,9 @@
             v-if="preferences.providerMode === 'sub2api'"
             type="button"
             class="studio-icon-button"
-            :disabled="sub2apiUsageLoading || !hasSub2ApiKey"
+            :disabled="currentSiteUsageLoading || !hasSub2ApiKey"
             :title="t('imageStudio.buttons.checkUsage')"
-            @click="refreshSub2ApiUsage()"
+            @click="refreshCurrentSiteUsage()"
           >
             <Icon name="refresh" size="sm" />
           </button>
@@ -205,7 +205,7 @@
                 <span class="studio-inline-tip">
                   {{ detectingModels
                     ? t('imageStudio.settings.modelDetecting')
-                    : (preferences.providerMode !== 'sub2api' && detectedImageModels.length
+                    : (externalImageControlsVisible && detectedImageModels.length
                       ? t('imageStudio.settings.modelDetected', { count: detectedImageModels.length })
                       : t('imageStudio.settings.modelHint')) }}
                 </span>
@@ -215,7 +215,7 @@
                   <option v-for="option in modelOptions" :key="option" :value="option">{{ option }}</option>
                 </select>
                 <button
-                  v-if="preferences.providerMode !== 'sub2api'"
+                  v-if="externalImageControlsVisible"
                   type="button"
                   class="studio-icon-button inset tone-violet"
                   :disabled="detectingModels"
@@ -253,18 +253,72 @@
 
                     <template v-if="preferences.providerMode === 'sub2api'">
                       <div class="studio-field-group">
-                        <label class="studio-field-label">{{ t('imageStudio.fields.soraKey') }}</label>
+                        <label class="studio-field-label">{{ t('imageStudio.fields.currentSiteProfile') }}</label>
+                        <select v-model="preferences.currentSiteProfile" class="input studio-select">
+                          <option
+                            v-for="option in currentSiteProfileOptions"
+                            :key="option.value"
+                            :value="option.value"
+                          >
+                            {{ option.label }}
+                          </option>
+                        </select>
+                        <p class="studio-helper">{{ currentSiteProfileDescription }}</p>
+                      </div>
+
+                      <div class="studio-field-group">
+                        <label class="studio-field-label">{{ t('imageStudio.fields.currentSiteEndpoint') }}</label>
+                        <input
+                          v-model.trim="preferences.currentSiteBaseUrl"
+                          type="url"
+                          class="input font-mono text-sm"
+                          :placeholder="currentSiteEndpointPlaceholder"
+                        />
+                        <p class="studio-helper">{{ t('imageStudio.hints.currentSiteEndpoint') }}</p>
+                      </div>
+
+                      <div class="studio-field-group">
+                        <label class="studio-field-label">{{ currentSiteKeyLabel }}</label>
                         <input
                           v-model.trim="sub2apiApiKey"
                           type="password"
                           class="input font-mono text-sm"
-                          :placeholder="t('imageStudio.placeholders.soraKey')"
+                          :placeholder="currentSiteKeyPlaceholder"
                           autocomplete="off"
-                          @blur="refreshSub2ApiUsage({ silent: true })"
-                          @keyup.enter="refreshSub2ApiUsage({ silent: true })"
+                          @blur="refreshCurrentSiteUsage({ silent: true })"
+                          @keyup.enter="refreshCurrentSiteUsage({ silent: true })"
                         />
-                        <p class="studio-helper">{{ t('imageStudio.hints.sub2apiReuse') }}</p>
+                        <p class="studio-helper">{{ currentSiteKeyHint }}</p>
                       </div>
+
+                      <div v-if="isCurrentSiteChatgpt2Api" class="studio-quota-card">
+                        <div>
+                          <span>{{ t('imageStudio.header.imageQuota') }}</span>
+                          <strong>{{ chatgpt2ApiQuotaText }}</strong>
+                        </div>
+                        <small>{{ chatgpt2ApiQuotaDetailText }}</small>
+                      </div>
+
+                      <button
+                        type="button"
+                        class="studio-test-connection"
+                        :class="{
+                          'is-ok': testConnectionState.kind === 'ok',
+                          'is-fail': testConnectionState.kind === 'fail',
+                          'is-busy': testConnectionState.kind === 'busy',
+                        }"
+                        :disabled="!sub2apiApiKey.trim() || testConnectionState.kind === 'busy'"
+                        @click="testCurrentSiteConnection"
+                      >
+                        <Icon
+                          :name="testConnectionState.kind === 'ok' ? 'checkCircle'
+                            : testConnectionState.kind === 'fail' ? 'exclamationCircle'
+                            : testConnectionState.kind === 'busy' ? 'sync'
+                            : 'bolt'"
+                          size="sm"
+                        />
+                        <span>{{ testConnectionLabel }}</span>
+                      </button>
                     </template>
 
                     <template v-else>
@@ -329,7 +383,7 @@
               </div>
 
               <div
-                v-if="preferences.providerMode !== 'sub2api'"
+                v-if="externalImageControlsVisible"
                 ref="advancedPanelRef"
                 class="studio-popover-host"
               >
@@ -428,10 +482,12 @@
                 <p class="studio-panel-title">{{ t('imageStudio.promptPanel.title') }}</p>
                 <p class="studio-helper">{{ t('imageStudio.promptPanel.subtitle') }}</p>
               </div>
-              <button type="button" class="studio-clear-button" @click="clearPromptComposer">
-                <Icon name="x" size="sm" />
-                <span>{{ t('imageStudio.promptPanel.clear') }}</span>
-              </button>
+              <div class="studio-prompt-header-actions">
+                <button type="button" class="studio-clear-button" @click="clearPromptComposer">
+                  <Icon name="x" size="sm" />
+                  <span>{{ t('imageStudio.promptPanel.clear') }}</span>
+                </button>
+              </div>
             </div>
 
             <div class="studio-prompt-layout">
@@ -440,6 +496,7 @@
                 <div class="studio-prompt-form">
                   <label class="studio-field-label">{{ t('imageStudio.sections.prompt') }}</label>
                   <textarea
+                    ref="promptTextareaRef"
                     v-model.trim="prompt"
                     rows="4"
                     class="input studio-prompt-textarea"
@@ -468,7 +525,7 @@
                       :title="upstreamCompatibilityEnabled
                         ? t('imageStudio.promptPanel.upstreamCompatibilityOn')
                         : t('imageStudio.promptPanel.upstreamCompatibilityOff')"
-                      @click="upstreamCompatibilityEnabled = !upstreamCompatibilityEnabled"
+                      @click="toggleUpstreamCompatibility"
                     >
                       <Icon
                         :name="promptHelperBusy === 'compatibility'
@@ -514,7 +571,7 @@
                       : t('imageStudio.promptPanel.upstreamCompatibilityHint') }}
                   </p>
 
-                  <template v-if="preferences.providerMode !== 'sub2api'">
+                  <template v-if="externalImageControlsVisible">
                     <div class="studio-negative-header">
                       <label class="studio-field-label">{{ t('imageStudio.promptPanel.negativeTitle') }}</label>
                       <span class="studio-character-count">
@@ -657,11 +714,12 @@
                   <button
                     type="button"
                     class="studio-strip-chip ghost"
-                    disabled
+                    :class="{ active: isCustomAspectRatio }"
                     :title="t('imageStudio.settings.customRatio')"
+                    @click="openCustomRatioModal"
                   >
                     <span class="studio-ratio-icon is-custom"></span>
-                    <span>{{ t('imageStudio.settings.customRatio') }}</span>
+                    <span>{{ customRatioChipLabel }}</span>
                   </button>
                 </div>
 
@@ -749,7 +807,7 @@
                   </div>
 
                   <div
-                    v-if="preferences.providerMode !== 'sub2api'"
+                    v-if="externalImageControlsVisible"
                     ref="seedPanelRef"
                     class="studio-strip-popover"
                   >
@@ -866,6 +924,59 @@
                   </span>
                 </button>
               </div>
+
+              <div class="studio-prompt-template-panel">
+                <button
+                  type="button"
+                  class="studio-prompt-template-preview"
+                  :title="selectedPromptTemplatePrompt"
+                  @click="selectedPromptLibraryOption ? openPromptLibraryDetails(selectedPromptLibraryOption) : openPromptLibrary()"
+                >
+                  <img
+                    v-if="selectedPromptTemplateImage"
+                    :src="selectedPromptTemplateImage"
+                    :alt="selectedPromptTemplateTitle"
+                    loading="lazy"
+                  />
+                  <div v-else class="studio-prompt-template-empty">
+                    <Icon name="grid" size="md" />
+                    <span>{{ selectedPromptTemplatePrompt }}</span>
+                  </div>
+                  <span class="studio-prompt-template-badge">模版效果图</span>
+                  <span class="studio-prompt-template-caption">
+                    {{ selectedPromptTemplatePrompt }}
+                  </span>
+                </button>
+
+                <div class="studio-prompt-template-info">
+                  <div class="studio-prompt-template-title">
+                    <Icon name="book" size="sm" />
+                    <span>{{ t('imageStudio.promptWorkspace.templateTitle') }}</span>
+                  </div>
+
+                  <div class="studio-template-info-rows">
+                    <div class="studio-template-info-row">
+                      <span>标题</span>
+                      <strong :title="selectedPromptTemplateTitle">{{ selectedPromptTemplateTitle }}</strong>
+                    </div>
+                    <div class="studio-template-info-row">
+                      <span>分类</span>
+                      <strong :title="selectedPromptTemplateCategory">{{ selectedPromptTemplateCategory }}</strong>
+                    </div>
+                  </div>
+
+                  <div class="studio-prompt-template-actions">
+                    <button type="button" class="studio-prompt-template-button" @click="focusPromptTextarea">
+                      <Icon name="edit" size="sm" />
+                      <span>{{ t('imageStudio.promptWorkspace.editShort') }}</span>
+                    </button>
+                    <button type="button" class="studio-prompt-template-button primary" @click="openPromptLibrary">
+                      <Icon name="book" size="sm" />
+                      <span>{{ t('imageStudio.promptWorkspace.chooseShort') }}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
               </div>
 
               <!-- FOOTER spans both columns -->
@@ -932,10 +1043,6 @@
                     <span class="studio-preview-help-row">
                       <kbd>{{ t('imageStudio.previewCanvas.helpKeyWheel') }}</kbd>
                       <span>{{ t('imageStudio.previewCanvas.helpWheelDesc') }}</span>
-                    </span>
-                    <span class="studio-preview-help-row">
-                      <kbd>Ctrl + {{ t('imageStudio.previewCanvas.helpKeyWheel') }}</kbd>
-                      <span>{{ t('imageStudio.previewCanvas.helpZoomDesc') }}</span>
                     </span>
                     <span class="studio-preview-help-row">
                       <kbd>← →</kbd>
@@ -1191,7 +1298,7 @@
             <div v-if="generating" class="studio-progress-info">
               <div class="studio-progress-info-text">
                 <strong>{{ generationPreviewLabel }}</strong>
-                <span v-if="generationBatchActive">{{ generationBatchDetailText }}</span>
+                <span v-if="generationJobActive">{{ generationBatchDetailText }}</span>
                 <template v-else>
                   <span v-if="estimatedRemainingSeconds != null">
                     {{ t('imageStudio.workbench.etaSeconds', { value: estimatedRemainingSeconds }) }}
@@ -1363,19 +1470,19 @@
 
         <aside class="studio-right-column">
           <section class="studio-panel studio-side-panel">
-            <div class="studio-side-header">
-              <div>
+            <div class="studio-history-header">
+              <div class="studio-history-title-row">
                 <p class="studio-panel-title">{{ t('imageStudio.sidebar.historyTitle') }}</p>
-                <p class="studio-helper">{{ t('imageStudio.sidebar.historySubtitle') }}</p>
+                <button
+                  type="button"
+                  class="studio-history-clear"
+                  :disabled="historyItems.length === 0"
+                  @click="confirmClearHistory"
+                >
+                  {{ t('imageStudio.promptPanel.clear') }}
+                </button>
               </div>
-              <button
-                type="button"
-                class="studio-panel-link-button"
-                :disabled="historyItems.length === 0"
-                @click="clearWorkspace"
-              >
-                {{ t('imageStudio.promptPanel.clear') }}
-              </button>
+              <p class="studio-helper">{{ t('imageStudio.sidebar.historySubtitle') }}</p>
             </div>
 
             <div v-if="!historyItems.length" class="studio-side-empty">
@@ -1383,34 +1490,31 @@
             </div>
 
             <div v-else class="studio-history-list">
-              <article
+              <HistoryCard
                 v-for="item in historyItems"
                 :key="item.id"
-                class="studio-history-card"
-                :class="{ active: activeHistoryRecord?.id === item.id }"
-              >
-                <button type="button" class="studio-history-main" @click="selectHistoryRecord(item.id)">
-                  <img
-                    :src="item.results[0]?.url"
-                    :alt="item.results[0]?.filename || item.model"
-                    class="studio-history-thumb"
-                  />
-                  <div class="studio-history-copy">
-                    <p class="studio-history-prompt">{{ item.prompt }}</p>
-                    <p class="studio-history-meta">
-                      {{ item.aspectRatio }} · {{ providerLabel(item.providerMode) }} · {{ formatTime(item.createdAt) }}
-                    </p>
-                  </div>
-                </button>
-                <div class="studio-history-actions">
-                  <button type="button" class="studio-ghost-link" @click="restoreHistoryRecord(item.id)">
-                    {{ t('imageStudio.buttons.restore') }}
-                  </button>
-                  <button type="button" class="studio-icon-button inset danger" @click="removeHistoryRecord(item.id)">
-                    <Icon name="trash" size="sm" />
-                  </button>
-                </div>
-              </article>
+                :active="activeHistoryRecord?.id === item.id"
+                :image-url="item.results[0]?.url || ''"
+                :image-alt="item.results[0]?.filename || item.model"
+                :ratio="item.aspectRatio"
+                :resolution="historyResolutionLabel(item)"
+                :title="item.prompt"
+                :provider="historyProviderLabel(item)"
+                :model="item.model"
+                :timing="historyTimingLabel(item)"
+                :style-label="historyStyleLabel(item)"
+                :seed="historySeedLabel(item)"
+                :seed-text="historySeedText()"
+                :seed-copy-title="historySeedCopyTitle(item)"
+                :file-size-text="historyFileSizeLabel(item)"
+                :format="historyFormatLabel(item)"
+                :restore-title="t('imageStudio.buttons.restore')"
+                :delete-title="t('imageStudio.buttons.delete')"
+                @select="selectHistoryRecord(item.id)"
+                @restore="restoreHistoryRecord(item.id)"
+                @delete="removeHistoryRecord(item.id)"
+                @copy-seed="copyHistorySeed(item)"
+              />
             </div>
           </section>
 
@@ -1556,7 +1660,7 @@
       <div
         v-if="previewLightboxOpen && previewTile"
         class="studio-lightbox"
-        :class="{ 'is-isolated': lightboxFreeDrag }"
+        :class="{ 'is-immersive': lightboxImmersive }"
         @click.self="closePreviewLightbox"
       >
         <div class="studio-lightbox-panel">
@@ -1583,15 +1687,6 @@
               <button type="button" class="studio-lightbox-button" @click="stepPreview(1)">
                 <Icon name="chevronRight" size="sm" />
                 {{ t('imageStudio.workbench.nextPreview') }}
-              </button>
-              <button
-                type="button"
-                class="studio-lightbox-button"
-                :disabled="!previewTile.prompt"
-                @click="copyPreviewPrompt"
-              >
-                <Icon name="clipboard" size="sm" />
-                {{ t('imageStudio.lightbox.copyPrompt') }}
               </button>
               <button
                 type="button"
@@ -1637,7 +1732,6 @@
                 'is-magnifier-active': lightboxMagnifierEnabled,
                 'is-zoomed': lightboxZoom > 1.02,
                 'is-dragging': lightboxPointerDown && lightboxDragStarted,
-                'is-free-drag': lightboxFreeDrag,
               },
             ]"
             @mousedown="handleLightboxStageMouseDown"
@@ -1724,6 +1818,447 @@
       </div>
     </Teleport>
 
+    <Teleport to="body">
+      <div
+        v-if="compatibilityPreviewOpen"
+        class="studio-prompt-modal-backdrop is-nested"
+        :style="studioModalThemeStyle"
+        role="dialog"
+        aria-modal="true"
+        @click.self="closeCompatibilityPreview"
+      >
+        <div class="studio-compatibility-modal">
+          <div class="studio-prompt-modal-head">
+            <div>
+              <p class="studio-prompt-modal-title">{{ t('imageStudio.promptCompatibility.title') }}</p>
+              <p class="studio-prompt-modal-text">{{ t('imageStudio.promptCompatibility.description') }}</p>
+            </div>
+            <button type="button" class="studio-popover-close" @click="closeCompatibilityPreview">
+              <Icon name="x" size="xs" />
+            </button>
+          </div>
+
+          <div class="studio-compatibility-preview-grid">
+            <section class="studio-compatibility-preview-card">
+              <div>
+                <p>{{ t('imageStudio.promptCompatibility.originalTitle') }}</p>
+                <span>{{ t('imageStudio.promptCompatibility.originalHint') }}</span>
+              </div>
+              <textarea
+                class="input studio-compatibility-preview-textarea"
+                :value="compatibilityPreviewOriginal"
+                readonly
+              ></textarea>
+            </section>
+
+            <section class="studio-compatibility-preview-card is-compatible">
+              <div>
+                <p>{{ t('imageStudio.promptCompatibility.compatibleTitle') }}</p>
+                <span>{{ t('imageStudio.promptCompatibility.compatibleHint') }}</span>
+              </div>
+              <textarea
+                v-model.trim="compatibilityPreviewPrompt"
+                class="input studio-compatibility-preview-textarea"
+              ></textarea>
+            </section>
+          </div>
+
+          <div class="studio-prompt-modal-actions">
+            <button type="button" class="studio-secondary-action" @click="closeCompatibilityPreview">
+              {{ t('imageStudio.promptCompatibility.cancel') }}
+            </button>
+            <button type="button" class="studio-secondary-action" @click="keepOriginalCompatibilityPrompt">
+              {{ t('imageStudio.promptCompatibility.useOriginal') }}
+            </button>
+            <button type="button" class="studio-generate-button" @click="confirmCompatibilityPrompt">
+              {{ t('imageStudio.promptCompatibility.useCompatible') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="customRatioModalOpen"
+        class="studio-prompt-modal-backdrop is-nested"
+        :style="studioModalThemeStyle"
+        role="dialog"
+        aria-modal="true"
+        @click.self="closeCustomRatioModal"
+      >
+        <div class="studio-custom-ratio-modal">
+          <div class="studio-prompt-modal-head">
+            <div>
+              <h3>{{ t('imageStudio.settings.customRatio') }}</h3>
+              <p>{{ t('imageStudio.hints.aspectRatio') }}</p>
+            </div>
+            <button type="button" class="studio-popover-close" @click="closeCustomRatioModal">
+              <Icon name="x" size="xs" />
+            </button>
+          </div>
+
+          <div class="studio-custom-ratio-form">
+            <label>
+              <span>W</span>
+              <input v-model="customRatioWidth" type="number" min="1" max="99" class="input" />
+            </label>
+            <strong>:</strong>
+            <label>
+              <span>H</span>
+              <input v-model="customRatioHeight" type="number" min="1" max="99" class="input" />
+            </label>
+          </div>
+
+          <div class="studio-prompt-modal-actions is-inline">
+            <button type="button" class="studio-secondary-action" @click="closeCustomRatioModal">
+              {{ t('imageStudio.buttons.cancelShort') }}
+            </button>
+            <button type="button" class="studio-generate-button" @click="applyCustomRatio">
+              {{ t('imageStudio.sidebar.helperConfirm') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="promptLibraryOpen"
+        class="studio-prompt-modal-backdrop"
+        :style="studioModalThemeStyle"
+        role="dialog"
+        aria-modal="true"
+        @click.self="closePromptLibrary"
+      >
+        <div class="studio-prompt-modal-panel is-library">
+          <div class="studio-prompt-modal-head">
+            <div>
+              <p class="studio-prompt-modal-title">{{ t('imageStudio.promptWorkspace.libraryTitle') }}</p>
+              <p class="studio-prompt-modal-text">{{ t('imageStudio.promptWorkspace.librarySubtitle') }}</p>
+            </div>
+            <button type="button" class="studio-popover-close" @click="closePromptLibrary">
+              <Icon name="x" size="xs" />
+            </button>
+          </div>
+
+          <div class="studio-prompt-library-toolbar">
+            <label class="studio-prompt-library-search">
+              <Icon name="search" size="sm" />
+              <input
+                v-model.trim="promptLibrarySearch"
+                type="search"
+                :placeholder="t('imageStudio.promptWorkspace.searchPlaceholder')"
+              />
+            </label>
+            <div ref="promptLibraryCategoryMenuRef" class="studio-prompt-library-category-wrap">
+              <button
+                type="button"
+                class="studio-prompt-library-category-trigger"
+                :class="{ active: promptLibraryCategoryMenuOpen }"
+                @click.stop="promptLibraryCategoryMenuOpen = !promptLibraryCategoryMenuOpen"
+              >
+                <span>{{ activePromptLibraryCategoryLabel }}</span>
+                <Icon name="chevronDown" size="sm" />
+              </button>
+
+              <div v-if="promptLibraryCategoryMenuOpen" class="studio-prompt-category-menu" @click.stop>
+                <label class="studio-prompt-category-search">
+                  <Icon name="search" size="xs" />
+                  <input
+                    v-model.trim="promptLibraryCategorySearch"
+                    type="search"
+                    placeholder="搜索分类"
+                  />
+                </label>
+
+                <div class="studio-prompt-category-section">
+                  <p class="studio-prompt-category-section-title">默认分类</p>
+                  <button
+                    v-for="category in filteredDefaultPromptLibraryCategories"
+                    :key="category.value"
+                    type="button"
+                    class="studio-prompt-category-option"
+                    :class="{ active: promptLibraryCategory === category.value }"
+                    @click="selectPromptLibraryCategory(category.value)"
+                  >
+                    <span class="studio-prompt-category-icon">
+                      <Icon :name="category.icon" size="xs" />
+                    </span>
+                    <span>{{ category.label }}</span>
+                    <small v-if="category.defaultTag">默认</small>
+                  </button>
+                </div>
+
+                <div class="studio-prompt-category-section">
+                  <p class="studio-prompt-category-section-title">自定义分类</p>
+                  <button
+                    v-for="category in filteredCustomPromptLibraryCategories"
+                    :key="category.value"
+                    type="button"
+                    class="studio-prompt-category-option"
+                    :class="{ active: promptLibraryCategory === category.value }"
+                    @click="selectPromptLibraryCategory(category.value)"
+                  >
+                    <span class="studio-prompt-category-icon is-custom">
+                      <Icon :name="category.icon" size="xs" />
+                    </span>
+                    <span>{{ category.label }}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    class="studio-prompt-category-add"
+                    @click="startPromptLibraryCategoryAdd"
+                  >
+                    <Icon name="plus" size="xs" />
+                    <span>添加新分类</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <button type="button" class="studio-prompt-library-command studio-prompt-library-upload" @click="openPromptUploadModal">
+              <Icon name="upload" size="sm" />
+              <span>上传提示词</span>
+            </button>
+            <button
+              type="button"
+              class="studio-prompt-library-command studio-prompt-library-batch"
+              :class="{ active: promptLibraryBatchMode }"
+              @click="togglePromptLibraryBatchMode"
+            >
+              <Icon name="check" size="sm" />
+              <span>批量管理</span>
+            </button>
+          </div>
+
+          <div v-if="promptLibraryBatchMode" class="studio-prompt-library-batchbar">
+            <span>已选 {{ promptLibrarySelectedIds.length }} 个</span>
+            <button
+              type="button"
+              :disabled="!promptLibrarySelectedIds.length"
+              @click="deleteSelectedPromptLibraryOptions"
+            >
+              删除选中
+            </button>
+          </div>
+
+          <TransitionGroup name="studio-prompt-card" tag="div" class="studio-prompt-library-list">
+            <button
+              v-for="option in filteredPromptLibraryOptions"
+              :key="option.id"
+              type="button"
+              class="studio-prompt-library-item"
+              :class="{
+                'is-selectable': promptLibraryBatchMode,
+                selected: promptLibrarySelectedIds.includes(option.id),
+                'is-applying': promptLibraryApplyingId === option.id,
+              }"
+              :style="{ '--card-index': String(filteredPromptLibraryOptions.indexOf(option)) }"
+              @click="handlePromptLibraryCardClick(option)"
+              @contextmenu.prevent="openPromptLibraryDetails(option)"
+              @pointerdown="startPromptLibraryLongPress(option)"
+              @pointerup="clearPromptLibraryLongPress"
+              @pointerleave="clearPromptLibraryLongPress"
+            >
+              <span
+                v-if="promptLibraryBatchMode"
+                class="studio-prompt-library-check"
+                :class="{ active: promptLibrarySelectedIds.includes(option.id) }"
+              >
+                <Icon name="check" size="xs" />
+              </span>
+              <span class="studio-prompt-library-card-visual">
+                <img
+                  v-if="option.imageUrl"
+                  :src="option.imageUrl"
+                  :alt="option.title"
+                  @error="(event) => ((event.target as HTMLImageElement).style.opacity = '0')"
+                />
+                <span v-else class="studio-prompt-library-card-fallback">
+                  <Icon name="sparkles" size="md" />
+                </span>
+                <span class="studio-prompt-library-card-prompt">
+                  <strong>{{ option.title }}</strong>
+                  <span>{{ option.description || option.prompt }}</span>
+                </span>
+              </span>
+            </button>
+            <div v-if="!filteredPromptLibraryOptions.length" class="studio-prompt-library-empty">
+              <Icon name="search" size="md" />
+              <p>{{ t('imageStudio.promptWorkspace.noPromptResults') }}</p>
+            </div>
+          </TransitionGroup>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="promptUploadModalOpen"
+        class="studio-prompt-modal-backdrop is-nested"
+        :style="studioModalThemeStyle"
+        role="dialog"
+        aria-modal="true"
+        @click.self="closePromptUploadModal"
+      >
+        <div class="studio-prompt-modal-panel is-upload">
+          <div class="studio-prompt-modal-head">
+            <div>
+              <p class="studio-prompt-modal-title">{{ t('imageStudio.promptWorkspace.uploadPrompt') }}</p>
+              <p class="studio-prompt-modal-text">本地保存预览图、标题、描述、提示词和分类。</p>
+            </div>
+            <button type="button" class="studio-popover-close" @click="closePromptUploadModal">
+              <Icon name="x" size="xs" />
+            </button>
+          </div>
+          <div class="studio-prompt-upload-body">
+            <label
+              class="studio-prompt-image-drop is-modal"
+              @dragover.prevent
+              @drop.prevent="handlePromptLibraryImageDrop"
+            >
+              <input
+                type="file"
+                accept="image/*"
+                class="hidden"
+                @change="handlePromptLibraryImageSelect"
+              />
+              <img
+                v-if="promptLibraryDraftImageUrl"
+                :src="promptLibraryDraftImageUrl"
+                alt=""
+              />
+              <span v-else>
+                <Icon name="upload" size="md" />
+                <strong>{{ t('imageStudio.promptWorkspace.uploadImage') }}</strong>
+                <small>支持拖拽或点击上传，最高 20MB</small>
+              </span>
+            </label>
+
+            <div class="studio-prompt-upload-fields">
+              <input
+                v-model.trim="promptLibraryDraftTitle"
+                class="input"
+                type="text"
+                :placeholder="t('imageStudio.promptWorkspace.localTitlePlaceholder')"
+              />
+              <input
+                v-model.trim="promptLibraryDraftCategory"
+                class="input"
+                type="text"
+                placeholder="分类，例如：人物、场景、写实"
+              />
+              <textarea
+                v-model.trim="promptLibraryDraftDescription"
+                class="input studio-prompt-upload-textarea is-description"
+                placeholder="描述"
+              ></textarea>
+              <textarea
+                v-model.trim="promptLibraryDraftPrompt"
+                class="input studio-prompt-upload-textarea"
+                :placeholder="t('imageStudio.promptWorkspace.localPromptPlaceholder')"
+              ></textarea>
+              <p v-if="promptLibraryDraftError" class="studio-prompt-upload-error">
+                {{ promptLibraryDraftError }}
+              </p>
+            </div>
+          </div>
+          <div class="studio-prompt-modal-actions is-upload-actions">
+            <button type="button" class="studio-prompt-upload-cancel" @click="closePromptUploadModal">
+              {{ t('imageStudio.promptWorkspace.cancel') }}
+            </button>
+            <button type="button" class="studio-prompt-upload-save" @click="savePromptLibraryDraft">
+              {{ t('imageStudio.promptWorkspace.saveLocalPrompt') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="promptLibraryDetailsItem"
+        class="studio-prompt-modal-backdrop is-nested"
+        :style="studioModalThemeStyle"
+        role="dialog"
+        aria-modal="true"
+        @click.self="closePromptLibraryDetails"
+      >
+        <div class="studio-prompt-modal-panel is-details">
+          <button type="button" class="studio-prompt-details-close" @click="closePromptLibraryDetails">
+            <Icon name="x" size="xs" />
+          </button>
+          <div
+            class="studio-prompt-details-visual"
+            @pointerdown="startPromptLibraryDetailsPreviewPress"
+            @pointerup="clearPromptLibraryDetailsPreviewPress"
+            @pointerleave="clearPromptLibraryDetailsPreviewPress"
+          >
+            <img
+              v-if="promptLibraryDetailsItem.imageUrl"
+              :src="promptLibraryDetailsItem.imageUrl"
+              :alt="promptLibraryDetailsItem.title"
+            />
+            <Icon v-else name="sparkles" size="lg" />
+          </div>
+          <div class="studio-prompt-details-body">
+            <h3>{{ promptLibraryDetailsItem.title }}</h3>
+            <div class="studio-prompt-details-meta">
+              <span>{{ promptLibraryDetailsItem.category || t('imageStudio.promptWorkspace.localStorage') }}</span>
+              <span v-if="promptLibraryDetailsItem.description">{{ promptLibraryDetailsItem.description }}</span>
+            </div>
+            <div
+              class="studio-prompt-details-prompt"
+              @pointerenter="burstPromptDetailsParticles"
+              @pointermove="emitPromptDetailsParticles"
+            >
+              <div class="studio-prompt-details-prompt-scroll">
+                <div class="studio-prompt-details-particles" aria-hidden="true">
+                  <span
+                    v-for="particle in promptDetailsParticles"
+                    :key="particle.id"
+                    class="studio-prompt-details-particle"
+                    :data-symbol="particle.text"
+                    :style="{
+                      left: `${particle.x}px`,
+                      top: `${particle.y}px`,
+                      '--particle-dx': `${particle.dx}px`,
+                      '--particle-dy': `${particle.dy}px`,
+                      '--particle-size': `${particle.size}px`,
+                      '--particle-color': particle.color,
+                    }"
+                  ></span>
+                </div>
+                <p>{{ promptLibraryDetailsItem.prompt }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="promptLibraryDetailsLightboxOpen && promptLibraryDetailsItem?.imageUrl"
+        class="studio-prompt-full-preview-backdrop"
+        role="dialog"
+        aria-modal="true"
+        @click.self="closePromptLibraryDetailsLightbox"
+        @wheel.prevent="handlePromptLibraryDetailsLightboxWheel"
+      >
+        <button type="button" class="studio-prompt-full-preview-close" @click="closePromptLibraryDetailsLightbox">
+          <Icon name="x" size="sm" />
+        </button>
+        <img
+          :src="promptLibraryDetailsItem.imageUrl"
+          :alt="promptLibraryDetailsItem.title"
+          class="studio-prompt-full-preview-image"
+          :style="{ transform: `scale(${promptLibraryDetailsLightboxScale})` }"
+        />
+      </div>
+    </Teleport>
+
   </div>
 </template>
 
@@ -1731,10 +2266,12 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
+import HistoryCard from '@/components/image-studio/HistoryCard.vue'
 import Icon from '@/components/icons/Icon.vue'
 import {
   BrowserDirectGenerationError,
   downloadRemoteImage,
+  fetchChatgpt2ApiImageQuota,
   fetchImageStudioUsage,
   generateImageWithExternalBrowser,
   generateImageWithExternalRelay,
@@ -1751,9 +2288,16 @@ import {
   revokeImageStudioHistoryItems,
   saveImageStudioHistoryItem,
 } from '@/services/imageStudioHistory'
+import {
+  deleteImageStudioPromptLibraryItem,
+  listImageStudioPromptLibraryItems,
+  revokeImageStudioPromptLibraryItems,
+  saveImageStudioPromptLibraryItem,
+} from '@/services/imageStudioPromptLibrary'
 import { useAppStore } from '@/stores'
 import type {
   ExternalImageStudioRequest,
+  ImageStudioChatgpt2ApiImageQuota,
   ImageStudioHistoryItem,
   ImageStudioProtocolProfile,
   ImageStudioProviderMode,
@@ -1762,6 +2306,7 @@ import type {
   ImageStudioWorkspaceTile,
   NormalizedImageResult,
 } from '@/types/imageStudio'
+import type { ImageStudioPromptLibraryItem } from '@/services/imageStudioPromptLibrary'
 
 const WORKSPACE_ORDER_STORAGE_KEY = 'image-studio.workspace-order'
 const LIGHTBOX_LENS_SIZE = 184
@@ -1769,6 +2314,7 @@ const LIGHTBOX_ZOOM_FACTOR = 1.9
 const LIGHTBOX_ZOOM_MIN = 1
 const LIGHTBOX_ZOOM_MAX = 4
 const LIGHTBOX_ZOOM_STEP = 0.35
+const PROMPT_LIBRARY_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 
 interface WorkspaceSyncOptions {
   prioritizedTileIds?: string[]
@@ -1782,6 +2328,35 @@ interface StylePresetOption {
   title: string
   subtitle: string
   promptHint: string
+}
+
+interface PromptLibraryOption {
+  id: string
+  title: string
+  description: string
+  prompt: string
+  imageUrl?: string
+  category?: string
+}
+
+type PromptLibraryCategoryIcon = 'grid' | 'book' | 'upload' | 'userCircle' | 'cube' | 'sparkles'
+
+interface PromptLibraryCategoryOption {
+  value: string
+  label: string
+  icon: PromptLibraryCategoryIcon
+  defaultTag?: boolean
+}
+
+interface PromptDetailParticle {
+  id: number
+  x: number
+  y: number
+  dx: number
+  dy: number
+  size: number
+  color: string
+  text: string
 }
 
 const props = withDefaults(defineProps<{
@@ -1801,14 +2376,45 @@ const {
 const sub2apiApiKey = ref('')
 const externalApiKey = ref('')
 const prompt = ref('')
+const promptTextareaRef = ref<HTMLTextAreaElement | null>(null)
 const negativePrompt = ref('')
+const promptLibraryOpen = ref(false)
+const promptLibrarySearch = ref('')
+const promptLibraryCategory = ref('all')
+const promptLibraryCategoryMenuOpen = ref(false)
+const promptLibraryCategorySearch = ref('')
+const promptLibraryBatchMode = ref(false)
+const promptLibrarySelectedIds = ref<string[]>([])
+const promptLibraryApplyingId = ref<string | null>(null)
+const promptUploadModalOpen = ref(false)
+const promptLibraryDraftTitle = ref('')
+const promptLibraryDraftDescription = ref('')
+const promptLibraryDraftPrompt = ref('')
+const promptLibraryDraftCategory = ref('')
+const promptLibraryDraftImageFile = ref<File | null>(null)
+const promptLibraryDraftImageUrl = ref('')
+const promptLibraryDraftError = ref('')
+const promptLibraryDetailsItem = ref<PromptLibraryOption | null>(null)
+const selectedPromptLibraryOption = ref<PromptLibraryOption | null>(null)
+const promptLibraryDetailsLightboxOpen = ref(false)
+const promptLibraryDetailsLightboxScale = ref(1)
+const promptDetailsParticles = ref<PromptDetailParticle[]>([])
 const upstreamCompatibilityEnabled = ref(false)
+const compatibilityPreviewOpen = ref(false)
+const compatibilityPreviewOriginal = ref('')
+const compatibilityPreviewPrompt = ref('')
+const confirmedCompatibilityPrompt = ref('')
 const autoCleanPlaceholders = ref(false)
 const referenceImages = ref<string[]>([])
 const REFERENCE_IMAGE_MAX_COUNT = 6
 const REFERENCE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 const referenceImageError = ref('')
 const referencePreviewIndex = ref<number | null>(null)
+const savedPromptLibraryItems = ref<ImageStudioPromptLibraryItem[]>([])
+let promptLibraryDetailsPreviewTimer: number | null = null
+let promptLibraryLongPressTimer: number | null = null
+let promptDetailsParticleId = 0
+let promptDetailsParticleFrame = 0
 
 function handleReferenceFileSelect(event: Event) {
   const input = event.target as HTMLInputElement
@@ -1962,8 +2568,10 @@ const lightboxPointerStartX = ref(0)
 const lightboxPointerStartY = ref(0)
 const lightboxPanStartX = ref(0)
 const lightboxPanStartY = ref(0)
-const lightboxFreeDrag = ref(false)
+const lightboxImmersive = ref(false)
 const lightboxLongPressTimer = ref<number | null>(null)
+const lightboxPendingPan = ref<{ x: number; y: number } | null>(null)
+let lightboxPanFrame = 0
 const LIGHTBOX_LONG_PRESS_MS = 420
 const comparePosition = ref(50)
 const compareViewMode = ref<'side-by-side' | 'slider'>('side-by-side')
@@ -1982,6 +2590,7 @@ const qualityPanelOpen = ref(false)
 const qualityPanelRef = ref<HTMLElement | null>(null)
 const seedPanelOpen = ref(false)
 const seedPanelRef = ref<HTMLElement | null>(null)
+const promptLibraryCategoryMenuRef = ref<HTMLElement | null>(null)
 
 type TranslateLang = 'en' | 'ja' | 'de' | 'zh' | 'ru'
 const translateLang = ref<TranslateLang>('en')
@@ -2248,6 +2857,9 @@ const sub2apiBaseUrl = new URL('/api/v1', window.location.origin).toString()
 const sub2apiUsage = ref<ImageStudioUsageResponse | null>(null)
 const sub2apiUsageLoading = ref(false)
 const sub2apiUsageError = ref('')
+const chatgpt2ApiQuota = ref<ImageStudioChatgpt2ApiImageQuota | null>(null)
+const chatgpt2ApiQuotaLoading = ref(false)
+const chatgpt2ApiQuotaError = ref('')
 const workbenchTileElements = new Map<string, HTMLElement>()
 
 const providerModes = computed(() => [
@@ -2272,6 +2884,7 @@ const accentPalette = {
   blue: {
     color: '#2563eb',
     deep: '#1d4ed8',
+    rgb: '37, 99, 235',
     soft: 'rgba(37, 99, 235, 0.12)',
     ring: 'rgba(37, 99, 235, 0.32)',
     shadow: 'rgba(37, 99, 235, 0.18)',
@@ -2280,6 +2893,7 @@ const accentPalette = {
   emerald: {
     color: '#059669',
     deep: '#047857',
+    rgb: '5, 150, 105',
     soft: 'rgba(5, 150, 105, 0.14)',
     ring: 'rgba(5, 150, 105, 0.32)',
     shadow: 'rgba(5, 150, 105, 0.18)',
@@ -2288,6 +2902,7 @@ const accentPalette = {
   amber: {
     color: '#d97706',
     deep: '#b45309',
+    rgb: '217, 119, 6',
     soft: 'rgba(217, 119, 6, 0.14)',
     ring: 'rgba(217, 119, 6, 0.32)',
     shadow: 'rgba(217, 119, 6, 0.18)',
@@ -2296,6 +2911,7 @@ const accentPalette = {
   rose: {
     color: '#e11d48',
     deep: '#be123c',
+    rgb: '225, 29, 72',
     soft: 'rgba(225, 29, 72, 0.14)',
     ring: 'rgba(225, 29, 72, 0.32)',
     shadow: 'rgba(225, 29, 72, 0.18)',
@@ -2352,11 +2968,94 @@ const studioAppearanceStyle = computed(() => {
   } as Record<string, string>
 })
 
+const studioModalThemeStyle = computed(() => {
+  const accent = accentPalette[studioAppearance.accentTone]
+  const isNight = studioAppearance.themeMode === 'night'
+
+  return {
+    '--studio-accent': accent.color,
+    '--studio-accent-deep': accent.deep,
+    '--studio-accent-soft': accent.soft,
+    '--studio-border-strong': accent.ring,
+    '--studio-accent-shadow': accent.shadow,
+    '--theme-color': accent.color,
+    '--theme-color-rgb': accent.rgb,
+    '--theme-text-on-primary': '#ffffff',
+    '--studio-card-background': isNight ? 'rgba(30, 32, 40, 0.66)' : 'rgba(255, 255, 255, 0.66)',
+    '--studio-soft-background': isNight ? 'rgba(20, 22, 29, 0.58)' : 'rgba(248, 250, 252, 0.58)',
+    '--studio-text': isNight ? '#e5eefc' : '#111827',
+    '--studio-muted': isNight ? '#a9b5c7' : '#64748b',
+    '--studio-border': isNight ? 'rgba(255, 255, 255, 0.10)' : 'rgba(31, 41, 55, 0.08)',
+    '--modal-glass-bg': isNight ? 'rgba(30, 30, 34, 0.66)' : 'rgba(255, 255, 255, 0.68)',
+    '--modal-glass-head': isNight ? 'rgba(32, 34, 42, 0.52)' : 'rgba(255, 255, 255, 0.54)',
+    '--modal-glass-veil': isNight ? 'rgba(7, 10, 18, 0.52)' : 'rgba(247, 249, 252, 0.54)',
+  } as Record<string, string>
+})
+
 const compatibilityProfiles = computed(() => [
   { value: 'openai-image-api', label: t('imageStudio.profiles.openaiImageApi') },
   { value: 'openai-responses', label: t('imageStudio.profiles.openaiResponses') },
   { value: 'sub2api-sora-compatible', label: t('imageStudio.profiles.sub2apiCompatible') },
 ])
+
+const currentSiteProfileOptions = computed(() => [
+  {
+    value: 'sub2api-sora-compatible' as const,
+    label: t('imageStudio.currentSiteProfiles.sub2apiCompatible.label'),
+    description: t('imageStudio.currentSiteProfiles.sub2apiCompatible.description'),
+  },
+  {
+    value: 'chatgpt2api' as const,
+    label: t('imageStudio.currentSiteProfiles.chatgpt2api.label'),
+    description: t('imageStudio.currentSiteProfiles.chatgpt2api.description'),
+  },
+])
+
+const isCurrentSiteChatgpt2Api = computed(() => (
+  preferences.providerMode === 'sub2api' && preferences.currentSiteProfile === 'chatgpt2api'
+))
+
+const externalImageControlsVisible = computed(() => (
+  preferences.providerMode !== 'sub2api' || isCurrentSiteChatgpt2Api.value
+))
+
+const currentSiteBaseUrl = computed(() => {
+  const custom = preferences.currentSiteBaseUrl.trim()
+  if (custom) {
+    return custom.replace(/\/+$/, '')
+  }
+  return isCurrentSiteChatgpt2Api.value
+    ? new URL('/v1', window.location.origin).toString().replace(/\/+$/, '')
+    : sub2apiBaseUrl
+})
+
+const currentSiteEndpointPlaceholder = computed(() => (
+  isCurrentSiteChatgpt2Api.value
+    ? new URL('/v1', window.location.origin).toString()
+    : sub2apiBaseUrl
+))
+
+const currentSiteProfileDescription = computed(() => (
+  currentSiteProfileOptions.value.find((option) => option.value === preferences.currentSiteProfile)?.description || ''
+))
+
+const currentSiteKeyLabel = computed(() => (
+  isCurrentSiteChatgpt2Api.value
+    ? t('imageStudio.fields.currentSiteKeyChatgpt2api')
+    : t('imageStudio.fields.currentSiteKeySub2api')
+))
+
+const currentSiteKeyPlaceholder = computed(() => (
+  isCurrentSiteChatgpt2Api.value
+    ? t('imageStudio.placeholders.currentSiteKeyChatgpt2api')
+    : t('imageStudio.placeholders.currentSiteKeySub2api')
+))
+
+const currentSiteKeyHint = computed(() => (
+  isCurrentSiteChatgpt2Api.value
+    ? t('imageStudio.hints.currentSiteKeyChatgpt2api')
+    : t('imageStudio.hints.currentSiteKeySub2api')
+))
 
 function aspectChipLabel(value: string): string {
   return value === 'default' ? t('imageStudio.settings.defaultLabel') : value
@@ -2374,7 +3073,16 @@ const aspectOptions = [
   { value: '2:3', frameClass: 'is-book' },
 ]
 
-const supportsCustomResolution = computed(() => preferences.providerMode !== 'sub2api')
+const builtinAspectValues = new Set(aspectOptions.map((option) => option.value))
+const customRatioModalOpen = ref(false)
+const customRatioWidth = ref('2')
+const customRatioHeight = ref('3')
+const isCustomAspectRatio = computed(() => !builtinAspectValues.has(preferences.aspectRatio))
+const customRatioChipLabel = computed(() => (
+  isCustomAspectRatio.value ? preferences.aspectRatio : t('imageStudio.settings.customRatio')
+))
+
+const supportsCustomResolution = computed(() => externalImageControlsVisible.value)
 
 function resolveGptImage2StandardSize(aspectRatio: string): string {
   switch (aspectRatio.trim()) {
@@ -2497,6 +3205,118 @@ const stylePresets = computed<StylePresetOption[]>(() => (
       ]
 ))
 
+const builtinPromptLibraryOptions = computed<PromptLibraryOption[]>(() => stylePresets.value.map((preset) => ({
+  id: `builtin-${preset.id}`,
+  title: preset.title,
+  description: preset.subtitle,
+  prompt: preset.promptHint || preset.title,
+  imageUrl: `/style-presets/${preset.id}.png`,
+  category: t('imageStudio.promptWorkspace.builtinSource'),
+})))
+
+const promptLibraryOptions = computed<PromptLibraryOption[]>(() => [
+  ...savedPromptLibraryItems.value.map((item) => ({
+    id: item.id,
+    title: item.title || t('imageStudio.promptWorkspace.uploadedPrompt'),
+    description: item.description || t('imageStudio.promptWorkspace.localStorage'),
+    prompt: item.prompt,
+    imageUrl: item.imageUrl,
+    category: item.category || t('imageStudio.promptWorkspace.uploadedSource'),
+  })),
+  ...builtinPromptLibraryOptions.value,
+])
+
+const promptLibraryCategories = computed(() => {
+  const categories = new Set<string>()
+  promptLibraryOptions.value.forEach((option) => {
+    if (option.category) categories.add(option.category)
+  })
+  return Array.from(categories)
+})
+
+const defaultPromptLibraryCategories = computed<PromptLibraryCategoryOption[]>(() => [
+  { value: 'all', label: '全部分类', icon: 'grid', defaultTag: true },
+  { value: t('imageStudio.promptWorkspace.uploadedSource'), label: t('imageStudio.promptWorkspace.uploadedSource'), icon: 'upload' },
+  { value: t('imageStudio.promptWorkspace.builtinSource'), label: t('imageStudio.promptWorkspace.builtinSource'), icon: 'book' },
+])
+
+const customPromptLibraryCategories = computed<PromptLibraryCategoryOption[]>(() => {
+  const defaultValues = new Set(defaultPromptLibraryCategories.value.map((category) => category.value))
+  const uploadedCategories = savedPromptLibraryItems.value
+    .map((item) => item.category?.trim())
+    .filter((category): category is string => !!category && !defaultValues.has(category))
+
+  const categories = Array.from(new Set(uploadedCategories))
+  const fallbackCategories = categories.length ? categories : ['角色模型', '场景资产']
+
+  return fallbackCategories.map((category, index) => ({
+    value: category,
+    label: category,
+    icon: (index % 2 === 0 ? 'userCircle' : 'cube') as PromptLibraryCategoryIcon,
+  }))
+})
+
+const activePromptLibraryCategoryLabel = computed(() => {
+  if (promptLibraryCategory.value === 'all') {
+    return '全部分类'
+  }
+
+  const category = [
+    ...defaultPromptLibraryCategories.value,
+    ...customPromptLibraryCategories.value,
+  ].find((item) => item.value === promptLibraryCategory.value)
+
+  return category?.label || promptLibraryCategory.value
+})
+
+const promptLibraryCategoryQuery = computed(() => promptLibraryCategorySearch.value.trim().toLowerCase())
+
+function matchesPromptLibraryCategoryQuery(category: PromptLibraryCategoryOption): boolean {
+  const query = promptLibraryCategoryQuery.value
+  if (!query) return true
+  return category.label.toLowerCase().includes(query)
+}
+
+const filteredDefaultPromptLibraryCategories = computed(() => (
+  defaultPromptLibraryCategories.value.filter(matchesPromptLibraryCategoryQuery)
+))
+
+const filteredCustomPromptLibraryCategories = computed(() => (
+  customPromptLibraryCategories.value.filter(matchesPromptLibraryCategoryQuery)
+))
+
+const filteredPromptLibraryOptions = computed(() => {
+  const query = promptLibrarySearch.value.trim().toLowerCase()
+  return promptLibraryOptions.value.filter((option) => {
+    const categoryMatched = promptLibraryCategory.value === 'all' || option.category === promptLibraryCategory.value
+    if (!categoryMatched) return false
+    if (!query) return true
+    return (
+      option.title.toLowerCase().includes(query) ||
+      option.description.toLowerCase().includes(query) ||
+      option.prompt.toLowerCase().includes(query)
+    )
+  })
+})
+
+const selectedPromptTemplateTitle = computed(() => (
+  selectedPromptLibraryOption.value?.title || t('imageStudio.promptWorkspace.noTemplateSelected')
+))
+
+const selectedPromptTemplateCategory = computed(() => (
+  selectedPromptLibraryOption.value?.category || t('imageStudio.promptWorkspace.waitingForTemplate')
+))
+
+const selectedPromptTemplatePrompt = computed(() => (
+  selectedPromptLibraryOption.value?.prompt
+  || t('imageStudio.promptWorkspace.templateImagePlaceholder')
+))
+
+const selectedPromptTemplateImage = computed(() => (
+  selectedPromptLibraryOption.value?.imageUrl
+  || ''
+))
+
 const FALLBACK_IMAGE_MODELS = ['gpt-image-1', 'gpt-image-2', 'dall-e-3', 'dall-e-2']
 const IMAGE_MODEL_KEYWORDS = /(image|sora|dall[-_]?e|flux|sdxl|stable[-_]?diffusion|midjourney|imagen|kling|mj|wan-?\d|pika|ideogram|firefly)/i
 
@@ -2522,6 +3342,10 @@ function externalApiBaseCandidates(rawBaseUrl: string): string[] {
   }
 
   return Array.from(new Set(candidates))
+}
+
+function currentSiteApiBaseCandidates(): string[] {
+  return externalApiBaseCandidates(currentSiteBaseUrl.value)
 }
 
 async function fetchImageModelIds(baseUrl: string, apiKey: string, signal?: AbortSignal): Promise<string[]> {
@@ -2555,6 +3379,12 @@ async function fetchImageModelIds(baseUrl: string, apiKey: string, signal?: Abor
 
 const modelOptions = computed(() => {
   if (preferences.providerMode === 'sub2api') {
+    if (isCurrentSiteChatgpt2Api.value) {
+      if (detectedImageModels.value.length) {
+        return detectedImageModels.value
+      }
+      return ['gpt-image-2', 'gpt-image-1', 'dall-e-3']
+    }
     return ['gpt-image']
   }
   if (detectedImageModels.value.length) {
@@ -2565,9 +3395,11 @@ const modelOptions = computed(() => {
 
 let detectModelsDebounce = 0
 async function fetchUpstreamImageModels(silent = true) {
-  if (preferences.providerMode === 'sub2api') return
-  const candidates = externalApiBaseCandidates(preferences.externalBaseUrl)
-  const apiKey = externalApiKey.value.trim()
+  if (preferences.providerMode === 'sub2api' && !isCurrentSiteChatgpt2Api.value) return
+  const candidates = isCurrentSiteChatgpt2Api.value
+    ? currentSiteApiBaseCandidates()
+    : externalApiBaseCandidates(preferences.externalBaseUrl)
+  const apiKey = isCurrentSiteChatgpt2Api.value ? sub2apiApiKey.value.trim() : externalApiKey.value.trim()
   if (!candidates.length || !apiKey) {
     detectedImageModels.value = []
     return
@@ -2597,18 +3429,28 @@ async function fetchUpstreamImageModels(silent = true) {
     }
     if (unique.length) {
       detectedImageModels.value = unique
-      if (resolvedBaseUrl !== preferences.externalBaseUrl.trim().replace(/\/+$/, '')) {
+      if (isCurrentSiteChatgpt2Api.value) {
+        if (resolvedBaseUrl !== currentSiteBaseUrl.value) {
+          preferences.currentSiteBaseUrl = resolvedBaseUrl
+        }
+      } else if (resolvedBaseUrl !== preferences.externalBaseUrl.trim().replace(/\/+$/, '')) {
         preferences.externalBaseUrl = resolvedBaseUrl
       }
       if (!unique.includes(preferences.model)) {
         preferences.model = unique[0]
       }
     } else {
-      detectedImageModels.value = []
+      detectedImageModels.value = isCurrentSiteChatgpt2Api.value ? ['gpt-image-2'] : []
+      if (isCurrentSiteChatgpt2Api.value) {
+        preferences.model = 'gpt-image-2'
+      }
     }
   } catch (error) {
     if ((error as { name?: string })?.name !== 'AbortError') {
-      detectedImageModels.value = []
+      detectedImageModels.value = isCurrentSiteChatgpt2Api.value ? ['gpt-image-2'] : []
+      if (isCurrentSiteChatgpt2Api.value) {
+        preferences.model = 'gpt-image-2'
+      }
       if (!silent) {
         appStore.showError(error instanceof Error ? error.message : 'Failed to load model list')
       }
@@ -2629,8 +3471,36 @@ function scheduleFetchUpstreamImageModels() {
   }, 350)
 }
 
+function normalizeCustomRatioPart(value: string): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 1
+  }
+  return Math.min(99, Math.max(1, Math.round(parsed)))
+}
+
+function openCustomRatioModal() {
+  const match = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(preferences.aspectRatio)
+  customRatioWidth.value = match?.[1] || customRatioWidth.value || '2'
+  customRatioHeight.value = match?.[2] || customRatioHeight.value || '3'
+  customRatioModalOpen.value = true
+}
+
+function closeCustomRatioModal() {
+  customRatioModalOpen.value = false
+}
+
+function applyCustomRatio() {
+  const width = normalizeCustomRatioPart(customRatioWidth.value)
+  const height = normalizeCustomRatioPart(customRatioHeight.value)
+  preferences.aspectRatio = `${width}:${height}`
+  customRatioWidth.value = String(width)
+  customRatioHeight.value = String(height)
+  customRatioModalOpen.value = false
+}
+
 const effectiveCount = computed(() => {
-  if (preferences.providerMode !== 'sub2api' && preferences.profile === 'openai-responses') {
+  if (!isCurrentSiteChatgpt2Api.value && preferences.providerMode !== 'sub2api' && preferences.profile === 'openai-responses') {
     return 1
   }
   return Math.max(1, Math.min(5, preferences.count))
@@ -2665,6 +3535,46 @@ const resolutionHint = computed(() => (
 ))
 
 const hasSub2ApiKey = computed(() => !!sub2apiApiKey.value.trim())
+const currentSiteUsageLoading = computed(() => (
+  isCurrentSiteChatgpt2Api.value ? chatgpt2ApiQuotaLoading.value : sub2apiUsageLoading.value
+))
+
+const chatgpt2ApiQuotaText = computed(() => {
+  if (!hasSub2ApiKey.value) {
+    return t('imageStudio.header.awaitingKey')
+  }
+  if (chatgpt2ApiQuotaLoading.value) {
+    return t('imageStudio.header.queryingImageQuota')
+  }
+  if (chatgpt2ApiQuotaError.value) {
+    return t('imageStudio.header.imageQuotaUnavailable')
+  }
+  const quota = chatgpt2ApiQuota.value
+  if (!quota) {
+    return t('imageStudio.header.awaitingImageQuota')
+  }
+  if (quota.unlimited) {
+    return t('imageStudio.header.imageQuotaUnlimited')
+  }
+  if (quota.unknown) {
+    return t('imageStudio.header.imageQuotaUnknown')
+  }
+  return t('imageStudio.header.imageQuotaCount', { count: formatNumber(Math.max(0, quota.remaining), 0) })
+})
+
+const chatgpt2ApiQuotaDetailText = computed(() => {
+  if (chatgpt2ApiQuotaError.value) {
+    return chatgpt2ApiQuotaError.value
+  }
+  const quota = chatgpt2ApiQuota.value
+  if (!quota) {
+    return t('imageStudio.usage.readyHint')
+  }
+  return t('imageStudio.header.imageQuotaDetail', {
+    available: quota.availableAccounts,
+    total: quota.totalAccounts,
+  })
+})
 
 const selectedStylePreset = computed(() => (
   stylePresets.value.find((preset) => preset.id === selectedStylePresetId.value) || stylePresets.value[0]
@@ -2753,6 +3663,9 @@ const previewMetaText = computed(() => {
 
 const headerRemainingText = computed(() => {
   if (preferences.providerMode === 'sub2api') {
+    if (isCurrentSiteChatgpt2Api.value) {
+      return chatgpt2ApiQuotaText.value
+    }
     if (!hasSub2ApiKey.value) {
       return t('imageStudio.header.awaitingKey')
     }
@@ -2772,6 +3685,9 @@ const headerRemainingText = computed(() => {
 
 const headerStatusText = computed(() => {
   if (preferences.providerMode === 'sub2api') {
+    if (isCurrentSiteChatgpt2Api.value) {
+      return t('imageStudio.header.imageQuota')
+    }
     return usageStatusText.value
   }
   if (generating.value) {
@@ -2793,6 +3709,12 @@ const headerStatusTone = computed<'blue' | 'emerald' | 'amber' | 'rose' | 'slate
     return 'blue'
   }
   if (preferences.providerMode === 'sub2api') {
+    if (isCurrentSiteChatgpt2Api.value) {
+      if (chatgpt2ApiQuotaLoading.value) return 'blue'
+      if (chatgpt2ApiQuotaError.value) return 'amber'
+      if (chatgpt2ApiQuota.value) return 'emerald'
+      return 'slate'
+    }
     if (!sub2apiUsage.value) {
       return 'slate'
     }
@@ -2831,9 +3753,10 @@ function describeEndpointHost(rawUrl: string): string {
 const generateTargetSummary = computed(() => {
   const modeLabel = currentProviderLabel.value
   if (preferences.providerMode === 'sub2api') {
+    const endpoint = isCurrentSiteChatgpt2Api.value ? currentSiteBaseUrl.value : sub2apiBaseUrl
     return {
       modeLabel,
-      endpointLabel: describeEndpointHost(sub2apiBaseUrl) || sub2apiBaseUrl,
+      endpointLabel: describeEndpointHost(endpoint) || endpoint,
     }
   }
   return {
@@ -2861,6 +3784,10 @@ const estimatedRemainingSeconds = computed<number | null>(() => {
 
 const generationBatchActive = computed(() => (
   generating.value && !!generationBatchProgress.value && generationBatchProgress.value.total > 1
+))
+
+const generationJobActive = computed(() => (
+  generating.value && !!generationBatchProgress.value
 ))
 
 const generationBatchFinishedCount = computed(() => {
@@ -2934,7 +3861,7 @@ const generationProgressPercent = computed<number>(() => {
     return progress.value
   }
   const batch = generationBatchProgress.value
-  if (batch && batch.total > 1) {
+  if (batch) {
     const settledPercent = ((batch.completed + batch.failed) / batch.total) * 100
     const activeSlice = (batch.running > 0 || batch.queued > 0)
       ? (progress.value / 100) * (100 / batch.total)
@@ -2966,7 +3893,7 @@ const generationPreviewLabel = computed(() => {
 
 const generationBatchDetailText = computed(() => {
   const batch = generationBatchProgress.value
-  if (!batch || batch.total <= 1) {
+  if (!batch) {
     return ''
   }
   const key = batch.failed > 0
@@ -2992,6 +3919,9 @@ const connectionTriggerMeta = computed(() => {
   if (connectionConfigIncomplete.value) {
     return t('imageStudio.popovers.connectionMissing')
   }
+  if (isCurrentSiteChatgpt2Api.value) {
+    return generateTargetSummary.value.endpointLabel || t('imageStudio.popovers.connectionReady')
+  }
   if (preferences.providerMode === 'sub2api') {
     return t('imageStudio.popovers.connectionReady')
   }
@@ -3008,6 +3938,9 @@ const generationSummaryText = computed(() => {
       done: generationBatchFinishedCount.value,
       total: generationBatchTotalCount.value,
     })
+  }
+  if (generationJobActive.value) {
+    return generationBatchDetailText.value
   }
   if (generating.value) {
     return t('imageStudio.loading.generatingText')
@@ -3100,8 +4033,8 @@ const lightboxHintText = computed(() => {
   if (lightboxMagnifierEnabled.value) {
     return t('imageStudio.previewCanvas.magnifierHint')
   }
-  if (lightboxFreeDrag.value) {
-    return t('imageStudio.previewCanvas.freeDragHint')
+  if (lightboxImmersive.value) {
+    return t('imageStudio.previewCanvas.immersiveHint')
   }
   return t('imageStudio.previewCanvas.panHint')
 })
@@ -3157,13 +4090,34 @@ watch(
   () => preferences.providerMode,
   (mode) => {
     if (mode === 'sub2api') {
-      preferences.profile = 'sub2api-sora-compatible'
-      preferences.model = 'gpt-image'
+      preferences.profile = preferences.currentSiteProfile
+      preferences.model = preferences.currentSiteProfile === 'chatgpt2api' ? 'gpt-image-2' : 'gpt-image'
       return
     }
 
     if (preferences.model === 'gpt-image') {
       preferences.model = preferences.profile === 'sub2api-sora-compatible' ? 'gpt-image-2' : 'gpt-image-1'
+    }
+  },
+  { immediate: true }
+)
+
+watch(
+  () => preferences.currentSiteProfile,
+  (profile) => {
+    if (preferences.providerMode !== 'sub2api') {
+      return
+    }
+    preferences.profile = profile
+    detectedImageModels.value = []
+    if (profile === 'chatgpt2api') {
+      preferences.model = 'gpt-image-2'
+      void fetchUpstreamImageModels(true)
+      void refreshChatgpt2ApiImageQuota({ silent: true })
+    } else {
+      preferences.model = 'gpt-image'
+      chatgpt2ApiQuota.value = null
+      chatgpt2ApiQuotaError.value = ''
     }
   },
   { immediate: true }
@@ -3201,6 +4155,8 @@ watch(
     }
     sub2apiUsage.value = null
     sub2apiUsageError.value = ''
+    chatgpt2ApiQuota.value = null
+    chatgpt2ApiQuotaError.value = ''
   }
 )
 
@@ -3223,7 +4179,10 @@ watch(
   [
     () => preferences.providerMode,
     () => preferences.externalBaseUrl,
+    () => preferences.currentSiteProfile,
+    () => preferences.currentSiteBaseUrl,
     () => externalApiKey.value,
+    () => sub2apiApiKey.value,
   ],
   () => {
     scheduleFetchUpstreamImageModels()
@@ -3298,6 +4257,13 @@ function formatTime(value: string): string {
     hour: '2-digit',
     minute: '2-digit',
   }).format(date)
+}
+
+function formatDurationMs(value?: number | null): string {
+  if (value == null || !Number.isFinite(value)) {
+    return ''
+  }
+  return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}s`
 }
 
 function providerLabel(mode: ImageStudioProviderMode): string {
@@ -3483,6 +4449,405 @@ function applyPromptChip(chip: string) {
   prompt.value = prompt.value.trim() ? `${prompt.value} ${chip}` : chip
 }
 
+async function refreshPromptLibraryItems() {
+  if (typeof window === 'undefined' || !window.indexedDB) {
+    savedPromptLibraryItems.value = []
+    return
+  }
+  try {
+    const items = await listImageStudioPromptLibraryItems()
+    revokeImageStudioPromptLibraryItems(savedPromptLibraryItems.value)
+    savedPromptLibraryItems.value = items
+  } catch {
+    savedPromptLibraryItems.value = []
+  }
+}
+
+function historyProviderLabel(item: ImageStudioHistoryItem): string {
+  if (item.providerMode === 'sub2api' && item.currentSiteProfile === 'chatgpt2api') {
+    return t('imageStudio.history.providerLabels.externalRelay')
+  }
+  return providerLabel(item.providerMode)
+}
+
+function historySeedText(): string {
+  return locale.value === 'zh' ? '种子' : 'Seed'
+}
+
+function normalizeHistorySeed(raw?: string): string {
+  const value = (raw || '').trim()
+  if (!value) return ''
+
+  const normalized = value
+    .replace(/(?:种子|seed)\s*[:：#-]?\s*/gi, '')
+    .split(/[\/|,，]/)
+    .map((part) => part.trim())
+    .find((part) => part && !/^auto$/i.test(part))
+
+  return normalized || ''
+}
+
+function historySeedLabel(item: ImageStudioHistoryItem): string {
+  return normalizeHistorySeed(item.seed)
+}
+
+function historySeedCopyTitle(item: ImageStudioHistoryItem): string {
+  const seed = historySeedLabel(item)
+  return seed
+    ? (locale.value === 'zh' ? `复制种子 ${seed}` : `Copy seed ${seed}`)
+    : ''
+}
+
+async function copyHistorySeed(item: ImageStudioHistoryItem) {
+  const seed = historySeedLabel(item)
+  if (!seed) return
+  try {
+    await navigator.clipboard.writeText(seed)
+    appStore.showSuccess(locale.value === 'zh' ? '种子已复制到剪贴板。' : 'Seed copied.')
+  } catch {
+    appStore.showError(locale.value === 'zh' ? '复制失败。' : 'Copy failed.')
+  }
+}
+
+function historyStyleLabel(item: ImageStudioHistoryItem): string {
+  if (item.stylePresetId) {
+    const preset = stylePresets.value.find((option) => option.id === item.stylePresetId)
+    if (preset?.title) return preset.title
+  }
+  return item.stylePresetTitle?.trim() || ''
+}
+
+function historyTimingLabel(item: ImageStudioHistoryItem): string {
+  return [formatTime(item.createdAt), formatDurationMs(item.durationMs)]
+    .filter(Boolean)
+    .join(' ')
+}
+
+function historyResolutionLabel(item: ImageStudioHistoryItem): string {
+  return item.requestedSize?.trim() || item.resolutionPreset?.toUpperCase() || '-'
+}
+
+function historyFormatLabel(item: ImageStudioHistoryItem): string {
+  const result = item.results[0]
+  const explicit = item.format?.trim()
+  if (explicit) {
+    return explicit.toUpperCase()
+  }
+  const mime = result?.mimeType?.toLowerCase() || ''
+  if (mime.includes('jpeg') || mime.includes('jpg')) return 'JPG'
+  if (mime.includes('webp')) return 'WEBP'
+  if (mime.includes('png')) return 'PNG'
+  const ext = result?.filename?.split('.').pop()?.trim()
+  return ext ? ext.toUpperCase() : '-'
+}
+
+function formatFileSize(bytes?: number): string {
+  if (!bytes || !Number.isFinite(bytes) || bytes <= 0) {
+    return locale.value === 'zh' ? '大小: -' : 'Size: -'
+  }
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = bytes
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+  const digits = value >= 10 || unitIndex === 0 ? 0 : 1
+  const label = `${value.toFixed(digits)} ${units[unitIndex]}`
+  return locale.value === 'zh' ? `大小: ${label}` : `Size: ${label}`
+}
+
+function historyFileSizeLabel(item: ImageStudioHistoryItem): string {
+  return formatFileSize(item.results[0]?.blob?.size)
+}
+
+function historyDurationLabel(item: ImageStudioHistoryItem): string {
+  const value = formatDurationMs(item.durationMs)
+  if (!value) return ''
+  return locale.value === 'zh' ? `耗时 ${value}` : `Took ${value}`
+}
+
+async function openPromptLibrary() {
+  promptLibrarySearch.value = ''
+  promptLibraryCategory.value = 'all'
+  promptLibraryCategorySearch.value = ''
+  promptLibraryCategoryMenuOpen.value = false
+  promptLibraryOpen.value = true
+  await refreshPromptLibraryItems()
+}
+
+function closePromptLibrary() {
+  promptLibraryOpen.value = false
+  promptLibraryCategoryMenuOpen.value = false
+  promptLibraryCategorySearch.value = ''
+  promptLibraryBatchMode.value = false
+  promptLibrarySelectedIds.value = []
+  promptLibraryApplyingId.value = null
+  closePromptLibraryDetails()
+  closePromptUploadModal()
+}
+
+function focusPromptTextarea() {
+  nextTick(() => {
+    promptTextareaRef.value?.focus()
+  })
+}
+
+function applyPromptLibraryOption(nextPrompt: string, option?: PromptLibraryOption) {
+  prompt.value = nextPrompt
+  if (option) {
+    selectedPromptLibraryOption.value = option
+  }
+  promptLibraryOpen.value = false
+  closePromptLibraryDetails()
+}
+
+function openPromptLibraryDetails(option: PromptLibraryOption) {
+  promptLibraryDetailsItem.value = option
+  promptLibraryDetailsLightboxOpen.value = false
+  promptLibraryDetailsLightboxScale.value = 1
+  promptDetailsParticles.value = []
+}
+
+function closePromptLibraryDetails() {
+  promptLibraryDetailsItem.value = null
+  promptLibraryDetailsLightboxOpen.value = false
+  promptLibraryDetailsLightboxScale.value = 1
+  promptDetailsParticles.value = []
+  clearPromptLibraryDetailsPreviewPress()
+}
+
+function promptLibraryOptionCategory(option: PromptLibraryOption): string {
+  return option.category || t('imageStudio.promptWorkspace.localStorage')
+}
+
+function selectPromptLibraryCategory(category: string) {
+  promptLibraryCategory.value = category
+  promptLibraryCategoryMenuOpen.value = false
+}
+
+function startPromptLibraryCategoryAdd() {
+  const query = promptLibraryCategorySearch.value.trim()
+  if (query) {
+    promptLibraryDraftCategory.value = query
+  }
+  promptLibraryCategoryMenuOpen.value = false
+  openPromptUploadModal()
+}
+
+async function handlePromptLibraryCardClick(option: PromptLibraryOption) {
+  if (!promptLibraryBatchMode.value) {
+    promptLibraryApplyingId.value = option.id
+    await new Promise((resolve) => window.setTimeout(resolve, 170))
+    applyPromptLibraryOption(option.prompt, option)
+    promptLibraryApplyingId.value = null
+    return
+  }
+
+  const index = promptLibrarySelectedIds.value.indexOf(option.id)
+  if (index >= 0) {
+    promptLibrarySelectedIds.value.splice(index, 1)
+    return
+  }
+  promptLibrarySelectedIds.value.push(option.id)
+}
+
+function togglePromptLibraryBatchMode() {
+  promptLibraryBatchMode.value = !promptLibraryBatchMode.value
+  promptLibrarySelectedIds.value = []
+}
+
+async function deleteSelectedPromptLibraryOptions() {
+  const selectedLocalIds = promptLibrarySelectedIds.value
+    .filter((id) => savedPromptLibraryItems.value.some((item) => item.id === id))
+
+  if (!selectedLocalIds.length) {
+    promptLibrarySelectedIds.value = []
+    return
+  }
+
+  try {
+    await Promise.all(selectedLocalIds.map((id) => deleteImageStudioPromptLibraryItem(id)))
+    appStore.showSuccess(t('imageStudio.promptWorkspace.localDeleted'))
+    promptLibrarySelectedIds.value = []
+    await refreshPromptLibraryItems()
+  } catch {
+    appStore.showError(t('imageStudio.promptWorkspace.localDeleteFailed'))
+  }
+}
+
+function startPromptLibraryCardPress(option: PromptLibraryOption) {
+  clearPromptLibraryLongPress()
+  promptLibraryLongPressTimer = window.setTimeout(() => {
+    openPromptLibraryDetails(option)
+  }, 460)
+}
+
+function startPromptLibraryLongPress(option: PromptLibraryOption) {
+  startPromptLibraryCardPress(option)
+}
+
+function clearPromptLibraryLongPress() {
+  if (promptLibraryLongPressTimer !== null) {
+    window.clearTimeout(promptLibraryLongPressTimer)
+    promptLibraryLongPressTimer = null
+  }
+}
+
+function startPromptLibraryDetailsPreviewPress(event: PointerEvent) {
+  if ((event.target as HTMLElement).closest('button')) return
+  clearPromptLibraryDetailsPreviewPress()
+  promptLibraryDetailsPreviewTimer = window.setTimeout(() => {
+    promptLibraryDetailsLightboxScale.value = 1
+    promptLibraryDetailsLightboxOpen.value = true
+  }, 460)
+}
+
+function clearPromptLibraryCardPress() {
+  clearPromptLibraryLongPress()
+}
+
+function clearPromptLibraryDetailsPreviewPress() {
+  if (promptLibraryDetailsPreviewTimer !== null) {
+    window.clearTimeout(promptLibraryDetailsPreviewTimer)
+    promptLibraryDetailsPreviewTimer = null
+  }
+}
+
+function closePromptLibraryDetailsLightbox() {
+  promptLibraryDetailsLightboxOpen.value = false
+  promptLibraryDetailsLightboxScale.value = 1
+}
+
+function handlePromptLibraryDetailsLightboxWheel(event: WheelEvent) {
+  const nextScale = promptLibraryDetailsLightboxScale.value + (event.deltaY < 0 ? 0.12 : -0.12)
+  promptLibraryDetailsLightboxScale.value = Math.min(3, Math.max(0.45, Number(nextScale.toFixed(2))))
+}
+
+function openPromptUploadModal() {
+  promptUploadModalOpen.value = true
+  promptLibraryDraftError.value = ''
+  if (!promptLibraryDraftPrompt.value.trim()) {
+    promptLibraryDraftPrompt.value = prompt.value.trim()
+  }
+}
+
+function resetPromptLibraryDraft() {
+  promptLibraryDraftTitle.value = ''
+  promptLibraryDraftDescription.value = ''
+  promptLibraryDraftPrompt.value = ''
+  promptLibraryDraftCategory.value = ''
+  promptLibraryDraftImageFile.value = null
+  promptLibraryDraftError.value = ''
+  if (promptLibraryDraftImageUrl.value) {
+    URL.revokeObjectURL(promptLibraryDraftImageUrl.value)
+    promptLibraryDraftImageUrl.value = ''
+  }
+}
+
+function closePromptUploadModal() {
+  promptUploadModalOpen.value = false
+  resetPromptLibraryDraft()
+}
+
+function setPromptLibraryDraftImage(file: File | undefined) {
+  promptLibraryDraftError.value = ''
+  if (!file) return
+  if (!file.type.startsWith('image/')) {
+    promptLibraryDraftError.value = t('imageStudio.promptWorkspace.imageTypeInvalid')
+    return
+  }
+  if (file.size > PROMPT_LIBRARY_IMAGE_MAX_BYTES) {
+    promptLibraryDraftError.value = t('imageStudio.promptWorkspace.imageTooLarge')
+    return
+  }
+  if (promptLibraryDraftImageUrl.value) {
+    URL.revokeObjectURL(promptLibraryDraftImageUrl.value)
+  }
+  promptLibraryDraftImageFile.value = file
+  promptLibraryDraftImageUrl.value = URL.createObjectURL(file)
+}
+
+function handlePromptLibraryImageSelect(event: Event) {
+  const input = event.target as HTMLInputElement
+  setPromptLibraryDraftImage(input.files?.[0])
+  input.value = ''
+}
+
+function handlePromptLibraryImageDrop(event: DragEvent) {
+  setPromptLibraryDraftImage(event.dataTransfer?.files?.[0])
+}
+
+async function savePromptLibraryDraft() {
+  const promptText = promptLibraryDraftPrompt.value.trim()
+  if (!promptText) {
+    promptLibraryDraftError.value = t('imageStudio.promptWorkspace.localPromptRequired')
+    return
+  }
+
+  if (typeof window === 'undefined' || !window.indexedDB) {
+    promptLibraryDraftError.value = t('imageStudio.promptWorkspace.localStorageUnavailable')
+    return
+  }
+
+  try {
+    await saveImageStudioPromptLibraryItem({
+      title: promptLibraryDraftTitle.value.trim() || t('imageStudio.promptWorkspace.uploadedPrompt'),
+      description: promptLibraryDraftDescription.value.trim(),
+      prompt: promptText,
+      category: promptLibraryDraftCategory.value.trim(),
+      imageBlob: promptLibraryDraftImageFile.value || undefined,
+      imageMimeType: promptLibraryDraftImageFile.value?.type,
+      imageFilename: promptLibraryDraftImageFile.value?.name,
+    })
+    appStore.showSuccess(t('imageStudio.promptWorkspace.localSaved'))
+    closePromptUploadModal()
+    await refreshPromptLibraryItems()
+  } catch {
+    promptLibraryDraftError.value = t('imageStudio.promptWorkspace.localSaveFailed')
+  }
+}
+
+function createPromptDetailsParticles(element: HTMLElement, x: number, y: number, count = 10) {
+  const colors = ['#fb7185', '#f472b6', '#a78bfa', '#60a5fa', '#fbbf24', '#34d399']
+  const symbols = ['*', '+', '.', 'x', '*']
+  const scrollEl = element.querySelector('.studio-prompt-details-prompt-scroll') as HTMLElement | null
+  const nextParticles = Array.from({ length: count }, (_, index) => {
+    const spread = index - (count - 1) / 2
+    return {
+      id: ++promptDetailsParticleId,
+      x: x + spread * 3 + (Math.random() - 0.5) * 14,
+      y: y + (scrollEl?.scrollTop || 0) + (Math.random() - 0.5) * 16,
+      dx: (Math.random() - 0.5) * 80,
+      dy: 22 + Math.random() * 52,
+      size: 14 + Math.random() * 10,
+      color: colors[promptDetailsParticleId % colors.length],
+      text: symbols[promptDetailsParticleId % symbols.length],
+    }
+  })
+  promptDetailsParticles.value = [...promptDetailsParticles.value, ...nextParticles].slice(-96)
+  window.setTimeout(() => {
+    const ids = new Set(nextParticles.map((particle) => particle.id))
+    promptDetailsParticles.value = promptDetailsParticles.value.filter((particle) => !ids.has(particle.id))
+  }, 1100)
+}
+
+function burstPromptDetailsParticles(event: PointerEvent) {
+  const box = event.currentTarget as HTMLElement
+  const rect = box.getBoundingClientRect()
+  createPromptDetailsParticles(box, event.clientX - rect.left, event.clientY - rect.top, 18)
+}
+
+function emitPromptDetailsParticles(event: MouseEvent) {
+  if (promptDetailsParticleFrame) return
+  promptDetailsParticleFrame = window.requestAnimationFrame(() => {
+    promptDetailsParticleFrame = 0
+    const box = event.currentTarget as HTMLElement
+    const rect = box.getBoundingClientRect()
+    createPromptDetailsParticles(box, event.clientX - rect.left, event.clientY - rect.top, 7)
+  })
+}
+
 function clearPromptComposer() {
   prompt.value = ''
   negativePrompt.value = ''
@@ -3564,6 +4929,21 @@ function applyLightboxPan(nextX: number, nextY: number) {
   const clamped = clampLightboxPan(nextX, nextY)
   lightboxPanX.value = clamped.x
   lightboxPanY.value = clamped.y
+}
+
+function scheduleLightboxPan(nextX: number, nextY: number) {
+  lightboxPendingPan.value = { x: nextX, y: nextY }
+  if (lightboxPanFrame) {
+    return
+  }
+  lightboxPanFrame = window.requestAnimationFrame(() => {
+    lightboxPanFrame = 0
+    const pending = lightboxPendingPan.value
+    lightboxPendingPan.value = null
+    if (pending) {
+      applyLightboxPan(pending.x, pending.y)
+    }
+  })
 }
 
 function refreshLightboxLayout(options: { resetZoom?: boolean } = {}) {
@@ -3661,8 +5041,13 @@ function closePreviewLightbox() {
   lightboxPointerDown.value = false
   lightboxPointerButton.value = null
   lightboxDragStarted.value = false
-  lightboxFreeDrag.value = false
+  lightboxImmersive.value = false
   clearLightboxLongPressTimer()
+  if (lightboxPanFrame) {
+    window.cancelAnimationFrame(lightboxPanFrame)
+    lightboxPanFrame = 0
+  }
+  lightboxPendingPan.value = null
   lightboxZoom.value = LIGHTBOX_ZOOM_MIN
   lightboxPanX.value = 0
   lightboxPanY.value = 0
@@ -3726,13 +5111,12 @@ function handleLightboxStageMouseDown(event: MouseEvent) {
   lightboxPanStartY.value = lightboxPanY.value
   event.preventDefault()
 
-  // Long-press on left button activates free-drag: image floats and can be
-  // moved beyond the normal pan clamp.
   if (event.button === 0) {
     clearLightboxLongPressTimer()
     lightboxLongPressTimer.value = window.setTimeout(() => {
       if (lightboxPointerDown.value && !lightboxDragStarted.value) {
-        lightboxFreeDrag.value = true
+        lightboxImmersive.value = true
+        refreshLightboxLayout()
       }
     }, LIGHTBOX_LONG_PRESS_MS)
   }
@@ -3742,21 +5126,7 @@ function handleLightboxWheel(event: WheelEvent) {
   if (lightboxMagnifierEnabled.value) {
     return
   }
-
-  // Wheel pans the image vertically (and horizontally if Shift is held).
-  // Modifier keys still allow zoom for users who want it.
-  if (event.ctrlKey || event.metaKey) {
-    stepLightboxZoom(event.deltaY < 0 ? 1 : -1, event)
-    return
-  }
-  const deltaY = event.deltaY
-  const deltaX = event.shiftKey ? event.deltaY : event.deltaX
-  if (lightboxFreeDrag.value) {
-    lightboxPanX.value -= deltaX
-    lightboxPanY.value -= deltaY
-  } else {
-    applyLightboxPan(lightboxPanX.value - deltaX, lightboxPanY.value - deltaY)
-  }
+  stepLightboxZoom(event.deltaY < 0 ? 1 : -1, event)
 }
 
 function handleLightboxPointerMove(event: MouseEvent) {
@@ -3832,36 +5202,29 @@ function handleDocumentClick(event: MouseEvent) {
   if (seedPanelRef.value && !seedPanelRef.value.contains(target)) {
     seedPanelOpen.value = false
   }
+  if (promptLibraryCategoryMenuRef.value && !promptLibraryCategoryMenuRef.value.contains(target)) {
+    promptLibraryCategoryMenuOpen.value = false
+  }
 }
 
 function handleGlobalMouseMove(event: MouseEvent) {
   if (
     lightboxPointerDown.value &&
     lightboxPointerButton.value === 0 &&
-    (lightboxZoom.value > 1 || lightboxViewMode.value === 'natural' || lightboxFreeDrag.value)
+    lightboxZoom.value > 1.02
   ) {
     const deltaX = event.clientX - lightboxPointerStartX.value
     const deltaY = event.clientY - lightboxPointerStartY.value
 
     if (!lightboxDragStarted.value && (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3)) {
       lightboxDragStarted.value = true
-      // User started moving before long-press fired — cancel timer; this is a
-      // normal pan, not a free-float gesture.
-      if (!lightboxFreeDrag.value) {
-        clearLightboxLongPressTimer()
-      }
+      clearLightboxLongPressTimer()
     }
 
     if (lightboxDragStarted.value) {
       const nextX = lightboxPanStartX.value + deltaX
       const nextY = lightboxPanStartY.value + deltaY
-      if (lightboxFreeDrag.value) {
-        // Free-drag: image floats. No clamp.
-        lightboxPanX.value = nextX
-        lightboxPanY.value = nextY
-      } else {
-        applyLightboxPan(nextX, nextY)
-      }
+      scheduleLightboxPan(nextX, nextY)
     }
   }
 
@@ -3871,8 +5234,6 @@ function handleGlobalMouseMove(event: MouseEvent) {
 }
 
 function handleGlobalMouseUp(event: MouseEvent) {
-  // Long-press on left button is a free-drag activation: do NOT zoom on tap.
-  // Right-click still performs zoom-out. Plain left-click does nothing.
   const shouldZoomOut = (
     lightboxPointerDown.value &&
     lightboxPointerButton.value === 2 &&
@@ -3900,6 +5261,10 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   }
 
   if (event.key === 'Escape') {
+    if (compatibilityPreviewOpen.value) {
+      compatibilityPreviewOpen.value = false
+      return
+    }
     if (promptHelperPanelOpen.value) {
       promptHelperPanelOpen.value = false
       return
@@ -3932,8 +5297,8 @@ function handleGlobalKeydown(event: KeyboardEvent) {
       closeReferencePreview()
       return
     }
-    if (lightboxFreeDrag.value) {
-      lightboxFreeDrag.value = false
+    if (lightboxImmersive.value) {
+      lightboxImmersive.value = false
       refreshLightboxLayout()
       return
     }
@@ -4090,6 +5455,49 @@ function randomizeSeed() {
   randomSeed.value = `${Math.floor(Math.random() * 9_999_999_999)}`
 }
 
+function closeCompatibilityPreview() {
+  compatibilityPreviewOpen.value = false
+}
+
+function disableUpstreamCompatibility() {
+  upstreamCompatibilityEnabled.value = false
+  confirmedCompatibilityPrompt.value = ''
+  compatibilityPreviewOpen.value = false
+}
+
+function keepOriginalCompatibilityPrompt() {
+  disableUpstreamCompatibility()
+}
+
+function confirmCompatibilityPrompt() {
+  const nextPrompt = compatibilityPreviewPrompt.value.trim()
+  if (!nextPrompt) {
+    appStore.showWarning(t('imageStudio.toasts.promptRequired'))
+    return
+  }
+  confirmedCompatibilityPrompt.value = nextPrompt
+  upstreamCompatibilityEnabled.value = true
+  compatibilityPreviewOpen.value = false
+}
+
+function toggleUpstreamCompatibility() {
+  if (upstreamCompatibilityEnabled.value) {
+    disableUpstreamCompatibility()
+    return
+  }
+
+  const basePrompt = resolvePromptTemplateArguments(buildPromptText()).trim()
+  if (!basePrompt) {
+    appStore.showWarning(t('imageStudio.toasts.promptRequired'))
+    return
+  }
+
+  const compatible = resolveUpstreamCompatiblePrompt(basePrompt)
+  compatibilityPreviewOriginal.value = basePrompt
+  compatibilityPreviewPrompt.value = compatible.prompt || basePrompt
+  compatibilityPreviewOpen.value = true
+}
+
 function resolveSub2ApiModel(aspectRatio: string): string {
   if (['16:9', '21:9', '4:3', '3:2', '5:4'].includes(aspectRatio)) {
     return 'gpt-image-landscape'
@@ -4242,8 +5650,24 @@ async function resizeResultToPixelSize(
 
   try {
     if (bitmap.width === target.width && bitmap.height === target.height) {
+      console.info('[image-studio] output already matches target size', {
+        filename: result.filename,
+        preset,
+        size: `${target.width}x${target.height}`,
+        mimeType: sourceBlob.type || result.mimeType,
+        bytes: sourceBlob.size,
+      })
       return result
     }
+
+    console.info('[image-studio] resizing output to requested preset', {
+      filename: result.filename,
+      preset,
+      sourceSize: `${bitmap.width}x${bitmap.height}`,
+      targetSize: `${target.width}x${target.height}`,
+      mimeType: sourceBlob.type || result.mimeType,
+      sourceBytes: sourceBlob.size,
+    })
 
     const canvas = document.createElement('canvas')
     canvas.width = target.width
@@ -4657,10 +6081,13 @@ function createExternalRequest(
 ): ExternalImageStudioRequest {
   const cleaned = (imageInputs || []).filter((s) => typeof s === 'string' && s.length > 0)
   const aspectValue = preferences.aspectRatio === 'default' ? '' : preferences.aspectRatio
+  const baseUrl = isCurrentSiteChatgpt2Api.value ? currentSiteBaseUrl.value : preferences.externalBaseUrl
+  const apiKey = isCurrentSiteChatgpt2Api.value ? sub2apiApiKey.value : externalApiKey.value
+  const profile = isCurrentSiteChatgpt2Api.value ? 'chatgpt2api' : preferences.profile
   return {
-    base_url: preferences.externalBaseUrl,
-    api_key: externalApiKey.value,
-    profile: preferences.profile,
+    base_url: baseUrl,
+    api_key: apiKey,
+    profile,
     model,
     prompt: resolvedPromptText,
     count: effectiveCount.value,
@@ -4671,6 +6098,7 @@ function createExternalRequest(
     quality: preferences.quality,
     background: preferences.background,
     format: preferences.format,
+    seed: randomSeed.value.trim() || undefined,
   }
 }
 
@@ -4694,10 +6122,20 @@ async function persistCurrentResults(
     createdAt: new Date().toISOString(),
     providerMode: preferences.providerMode,
     profile: preferences.profile,
+    currentSiteProfile: preferences.providerMode === 'sub2api' ? preferences.currentSiteProfile : undefined,
     model,
     prompt: resolvedPromptText,
     aspectRatio: preferences.aspectRatio,
     count: effectiveCount.value,
+    resolutionPreset: preferences.resolutionPreset,
+    requestedSize: resolvedSize.value || undefined,
+    quality: preferences.quality,
+    background: preferences.background,
+    format: preferences.format,
+    seed: randomSeed.value.trim() || undefined,
+    stylePresetId: selectedStylePreset.value?.id,
+    stylePresetTitle: selectedStylePreset.value?.title,
+    durationMs: lastGenerationDurationMs.value || undefined,
     referenceImageUrl: cleanedInputs[0],
     referenceImageUrls: cleanedInputs.length ? cleanedInputs : undefined,
     parentHistoryId: lineage?.parentHistoryId,
@@ -4735,6 +6173,37 @@ async function refreshSub2ApiUsage(options: { silent?: boolean } = {}) {
   } finally {
     sub2apiUsageLoading.value = false
   }
+}
+
+async function refreshChatgpt2ApiImageQuota(options: { silent?: boolean } = {}) {
+  if (!hasSub2ApiKey.value || chatgpt2ApiQuotaLoading.value) {
+    return
+  }
+
+  chatgpt2ApiQuotaLoading.value = true
+  chatgpt2ApiQuotaError.value = ''
+
+  try {
+    chatgpt2ApiQuota.value = await fetchChatgpt2ApiImageQuota(currentSiteBaseUrl.value, sub2apiApiKey.value)
+  } catch (error) {
+    const message = error instanceof Error && error.message
+      ? error.message
+      : t('imageStudio.usage.imageQuotaQueryFailed')
+    chatgpt2ApiQuotaError.value = message
+    if (!options.silent) {
+      appStore.showError(message)
+    }
+  } finally {
+    chatgpt2ApiQuotaLoading.value = false
+  }
+}
+
+async function refreshCurrentSiteUsage(options: { silent?: boolean } = {}) {
+  if (isCurrentSiteChatgpt2Api.value) {
+    await refreshChatgpt2ApiImageQuota(options)
+    return
+  }
+  await refreshSub2ApiUsage(options)
 }
 
 function isAbortLikeError(error: unknown): boolean {
@@ -4887,7 +6356,6 @@ async function generateWithExternalProvider(
         isRetryableImageTransportError(error)
       ) {
         appStore.showWarning(t('imageStudio.toasts.browserDirectFallback'))
-        preferences.providerMode = 'external-relay'
         return await runRelay(sizeOverride)
       }
       throw error
@@ -4895,7 +6363,7 @@ async function generateWithExternalProvider(
   }
 
   const runCurrentMode = (sizeOverride?: string) => (
-    preferences.providerMode === 'external-relay'
+    preferences.providerMode === 'external-relay' || isCurrentSiteChatgpt2Api.value
       ? runRelay(sizeOverride)
       : runBrowser(sizeOverride)
   )
@@ -4967,7 +6435,7 @@ function startElapsedTracker() {
 }
 
 function updateGenerationBatchProgress(next: ImageStudioBatchProgress) {
-  generationBatchProgress.value = next.total > 1 ? { ...next } : null
+  generationBatchProgress.value = { ...next }
 }
 
 async function generateImages(options: {
@@ -5012,34 +6480,18 @@ async function generateImages(options: {
   }
 
   if (upstreamCompatibilityEnabled.value) {
-    if (!promptHelperConfigured.value) {
-      promptHelperPanelOpen.value = true
-      appStore.showWarning(t('imageStudio.toasts.upstreamCompatibilityConfigure'))
+    const confirmedPrompt = confirmedCompatibilityPrompt.value.trim()
+    if (!confirmedPrompt) {
+      const compatible = resolveUpstreamCompatiblePrompt(resolvedPromptText)
+      compatibilityPreviewOriginal.value = resolvedPromptText
+      compatibilityPreviewPrompt.value = compatible.prompt || resolvedPromptText
+      upstreamCompatibilityEnabled.value = false
+      compatibilityPreviewOpen.value = true
+      appStore.showWarning(t('imageStudio.promptCompatibility.title'))
       return
     }
-    if (promptHelperBusy.value) {
-      appStore.showWarning(t('imageStudio.toasts.upstreamCompatibilityBusy'))
-      return
-    }
-
-    const localCompatiblePrompt = resolveUpstreamCompatiblePrompt(resolvedPromptText)
-    promptHelperBusy.value = 'compatibility'
-    try {
-      const rewrittenPrompt = await rewritePromptForCompatibility(
-        resolvedPromptText,
-        localCompatiblePrompt.applied ? localCompatiblePrompt.prompt : ''
-      )
-      if (rewrittenPrompt && rewrittenPrompt !== resolvedPromptText) {
-        requestPromptText = rewrittenPrompt
-        appStore.showWarning(t('imageStudio.toasts.promptCompatibilityApplied'))
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : t('imageStudio.toasts.promptCompatibilityFailed')
-      appStore.showError(`${t('imageStudio.toasts.promptCompatibilityFailed')}: ${message}`)
-      return
-    } finally {
-      promptHelperBusy.value = null
-    }
+    requestPromptText = confirmedPrompt
+    appStore.showWarning(t('imageStudio.toasts.promptCompatibilityApplied'))
   }
 
   generationError.value = null
@@ -5068,11 +6520,11 @@ async function generateImages(options: {
 
   try {
     let generatedResults: NormalizedImageResult[] = []
-    const resolvedModel = preferences.providerMode === 'sub2api'
+    const resolvedModel = preferences.providerMode === 'sub2api' && !isCurrentSiteChatgpt2Api.value
       ? resolveSub2ApiModel(preferences.aspectRatio)
       : preferences.model
     const profileForTiles = (preferences.providerMode === 'sub2api'
-      ? 'sub2api-sora-compatible'
+      ? preferences.currentSiteProfile
       : preferences.profile) as ImageStudioProtocolProfile
     const displayedResultIds = new Set<string>()
     const displayedResults: NormalizedImageResult[] = []
@@ -5110,7 +6562,7 @@ async function generateImages(options: {
       },
     }
 
-    if (preferences.providerMode === 'sub2api') {
+    if (preferences.providerMode === 'sub2api' && !isCurrentSiteChatgpt2Api.value) {
       const sub2apiPayload = {
         base_url: sub2apiBaseUrl,
         api_key: sub2apiApiKey.value,
@@ -5137,7 +6589,7 @@ async function generateImages(options: {
           throw error
         }
       }
-    } else if (preferences.providerMode === 'external-relay') {
+    } else if (preferences.providerMode === 'external-relay' || isCurrentSiteChatgpt2Api.value) {
       generatedResults = await generateWithExternalProvider(
         resolvedModel,
         requestPromptText,
@@ -5199,7 +6651,7 @@ async function generateImages(options: {
       })
 
     if (preferences.providerMode === 'sub2api') {
-      void refreshSub2ApiUsage({ silent: true })
+      void refreshCurrentSiteUsage({ silent: true })
     }
   } catch (error) {
     if (!isAbortLikeError(error)) {
@@ -5293,21 +6745,54 @@ async function testUpstreamConnection() {
   }
 }
 
-async function copyPreviewPrompt() {
-  const promptText = previewTile.value?.prompt?.trim()
-  if (!promptText) {
-    appStore.showWarning(t('imageStudio.toasts.promptCopyEmpty'))
+async function testCurrentSiteConnection() {
+  const apiKey = sub2apiApiKey.value.trim()
+  if (!apiKey) {
     return
   }
-  if (!navigator.clipboard) {
-    appStore.showWarning(t('imageStudio.toasts.promptCopyUnsupported'))
-    return
-  }
+
+  testConnectionState.value = { kind: 'busy' }
   try {
-    await navigator.clipboard.writeText(promptText)
-    appStore.showSuccess(t('imageStudio.toasts.promptCopied'))
+    if (isCurrentSiteChatgpt2Api.value) {
+      const candidates = currentSiteApiBaseCandidates()
+      const controller = new AbortController()
+      const timeout = window.setTimeout(() => controller.abort(), 8000)
+      let modelIds: string[] = []
+      let resolvedBaseUrl = candidates[0]
+      let lastError: unknown = null
+      for (const candidate of candidates) {
+        try {
+          modelIds = await fetchImageModelIds(candidate, apiKey, controller.signal)
+          resolvedBaseUrl = candidate
+          break
+        } catch (error) {
+          lastError = error
+        }
+      }
+      window.clearTimeout(timeout)
+      if (!modelIds.length && lastError) {
+        throw lastError
+      }
+      detectedImageModels.value = modelIds.length ? modelIds : ['gpt-image-2']
+      if (!detectedImageModels.value.includes(preferences.model)) {
+        preferences.model = detectedImageModels.value.includes('gpt-image-2') ? 'gpt-image-2' : detectedImageModels.value[0]
+      }
+      if (resolvedBaseUrl && resolvedBaseUrl !== currentSiteBaseUrl.value) {
+        preferences.currentSiteBaseUrl = resolvedBaseUrl
+      }
+      await refreshChatgpt2ApiImageQuota({ silent: true })
+    } else {
+      await refreshSub2ApiUsage({ silent: true })
+    }
+    testConnectionState.value = { kind: 'ok' }
+    window.setTimeout(() => {
+      if (testConnectionState.value.kind === 'ok') {
+        testConnectionState.value = { kind: 'idle' }
+      }
+    }, 4000)
   } catch (error) {
-    appStore.showError(error instanceof Error ? error.message : t('imageStudio.toasts.promptCopyFailed'))
+    const msg = error instanceof Error ? error.message : t('imageStudio.testConnection.fail')
+    testConnectionState.value = { kind: 'fail', message: msg }
   }
 }
 
@@ -5549,9 +7034,18 @@ function restoreHistoryRecord(id: string) {
   negativePrompt.value = ''
   preferences.providerMode = item.providerMode
   preferences.profile = item.profile
+  if (item.providerMode === 'sub2api') {
+    preferences.currentSiteProfile = item.currentSiteProfile || item.profile
+  }
   preferences.model = item.model === 'gpt-image-landscape' || item.model === 'gpt-image-portrait' ? 'gpt-image' : item.model
   preferences.aspectRatio = item.aspectRatio
   preferences.count = item.count
+  if (item.resolutionPreset) preferences.resolutionPreset = item.resolutionPreset
+  if (item.quality) preferences.quality = item.quality
+  if (item.background) preferences.background = item.background
+  if (item.format) preferences.format = item.format
+  randomSeed.value = item.seed || ''
+  if (item.stylePresetId) selectedStylePresetId.value = item.stylePresetId
   if (item.referenceImageUrls && item.referenceImageUrls.length) {
     referenceImages.value = [...item.referenceImageUrls]
   } else if (item.referenceImageUrl) {
@@ -5768,12 +7262,12 @@ async function deleteSelectedTiles() {
 }
 
 async function clearWorkspace() {
-  if (!workspaceTiles.value.length) {
+  if (!historyItems.value.length) {
     return
   }
 
   const snapshot = snapshotHistoryItems(historyItems.value)
-  const removedCount = workspaceTiles.value.length
+  const removedCount = workspaceTiles.value.length || historyItems.value.reduce((sum, item) => sum + item.results.length, 0)
   await clearImageStudioHistory()
   clearWorkspaceOrder()
   selectedTileIds.value = []
@@ -5781,6 +7275,16 @@ async function clearWorkspace() {
   activeHistoryId.value = null
   await loadHistory()
   startDeleteUndoTimer(snapshot, removedCount, 'workspace')
+}
+
+async function confirmClearHistory() {
+  if (!historyItems.value.length) {
+    return
+  }
+  if (!window.confirm(t('imageStudio.sidebar.clearHistoryConfirm'))) {
+    return
+  }
+  await clearWorkspace()
 }
 
 onMounted(async () => {
@@ -5804,6 +7308,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', handleWindowResize)
   clearProgressResetTimer()
   revokeImageStudioHistoryItems(historyItems.value)
+  revokeImageStudioPromptLibraryItems(savedPromptLibraryItems.value)
+  clearPromptLibraryDetailsPreviewPress()
 })
 </script>
 
@@ -6148,13 +7654,30 @@ onBeforeUnmount(() => {
 }
 
 .studio-layout {
-  @apply grid gap-4 p-4 xl:grid-cols-[280px_minmax(0,1fr)_320px];
+  @apply grid gap-4 p-4;
+}
+
+@media (min-width: 1280px) {
+  .studio-layout {
+    grid-template-columns: 260px minmax(0, 1fr) 340px;
+  }
+}
+
+@media (min-width: 1536px) {
+  .studio-layout {
+    grid-template-columns: 280px minmax(0, 1fr) 380px;
+  }
 }
 
 .studio-left-column,
 .studio-main-column,
 .studio-right-column {
   @apply flex min-h-0 min-w-0 flex-col gap-4;
+}
+
+.studio-right-column,
+.studio-side-panel {
+  overflow: visible;
 }
 
 .studio-panel {
@@ -6171,6 +7694,10 @@ onBeforeUnmount(() => {
 .studio-progress-header,
 .studio-prompt-header {
   @apply flex flex-wrap items-start justify-between gap-3;
+}
+
+.studio-prompt-header-actions {
+  @apply flex flex-wrap items-center justify-end gap-2;
 }
 
 .studio-panel-title {
@@ -6198,6 +7725,17 @@ onBeforeUnmount(() => {
 
 .studio-clear-button {
   @apply border border-slate-200 bg-white;
+}
+
+.studio-prompt-library-entry {
+  color: var(--studio-accent-deep);
+  border-color: color-mix(in srgb, var(--studio-accent) 22%, transparent);
+  background: color-mix(in srgb, var(--studio-accent-soft) 78%, #ffffff);
+}
+
+.studio-prompt-library-entry:hover {
+  color: var(--studio-accent-deep);
+  background: color-mix(in srgb, var(--studio-accent-soft) 92%, #ffffff);
 }
 
 .studio-provider-switch {
@@ -6588,6 +8126,205 @@ onBeforeUnmount(() => {
   @apply flex min-w-0 flex-col gap-3;
 }
 
+.studio-prompt-template-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.16fr) minmax(112px, 0.84fr);
+  gap: 10px;
+  min-height: 148px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--studio-border) 45%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--studio-soft-background) 54%, transparent);
+}
+
+.studio-prompt-template-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--studio-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.studio-prompt-template-title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-prompt-template-title svg {
+  flex: 0 0 auto;
+  color: var(--studio-accent);
+  opacity: 0.72;
+}
+
+.studio-prompt-template-preview {
+  position: relative;
+  display: block;
+  min-width: 0;
+  min-height: 132px;
+  overflow: hidden;
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 20% 15%, color-mix(in srgb, var(--studio-accent) 26%, transparent), transparent 34%),
+    linear-gradient(135deg, color-mix(in srgb, var(--studio-surface) 56%, #0f172a), #111827);
+  color: #ffffff;
+  isolation: isolate;
+  text-align: left;
+}
+
+.studio-prompt-template-preview img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 180ms ease;
+}
+
+.studio-prompt-template-preview::after {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  content: "";
+  background: linear-gradient(to top, rgba(15, 23, 42, 0.76), rgba(15, 23, 42, 0.28) 44%, rgba(15, 23, 42, 0.05));
+  pointer-events: none;
+}
+
+.studio-prompt-template-preview:hover img {
+  transform: scale(1.025);
+}
+
+.studio-prompt-template-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  padding: 18px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  text-align: center;
+}
+
+.studio-prompt-template-badge {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  z-index: 2;
+  max-width: calc(100% - 20px);
+  overflow: hidden;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: rgba(15, 23, 42, 0.36);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 10px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  backdrop-filter: blur(10px);
+}
+
+.studio-prompt-template-caption {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  z-index: 2;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.studio-prompt-template-info {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 9px;
+  justify-content: space-between;
+  padding: 3px 2px 3px 0;
+}
+
+.studio-template-info-rows {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.studio-template-info-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 32px;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: color-mix(in srgb, var(--studio-card-background) 76%, transparent);
+}
+
+.studio-template-info-row span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--studio-muted);
+  font-size: 10px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-template-info-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--studio-text);
+  font-size: 11px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-prompt-template-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+}
+
+.studio-prompt-template-button {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--studio-border) 50%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--studio-card-background) 82%, transparent);
+  color: var(--studio-muted);
+  font-size: 12px;
+  font-weight: 500;
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.studio-prompt-template-button:hover {
+  border-color: color-mix(in srgb, var(--studio-accent) 28%, var(--studio-border));
+  color: var(--studio-text);
+  transform: translateY(-1px);
+}
+
+.studio-prompt-template-button.primary {
+  background: color-mix(in srgb, var(--studio-accent) 92%, #ffffff);
+  border-color: color-mix(in srgb, var(--studio-accent) 70%, transparent);
+  color: #ffffff;
+}
+
 .studio-prompt-footer {
   grid-area: footer;
   @apply min-w-0;
@@ -6632,6 +8369,904 @@ onBeforeUnmount(() => {
 
 .studio-compatibility-note.is-warning {
   color: rgb(146 64 14);
+}
+
+.studio-compatibility-modal {
+  width: min(920px, calc(100vw - 32px));
+  max-height: 88vh;
+  overflow: hidden;
+  border: 1px solid rgba(31, 41, 55, 0.05);
+  border-radius: 26px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.12);
+}
+
+.studio-compatibility-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 18px;
+  background: #f8fafc;
+}
+
+.studio-compatibility-preview-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.studio-compatibility-preview-card div {
+  display: grid;
+  gap: 3px;
+}
+
+.studio-compatibility-preview-card p {
+  margin: 0;
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.studio-compatibility-preview-card span {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.studio-compatibility-preview-card.is-compatible p {
+  color: var(--studio-accent-deep);
+}
+
+.studio-compatibility-preview-textarea {
+  min-height: 220px;
+  resize: none;
+  line-height: 1.7;
+}
+
+.studio-prompt-modal-backdrop {
+  --studio-accent: #2563eb;
+  --studio-accent-deep: #1d4ed8;
+  --studio-accent-soft: #eff6ff;
+  --studio-accent-shadow: rgba(37, 99, 235, 0.18);
+  --theme-color: #2563eb;
+  --theme-color-rgb: 37, 99, 235;
+  --theme-text-on-primary: #ffffff;
+  --studio-border: rgba(31, 41, 55, 0.1);
+  --studio-border-strong: rgba(37, 99, 235, 0.34);
+  --studio-card-background: rgba(255, 255, 255, 0.68);
+  --studio-soft-background: rgba(248, 250, 252, 0.58);
+  --studio-text: #111827;
+  --studio-muted: #64748b;
+  --modal-glass-bg: rgba(255, 255, 255, 0.68);
+  --modal-glass-head: rgba(255, 255, 255, 0.54);
+  --modal-glass-veil: rgba(247, 249, 252, 0.54);
+  @apply fixed inset-0 z-[96] flex items-center justify-center p-4;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(var(--theme-color-rgb), 0.12), transparent 32%),
+    var(--modal-glass-veil);
+  backdrop-filter: blur(18px) saturate(128%);
+  -webkit-backdrop-filter: blur(18px) saturate(128%);
+}
+
+.studio-prompt-modal-backdrop.is-nested {
+  z-index: 106;
+}
+
+.studio-prompt-modal-panel {
+  @apply flex max-h-[92vh] w-full flex-col overflow-hidden;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.42), transparent 34%),
+    var(--modal-glass-bg);
+  color: var(--studio-text);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.10), 0 6px 22px rgba(var(--theme-color-rgb), 0.06);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+}
+
+.studio-prompt-modal-panel.is-library {
+  max-width: 1240px;
+  padding-bottom: 30px;
+}
+
+.studio-prompt-modal-panel.is-upload {
+  max-width: 880px;
+}
+
+.studio-prompt-modal-panel.is-details {
+  @apply relative grid max-h-[86vh] max-w-6xl;
+  grid-template-columns: minmax(0, 1.18fr) minmax(380px, 0.82fr);
+}
+
+.studio-prompt-modal-head {
+  @apply flex items-start justify-between gap-4 px-6 py-5;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.34);
+  background: var(--modal-glass-head);
+}
+
+.studio-prompt-modal-title {
+  @apply text-base font-medium;
+  color: var(--studio-text);
+}
+
+.studio-prompt-modal-text {
+  @apply mt-1 max-w-2xl text-sm leading-6;
+  color: var(--studio-muted);
+}
+
+.studio-prompt-library-toolbar {
+  @apply grid gap-3 px-6 py-4;
+  grid-template-columns: minmax(360px, 1fr) 190px 156px 132px;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.26);
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.studio-prompt-library-search {
+  @apply flex min-w-0 items-center gap-2 px-4;
+  min-height: 44px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(15, 23, 42, 0.04);
+  color: var(--studio-muted);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.studio-prompt-library-search:focus-within {
+  border-color: rgba(var(--theme-color-rgb), 0.38);
+  background: rgba(255, 255, 255, 0.42);
+  box-shadow: 0 0 0 4px rgba(var(--theme-color-rgb), 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.54);
+}
+
+.studio-prompt-library-search input {
+  @apply min-w-0 flex-1 border-0 bg-transparent text-sm outline-none;
+  color: var(--studio-text);
+}
+
+.studio-prompt-library-search input::placeholder {
+  color: color-mix(in srgb, var(--studio-muted) 72%, transparent);
+}
+
+.studio-prompt-library-command {
+  @apply inline-flex min-h-[42px] items-center justify-center gap-2 px-4 text-sm font-medium transition;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.42);
+  color: var(--studio-text);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.44);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.studio-prompt-library-category-wrap {
+  position: relative;
+  display: block;
+  min-width: 0;
+  min-height: 44px;
+  color: var(--studio-text);
+}
+
+.studio-prompt-library-category-trigger {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.36);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.04);
+  color: var(--studio-text);
+  padding: 0 14px 0 16px;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease, color 180ms ease;
+}
+
+.studio-prompt-library-category-trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-prompt-library-category-trigger svg {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--studio-muted) 82%, var(--studio-text));
+  transition: transform 180ms ease, color 180ms ease;
+}
+
+.studio-prompt-library-category-trigger.active svg {
+  transform: rotate(180deg);
+}
+
+.studio-prompt-library-category-wrap:hover,
+.studio-prompt-library-category-wrap:focus-within,
+.studio-prompt-library-category-trigger.active,
+.studio-prompt-library-command:hover,
+.studio-prompt-library-command.active {
+  color: var(--studio-accent-deep);
+  border-color: rgba(var(--theme-color-rgb), 0.42);
+  background: rgba(var(--theme-color-rgb), 0.08);
+  box-shadow: 0 0 0 4px rgba(var(--theme-color-rgb), 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.46);
+}
+
+.studio-prompt-library-category-wrap:hover .studio-prompt-library-category-trigger,
+.studio-prompt-library-category-wrap:focus-within .studio-prompt-library-category-trigger,
+.studio-prompt-library-category-trigger.active {
+  border-color: rgba(var(--theme-color-rgb), 0.42);
+  background: rgba(var(--theme-color-rgb), 0.08);
+  box-shadow: 0 0 0 4px rgba(var(--theme-color-rgb), 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.46);
+}
+
+.studio-prompt-category-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 10px);
+  z-index: 40;
+  display: grid;
+  width: min(320px, calc(100vw - 48px));
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  border-radius: 22px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.44), transparent 38%),
+    rgba(255, 255, 255, 0.72);
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.13), 0 8px 24px rgba(var(--theme-color-rgb), 0.10);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  transform-origin: top left;
+  animation: studio-category-menu-in 170ms ease both;
+}
+
+.studio-prompt-category-search {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.58);
+  padding: 0 12px;
+  color: var(--studio-muted);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.54);
+}
+
+.studio-prompt-category-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--studio-text);
+  font-size: 13px;
+  outline: none;
+}
+
+.studio-prompt-category-search input::placeholder {
+  color: color-mix(in srgb, var(--studio-muted) 74%, transparent);
+}
+
+.studio-prompt-category-section {
+  display: grid;
+  gap: 6px;
+}
+
+.studio-prompt-category-section-title {
+  padding: 0 4px;
+  color: color-mix(in srgb, var(--studio-muted) 82%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.studio-prompt-category-option,
+.studio-prompt-category-add {
+  display: grid;
+  min-height: 40px;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  padding: 6px 8px;
+  color: var(--studio-text);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.studio-prompt-category-option span:nth-child(2),
+.studio-prompt-category-add span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-prompt-category-option:hover,
+.studio-prompt-category-option.active,
+.studio-prompt-category-add:hover {
+  border-color: rgba(var(--theme-color-rgb), 0.20);
+  background: rgba(var(--theme-color-rgb), 0.10);
+  color: var(--studio-accent-deep);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(var(--theme-color-rgb), 0.10);
+}
+
+.studio-prompt-category-icon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgba(var(--theme-color-rgb), 0.10);
+  color: var(--studio-accent-deep);
+}
+
+.studio-prompt-category-icon.is-custom {
+  background: rgba(15, 23, 42, 0.06);
+  color: color-mix(in srgb, var(--studio-text) 72%, var(--studio-accent-deep));
+}
+
+.studio-prompt-category-option small {
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: rgba(var(--theme-color-rgb), 0.12);
+  color: var(--studio-accent-deep);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.studio-prompt-category-add {
+  grid-template-columns: 28px minmax(0, 1fr);
+  margin-top: 2px;
+  border-style: dashed;
+  border-color: rgba(var(--theme-color-rgb), 0.22);
+  color: var(--studio-accent-deep);
+}
+
+.studio-prompt-category-add svg {
+  justify-self: center;
+}
+
+@keyframes studio-category-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.studio-prompt-library-upload {
+  display: inline-flex !important;
+  min-height: 44px;
+  min-width: 148px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  background: linear-gradient(135deg, var(--theme-color) 0%, var(--studio-accent-deep) 100%) !important;
+  color: var(--theme-text-on-primary) !important;
+  box-shadow: 0 12px 24px rgba(var(--theme-color-rgb), 0.28);
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+.studio-prompt-library-upload svg,
+.studio-prompt-library-upload span {
+  color: #ffffff !important;
+  opacity: 1 !important;
+}
+
+.studio-prompt-library-upload:hover {
+  color: var(--theme-text-on-primary);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--studio-accent) 88%, #ffffff) 0%, var(--studio-accent-deep) 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 18px 32px rgba(var(--theme-color-rgb), 0.34);
+}
+
+.studio-prompt-library-batch {
+  min-height: 44px;
+  color: var(--studio-text);
+}
+
+.studio-prompt-library-batchbar {
+  @apply mx-6 mb-2 flex items-center justify-between gap-3 rounded-2xl px-4 py-3 text-sm;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.40);
+  color: var(--studio-muted);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.04);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.studio-prompt-library-batchbar button {
+  @apply rounded-full px-4 py-2 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-45;
+  background: rgba(244, 63, 94, 0.1);
+  color: #be123c;
+}
+
+.studio-prompt-library-list {
+  @apply grid overflow-y-auto px-6 pt-6;
+  column-gap: 18px;
+  row-gap: 22px;
+  padding-bottom: 10px;
+  max-height: min(54vh, 560px);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background:
+    radial-gradient(circle at 8% 12%, rgba(var(--theme-color-rgb), 0.08), transparent 30%),
+    rgba(255, 255, 255, 0.16);
+  scrollbar-width: none;
+}
+
+.studio-prompt-library-list::-webkit-scrollbar {
+  display: none;
+}
+
+.studio-prompt-library-item {
+  @apply relative min-w-0 overflow-hidden p-0 text-left transition;
+  aspect-ratio: 16 / 10;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  background: rgba(255, 255, 255, 0.40);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+  animation: prompt-card-in 220ms ease both;
+  animation-delay: calc(var(--card-index, 0) * 22ms);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: transform 260ms cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 260ms ease, border-color 260ms ease, filter 260ms ease;
+}
+
+.studio-prompt-library-item:hover {
+  border-color: rgba(var(--theme-color-rgb), 0.48);
+  transform: translateY(-5px) scale(1.018);
+  box-shadow: 0 16px 32px rgba(var(--theme-color-rgb), 0.22), 0 5px 12px rgba(15, 23, 42, 0.08);
+}
+
+.studio-prompt-library-item:active,
+.studio-prompt-library-item.is-applying {
+  transform: scale(0.975);
+  filter: saturate(1.08);
+  box-shadow: 0 0 0 3px rgba(var(--theme-color-rgb), 0.26), 0 14px 32px rgba(15, 23, 42, 0.12);
+}
+
+.studio-prompt-library-item.is-applying::after {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  content: "";
+  border-radius: inherit;
+  background: rgba(var(--theme-color-rgb), 0.18);
+  animation: studio-prompt-select-ripple 260ms ease-out both;
+  pointer-events: none;
+}
+
+.studio-prompt-library-item.selected {
+  border-color: rgba(var(--theme-color-rgb), 0.62);
+  box-shadow: 0 0 0 2px rgba(var(--theme-color-rgb), 0.34), 0 20px 40px -8px rgba(var(--theme-color-rgb), 0.18);
+}
+
+.studio-prompt-library-check {
+  @apply absolute right-3 top-3 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full text-white opacity-80 transition;
+  background: rgba(15, 23, 42, 0.38);
+  backdrop-filter: blur(10px);
+}
+
+.studio-prompt-library-check.active {
+  opacity: 1;
+  background: var(--studio-accent-deep);
+}
+
+.studio-prompt-library-card-visual {
+  @apply absolute inset-0 block overflow-hidden;
+  background:
+    radial-gradient(circle at 16% 18%, rgba(var(--theme-color-rgb), 0.20), transparent 28%),
+    radial-gradient(circle at 78% 18%, rgba(255, 255, 255, 0.78), transparent 28%),
+    linear-gradient(145deg, rgba(var(--theme-color-rgb), 0.10), rgba(226, 232, 240, 0.72) 58%, rgba(255, 255, 255, 0.70));
+}
+
+.studio-prompt-library-card-visual::before {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 4;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  border-radius: 999px;
+  background: rgba(var(--theme-color-rgb), 0.82);
+  color: #ffffff;
+  content: "+";
+  font-size: 18px;
+  font-weight: 300;
+  line-height: 1;
+  opacity: 0;
+  transform: translateY(-6px) scale(0.92);
+  transition: opacity 220ms ease, transform 220ms ease;
+  pointer-events: none;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.studio-prompt-library-card-visual::after {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  content: "";
+  background: linear-gradient(135deg, rgba(var(--theme-color-rgb), 0.12), transparent 52%);
+  opacity: 0;
+  transition: opacity 260ms ease;
+  pointer-events: none;
+}
+
+.studio-prompt-library-card-visual img {
+  @apply h-full w-full object-cover;
+  transition: transform 500ms ease, filter 260ms ease;
+}
+
+.studio-prompt-library-item:hover .studio-prompt-library-card-visual img {
+  transform: scale(1.08);
+  filter: saturate(1.04);
+}
+
+.studio-prompt-library-item:hover .studio-prompt-library-card-visual::before {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.studio-prompt-library-item:hover .studio-prompt-library-card-visual::after {
+  opacity: 1;
+}
+
+.studio-prompt-library-card-fallback {
+  @apply flex h-full w-full items-center justify-center;
+  color: color-mix(in srgb, var(--studio-accent-deep) 74%, var(--studio-muted));
+}
+
+.studio-prompt-library-card-prompt {
+  @apply absolute inset-x-0 bottom-0 px-3 pb-3 pt-12 text-left text-xs leading-5;
+  z-index: 3;
+  color: rgba(255, 255, 255, 0.94);
+  background: linear-gradient(to top, rgba(15, 23, 42, 0.72) 0%, rgba(15, 23, 42, 0.34) 45%, transparent 100%);
+  transition: padding-top 240ms ease, background 240ms ease;
+}
+
+.studio-prompt-library-item:hover .studio-prompt-library-card-prompt {
+  padding-top: 18px;
+  background: linear-gradient(to top, rgba(15, 23, 42, 0.84) 0%, rgba(15, 23, 42, 0.48) 58%, transparent 100%);
+}
+
+.studio-prompt-library-card-prompt strong,
+.studio-prompt-library-card-prompt span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.studio-prompt-library-card-prompt strong {
+  -webkit-line-clamp: 1;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.34);
+}
+
+.studio-prompt-library-card-prompt span {
+  margin-top: 3px;
+  -webkit-line-clamp: 2;
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.28);
+}
+
+.studio-prompt-library-empty {
+  @apply col-span-full flex min-h-48 flex-col items-center justify-center gap-3 text-sm;
+  border-radius: 24px;
+  border: 1px dashed rgba(var(--theme-color-rgb), 0.22);
+  background: rgba(255, 255, 255, 0.38);
+  color: var(--studio-muted);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.studio-prompt-upload-body {
+  @apply grid gap-5 p-6;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  background:
+    radial-gradient(circle at 10% 10%, rgba(var(--theme-color-rgb), 0.10), transparent 32%),
+    rgba(255, 255, 255, 0.16);
+}
+
+.studio-prompt-image-drop {
+  @apply relative flex min-h-[320px] cursor-pointer items-center justify-center overflow-hidden text-center transition;
+  border-radius: 24px;
+  border: 1px dashed rgba(var(--theme-color-rgb), 0.34);
+  background:
+    radial-gradient(circle at 50% 34%, rgba(var(--theme-color-rgb), 0.12), transparent 30%),
+    rgba(255, 255, 255, 0.30);
+  color: var(--studio-muted);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.46);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.studio-prompt-image-drop:hover {
+  border-color: rgba(var(--theme-color-rgb), 0.54);
+  background: rgba(var(--theme-color-rgb), 0.08);
+  box-shadow: 0 18px 38px rgba(var(--theme-color-rgb), 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.52);
+}
+
+.studio-prompt-image-drop img {
+  @apply h-full w-full object-cover;
+}
+
+.studio-prompt-image-drop span {
+  @apply flex flex-col items-center gap-2 px-5;
+}
+
+.studio-prompt-image-drop svg {
+  color: var(--theme-color);
+}
+
+.studio-prompt-image-drop strong {
+  @apply text-sm font-medium;
+  color: var(--studio-text);
+}
+
+.studio-prompt-image-drop small {
+  @apply text-xs font-normal;
+  color: var(--studio-muted);
+}
+
+.studio-prompt-upload-fields {
+  @apply flex min-w-0 flex-col gap-3;
+}
+
+.studio-prompt-upload-fields .input {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.56);
+  color: var(--studio-text);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.025), inset 0 1px 0 rgba(255, 255, 255, 0.58);
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.studio-prompt-upload-fields .input:focus {
+  border-color: rgba(var(--theme-color-rgb), 0.46);
+  background: rgba(255, 255, 255, 0.70);
+  box-shadow: 0 0 0 4px rgba(var(--theme-color-rgb), 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.50);
+}
+
+.studio-prompt-upload-fields .input::placeholder {
+  color: color-mix(in srgb, var(--studio-muted) 82%, transparent);
+}
+
+.studio-prompt-upload-textarea {
+  min-height: 160px;
+  resize: vertical;
+}
+
+.studio-prompt-upload-textarea.is-description {
+  min-height: 84px;
+}
+
+.studio-prompt-upload-error {
+  @apply rounded-2xl px-4 py-3 text-sm;
+  background: rgba(244, 63, 94, 0.08);
+  color: #be123c;
+}
+
+@keyframes prompt-card-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes studio-prompt-select-ripple {
+  from { opacity: 0; transform: scale(0.92); }
+  45% { opacity: 1; }
+  to { opacity: 0; transform: scale(1.08); }
+}
+
+.studio-prompt-card-enter-active,
+.studio-prompt-card-leave-active {
+  transition: opacity 240ms ease, transform 240ms ease;
+}
+
+.studio-prompt-card-enter-from,
+.studio-prompt-card-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.studio-prompt-card-move {
+  transition: transform 260ms ease;
+}
+
+.studio-prompt-details-close {
+  @apply absolute right-4 top-4 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:text-slate-800;
+  border: 1px solid rgba(31, 41, 55, 0.04);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.04);
+  backdrop-filter: blur(12px);
+}
+
+.studio-prompt-details-visual {
+  @apply relative flex min-h-[560px] items-center justify-center overflow-hidden text-white;
+  background: linear-gradient(135deg, #eef2f7, #dbeafe 52%, #f8fafc);
+}
+
+.studio-prompt-details-visual img {
+  @apply h-full w-full object-cover;
+}
+
+.studio-prompt-details-body {
+  @apply flex min-w-0 flex-col gap-4 overflow-hidden p-7;
+  background: #ffffff;
+}
+
+.studio-prompt-details-body h3 {
+  @apply text-3xl font-medium leading-tight;
+  color: #1f2937;
+}
+
+.studio-prompt-details-meta {
+  @apply grid gap-1.5 text-sm leading-6;
+  color: #6b7280;
+}
+
+.studio-prompt-details-prompt {
+  @apply relative min-h-0 overflow-hidden text-sm leading-7;
+  height: clamp(320px, 50vh, 560px);
+  border-radius: 22px;
+  border: 1px solid rgba(31, 41, 55, 0.04);
+  background: #f9fafb;
+  color: #374151;
+}
+
+.studio-prompt-details-prompt-scroll {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  overflow-y: auto;
+  padding: 34px 26px 28px;
+  scrollbar-width: none;
+  user-select: text;
+}
+
+.studio-prompt-details-prompt-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.studio-prompt-details-particles {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.studio-prompt-details-prompt-scroll p {
+  position: relative;
+  z-index: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #374151;
+  font-family: inherit;
+  user-select: text;
+}
+
+.studio-prompt-details-particle {
+  position: absolute;
+  z-index: 2;
+  width: auto;
+  height: auto;
+  color: var(--particle-color);
+  font-size: var(--particle-size);
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: 0 0 10px currentColor, 0 0 18px rgba(255, 255, 255, 0.86);
+  pointer-events: none;
+  animation: studio-prompt-particle 900ms cubic-bezier(0.18, 0.7, 0.2, 1) forwards;
+}
+
+.studio-prompt-details-particle::before {
+  content: attr(data-symbol);
+}
+
+@keyframes studio-prompt-particle {
+  55% { opacity: 0.95; }
+  to {
+    opacity: 0;
+    transform: translate(var(--particle-dx), var(--particle-dy)) rotate(32deg) scale(0.18);
+  }
+}
+
+.studio-prompt-modal-actions.is-inline {
+  @apply px-0;
+}
+
+.studio-prompt-modal-actions.is-upload-actions {
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.30);
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.studio-prompt-upload-cancel,
+.studio-prompt-upload-save {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 999px;
+  padding: 0 20px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.studio-prompt-upload-cancel {
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  background: rgba(255, 255, 255, 0.36);
+  color: var(--studio-text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
+}
+
+.studio-prompt-upload-cancel:hover {
+  border-color: rgba(var(--theme-color-rgb), 0.32);
+  background: rgba(var(--theme-color-rgb), 0.08);
+  color: var(--studio-text);
+  transform: translateY(-1px);
+}
+
+.studio-prompt-upload-save {
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  background: linear-gradient(135deg, var(--theme-color) 0%, var(--studio-accent-deep) 100%);
+  color: var(--theme-text-on-primary);
+  box-shadow: 0 14px 28px rgba(var(--theme-color-rgb), 0.24);
+}
+
+.studio-prompt-upload-save:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+  box-shadow: 0 18px 34px rgba(var(--theme-color-rgb), 0.30);
+}
+
+.studio-prompt-full-preview-backdrop {
+  @apply fixed inset-0 z-[120] flex items-center justify-center p-6;
+  background: rgba(15, 23, 42, 0.58);
+  backdrop-filter: blur(16px);
+}
+
+.studio-prompt-full-preview-image {
+  max-width: min(92vw, 1400px);
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 22px;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.24);
+  transition: transform 120ms ease;
+  transform-origin: center center;
+}
+
+.studio-prompt-full-preview-close {
+  @apply absolute right-6 top-6 inline-flex h-10 w-10 items-center justify-center rounded-full text-white transition;
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(12px);
+}
+
+.studio-prompt-full-preview-close:hover {
+  background: rgba(255, 255, 255, 0.28);
 }
 
 .studio-chip {
@@ -7295,46 +9930,255 @@ onBeforeUnmount(() => {
   @apply min-h-0;
 }
 
+.studio-history-header {
+  display: grid;
+  gap: 4px;
+}
+
+.studio-history-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.studio-history-title-row .studio-panel-title {
+  min-width: 0;
+}
+
 .studio-side-empty {
   @apply mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500;
 }
 
+.studio-history-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--studio-border);
+  background: var(--studio-card-background);
+  color: var(--studio-muted);
+  font-size: 12px;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.studio-history-clear:hover:not(:disabled) {
+  color: var(--studio-accent-deep);
+  border-color: var(--studio-border-strong);
+  background: var(--studio-accent-soft);
+}
+
+.studio-history-clear:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .studio-history-list {
-  @apply mt-4 space-y-3;
-  max-height: 360px;
-  overflow-y: auto;
+  @apply mt-3;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: visible;
 }
 
-.studio-history-card {
-  @apply rounded-[20px] border border-slate-200 bg-slate-50 p-3 transition;
-}
-
-.studio-history-card.active {
-  @apply border-blue-300 bg-blue-50;
-}
-
-.studio-history-main {
-  @apply flex w-full items-start gap-3 text-left;
+.studio-history-thumb-wrap {
+  /* 核心：左图固定 2:3；传入任意比例图片都只中心裁剪，不拉伸。 */
+  position: relative;
+  flex-shrink: 0;
+  width: 110px;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--studio-soft-background);
 }
 
 .studio-history-thumb {
-  @apply h-14 w-14 shrink-0 rounded-2xl object-cover;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.studio-history-thumb-badge {
+  position: absolute;
+  left: 5px;
+  top: 4px;
+  display: inline-flex;
+  max-width: calc(100% - 10px);
+  overflow: hidden;
+  gap: 5px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.54);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  backdrop-filter: blur(8px);
+}
+
+.studio-history-thumb-badge span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .studio-history-copy {
-  @apply min-w-0 flex-1;
+  /* 核心：右侧按列分布，min-width:0 防止长文本撑爆 Flex 容器。 */
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 6px 2px 3px 0;
 }
 
 .studio-history-prompt {
-  @apply line-clamp-2 text-sm font-medium leading-6 text-slate-800;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  align-self: start;
+  min-height: 0;
+  color: var(--studio-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.34;
+}
+
+.studio-history-tags {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 6px;
+}
+
+.studio-history-tags span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--studio-accent-soft);
+  color: var(--studio-accent-deep);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.studio-history-tags span:first-child {
+  flex: 0 0 auto;
+  max-width: 46%;
+}
+
+.studio-history-tags span:last-child {
+  flex: 1 1 auto;
 }
 
 .studio-history-meta {
-  @apply mt-1 text-xs text-slate-500;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--studio-muted);
+  font-size: 11px;
+  line-height: 1.24;
+  font-variant-numeric: tabular-nums;
+}
+
+.studio-history-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-history-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.studio-history-footer-stack {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 4px;
+}
+
+.studio-history-seed {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--studio-muted);
+  font-size: 10.5px;
+  line-height: 1.1;
+  cursor: copy;
+}
+
+.studio-history-seed span,
+.studio-history-seed strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-history-seed span {
+  flex: 0 0 auto;
+}
+
+.studio-history-seed strong {
+  flex: 1 1 auto;
+  color: var(--studio-muted);
+  font-weight: 500;
+}
+
+.studio-history-format {
+  color: var(--studio-accent-deep);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .studio-history-actions {
-  @apply mt-3 flex items-center justify-end gap-2;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1px;
+}
+
+.studio-history-actions .studio-icon-button.inset {
+  width: 21px;
+  height: 21px;
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--studio-accent-deep) 44%, var(--studio-muted));
+}
+
+.studio-history-actions .studio-icon-button.inset:hover {
+  color: var(--studio-text);
+  background: color-mix(in srgb, var(--studio-soft-background) 72%, transparent);
+}
+
+.studio-history-actions .studio-icon-button.inset.danger:hover {
+  color: #e11d48;
 }
 
 .studio-variant-grid {
@@ -7391,13 +10235,12 @@ onBeforeUnmount(() => {
 }
 
 .studio-lightbox {
-  @apply fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm;
+  @apply fixed inset-0 z-[90] flex items-center justify-center bg-slate-950 p-4;
 }
 
 .studio-lightbox-panel {
   @apply flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[30px] border border-white/10 text-white shadow-[0_30px_100px_rgba(15,23,42,0.48)];
-  background:
-    linear-gradient(180deg, rgba(7, 11, 27, 0.98) 0%, rgba(8, 13, 30, 0.94) 100%);
+  background: #05070d;
 }
 
 .studio-lightbox-header {
@@ -7418,10 +10261,7 @@ onBeforeUnmount(() => {
 
 .studio-lightbox-stage {
   @apply relative flex-1 overflow-hidden;
-  background:
-    radial-gradient(circle at 18% 16%, rgba(96, 165, 250, 0.13), transparent 26%),
-    radial-gradient(circle at 84% 84%, rgba(148, 163, 184, 0.1), transparent 24%),
-    linear-gradient(180deg, #050816 0%, #0b1120 100%);
+  background: #05070d;
 }
 
 .studio-lightbox-frame {
@@ -7481,53 +10321,21 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: saturate(1.08);
 }
 
-/* ===== Free-drag isolated mode (picture-in-picture) =====
-   When the user long-presses the image, the lightbox stops being a modal:
-   the full-screen backdrop, the panel chrome, and the toolbar all vanish.
-   Only the image remains, floating on top of the regular workspace which
-   stays visible and interactive underneath everywhere except under the
-   image itself. The image can be dragged anywhere on screen. */
-.studio-lightbox.is-isolated {
-  background-color: rgba(15, 23, 42, 0.18) !important;
-  background-image: none !important;
-  backdrop-filter: blur(14px) saturate(0.85) !important;
-  -webkit-backdrop-filter: blur(14px) saturate(0.85) !important;
-  pointer-events: none;
-}
-
-.studio-lightbox.is-isolated .studio-lightbox-panel {
-  pointer-events: none;
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-  max-width: none !important;
-  max-height: none !important;
-}
-
-.studio-lightbox.is-isolated .studio-lightbox-header {
+.studio-lightbox.is-immersive .studio-lightbox-header {
   display: none;
 }
 
-.studio-lightbox.is-isolated .studio-lightbox-stage {
-  background: transparent;
-  pointer-events: none;
+.studio-lightbox.is-immersive .studio-lightbox-panel {
+  max-width: none;
+  max-height: none;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
-.studio-lightbox.is-isolated .studio-lightbox-frame {
-  pointer-events: auto;
-  cursor: grabbing;
-  filter:
-    drop-shadow(0 28px 60px rgba(0, 0, 0, 0.55))
-    drop-shadow(0 0 0 1px rgba(255, 255, 255, 0.18));
-  transition: filter 220ms ease;
-}
-
-.studio-lightbox.is-isolated .studio-lightbox-image {
-  pointer-events: auto;
-  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.studio-lightbox.is-isolated .studio-lightbox-lens {
+.studio-lightbox.is-immersive .studio-lightbox-lens {
   display: none;
 }
 
@@ -7670,7 +10478,6 @@ onBeforeUnmount(() => {
 .studio-character-badge,
 .studio-preview-tab,
 .studio-bottom-action,
-.studio-history-card,
 .studio-side-empty,
 .studio-variant-card,
 .studio-download-card,
@@ -7680,7 +10487,6 @@ onBeforeUnmount(() => {
 }
 
 .studio-style-preview,
-.studio-history-thumb,
 .studio-preview-image,
 .studio-compare-stage,
 .studio-lightbox-image {
@@ -7729,7 +10535,6 @@ onBeforeUnmount(() => {
 .studio-preview-meta,
 .studio-side-note,
 .studio-inline-tip,
-.studio-history-meta,
 .studio-download-card span,
 .studio-resolution-size,
 .studio-empty-text,
@@ -7769,7 +10574,6 @@ onBeforeUnmount(() => {
 .studio-chip,
 .studio-preview-tab,
 .studio-bottom-action,
-.studio-history-card,
 .studio-side-empty,
 .studio-download-card,
 .studio-clear-button {
@@ -7781,7 +10585,6 @@ onBeforeUnmount(() => {
 .studio-header-pill.subtle,
 .studio-provider-pill,
 .studio-style-card,
-.studio-history-card,
 .studio-download-card,
 .studio-panel-link-button,
 .studio-inline-button,
@@ -7809,7 +10612,6 @@ onBeforeUnmount(() => {
 .studio-quality-pill.active,
 .studio-resolution-card.active,
 .studio-preview-tab.active,
-.studio-history-card.active,
 .studio-variant-card.active,
 .studio-chip.active,
 .studio-appearance-segment.active,
@@ -7874,7 +10676,6 @@ onBeforeUnmount(() => {
   background: var(--studio-stage-bg);
 }
 
-.studio-history-card.active,
 .studio-variant-card.selected {
   border-color: var(--studio-accent-deep);
 }
@@ -7884,18 +10685,18 @@ onBeforeUnmount(() => {
 }
 
 .studio-lightbox {
-  background: rgba(2, 6, 23, 0.74);
+  background: #020617;
 }
 
 .studio-lightbox-panel {
   border-radius: var(--studio-radius-window);
   border-color: rgba(255, 255, 255, 0.08);
-  background: linear-gradient(180deg, rgba(7, 11, 27, 0.97) 0%, rgba(8, 13, 30, 0.94) 100%);
+  background: #05070d;
 }
 
 .studio-lightbox-stage {
   position: relative;
-  background: var(--studio-lightbox-stage-bg);
+  background: #05070d;
 }
 
 .studio-lightbox-title {
@@ -7932,12 +10733,6 @@ onBeforeUnmount(() => {
 
 .studio-disabled-text {
   @apply mt-3 text-sm leading-7 text-slate-500;
-}
-
-@media (max-width: 1535px) {
-  .studio-layout {
-    @apply xl:grid-cols-[260px_minmax(0,1fr)_300px];
-  }
 }
 
 @media (max-width: 1279px) {
@@ -8304,6 +11099,75 @@ onBeforeUnmount(() => {
 
 .studio-popover-panel .studio-seed-input {
   @apply mt-2;
+}
+
+.studio-quota-card {
+  display: grid;
+  gap: 5px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--studio-accent-soft) 70%, var(--studio-card-background));
+  border: 1px solid color-mix(in srgb, var(--studio-border-strong) 22%, transparent);
+}
+
+.studio-quota-card > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.studio-quota-card span,
+.studio-quota-card small {
+  color: var(--studio-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.studio-quota-card strong {
+  color: var(--studio-accent-deep);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.studio-custom-ratio-modal {
+  width: min(360px, calc(100vw - 32px));
+  border-radius: 24px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  background: var(--studio-card-background);
+  padding: 18px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.12);
+}
+
+.studio-custom-ratio-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: end;
+  gap: 10px;
+  margin: 16px 0 18px;
+}
+
+.studio-custom-ratio-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.studio-custom-ratio-form span {
+  color: var(--studio-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.studio-custom-ratio-form strong {
+  padding-bottom: 10px;
+  color: var(--studio-muted);
+  font-weight: 500;
+}
+
+.studio-custom-ratio-form input {
+  height: 42px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Stack rows on narrow screens so chips wrap and the popover row sits under aspect */
