@@ -22,6 +22,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
 	"os/signal"
@@ -725,11 +726,11 @@ func prepareExternalGenerateRequest(req externalGenerateRequest, cfg config) (ex
 	cleaned := make([]string, 0, len(req.ImageInputs))
 	for _, s := range req.ImageInputs {
 		if s = strings.TrimSpace(s); s != "" {
-			cleaned = append(cleaned, s)
+			cleaned = append(cleaned, normalizeImageDataURLMime(s))
 		}
 	}
 	if len(cleaned) == 0 && req.ImageInput != "" {
-		cleaned = []string{req.ImageInput}
+		cleaned = []string{normalizeImageDataURLMime(req.ImageInput)}
 	}
 	req.ImageInputs = cleaned
 	if len(cleaned) > 0 {
@@ -1431,7 +1432,7 @@ func buildExternalImageAttempts(req externalGenerateRequest, baseURL string) ([]
 		if err != nil {
 			return nil, err
 		}
-		for _, imageFieldName := range []string{"image[]", "image"} {
+		for _, imageFieldName := range []string{"image", "image[]"} {
 			for _, mode := range imageOptionModes(req) {
 				if err := builder.addOpenAIImageMultipart(
 					"openai-image-edits-"+imageFieldName+"-"+string(mode),
@@ -1455,6 +1456,8 @@ func buildExternalImageAttempts(req externalGenerateRequest, baseURL string) ([]
 			payload := baseOpenAIImagePayload(req, count, size)
 			payload["image_input"] = req.ImageInputs[0]
 			payload["image_inputs"] = req.ImageInputs
+			payload["input_image"] = req.ImageInputs[0]
+			payload["input_images"] = req.ImageInputs
 			addExternalImageOptions(payload, req, mode, "output_format")
 			if err := builder.addJSON("openai-image-generations-with-reference-"+string(mode), generationEndpoint, req.Format, payload); err != nil {
 				return nil, err
@@ -1554,7 +1557,12 @@ func (b *externalAttemptBuilder) addOpenAIImageMultipart(
 		if err != nil {
 			return fmt.Errorf("image_inputs[%d]: %w", idx, err)
 		}
-		fileWriter, err := writer.CreateFormFile(imageFieldName, fmt.Sprintf("reference-%d%s", idx+1, extensionForMimeType(mimeType)))
+		fileWriter, err := createImageFormFile(
+			writer,
+			imageFieldName,
+			fmt.Sprintf("reference-%d%s", idx+1, extensionForMimeType(mimeType)),
+			mimeType,
+		)
 		if err != nil {
 			return err
 		}
@@ -1666,6 +1674,8 @@ func buildSub2APICompatiblePayloads(req externalGenerateRequest, count int) []ma
 	if len(req.ImageInputs) > 0 {
 		payload["image_input"] = req.ImageInputs[0]
 		payload["image_inputs"] = req.ImageInputs
+		payload["input_image"] = req.ImageInputs[0]
+		payload["input_images"] = req.ImageInputs
 	}
 	if req.Seed != "" {
 		payload["seed"] = req.Seed
@@ -1676,11 +1686,11 @@ func buildSub2APICompatiblePayloads(req externalGenerateRequest, count int) []ma
 
 	payloads := []map[string]any{payload}
 	if len(req.ImageInputs) > 0 {
-		content := []map[string]any{
+		openAIContent := []map[string]any{
 			{"type": "text", "text": req.Prompt},
 		}
 		for _, dataURL := range req.ImageInputs {
-			content = append(content, map[string]any{
+			openAIContent = append(openAIContent, map[string]any{
 				"type": "image_url",
 				"image_url": map[string]any{
 					"url": dataURL,
@@ -1689,13 +1699,38 @@ func buildSub2APICompatiblePayloads(req externalGenerateRequest, count int) []ma
 		}
 		multimodalPayload := map[string]any{
 			"model":    req.Model,
-			"messages": []map[string]any{{"role": "user", "content": content}},
+			"messages": []map[string]any{{"role": "user", "content": openAIContent}},
 			"stream":   false,
+		}
+		if req.Seed != "" {
+			multimodalPayload["seed"] = req.Seed
 		}
 		if count > 1 {
 			multimodalPayload["n"] = count
 		}
 		payloads = append(payloads, multimodalPayload)
+
+		inputImageContent := []map[string]any{
+			{"type": "input_text", "text": req.Prompt},
+		}
+		for _, dataURL := range req.ImageInputs {
+			inputImageContent = append(inputImageContent, map[string]any{
+				"type":      "input_image",
+				"image_url": dataURL,
+			})
+		}
+		inputImagePayload := map[string]any{
+			"model":    req.Model,
+			"messages": []map[string]any{{"role": "user", "content": inputImageContent}},
+			"stream":   false,
+		}
+		if req.Seed != "" {
+			inputImagePayload["seed"] = req.Seed
+		}
+		if count > 1 {
+			inputImagePayload["n"] = count
+		}
+		payloads = append(payloads, inputImagePayload)
 	}
 	return payloads
 }
@@ -1816,7 +1851,71 @@ func decodeDataURL(input string) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", errors.New("failed to decode data URL base64 payload")
 	}
+	mimeType = normalizeImageMimeType(mimeType, decoded)
 	return decoded, mimeType, nil
+}
+
+func normalizeImageDataURLMime(input string) string {
+	if !strings.HasPrefix(input, "data:") {
+		return input
+	}
+	commaIndex := strings.Index(input, ",")
+	if commaIndex <= 5 {
+		return input
+	}
+	metadata := input[5:commaIndex]
+	payload := input[commaIndex+1:]
+	parts := strings.Split(metadata, ";")
+	mimeType := ""
+	if len(parts) > 0 {
+		mimeType = strings.TrimSpace(parts[0])
+	}
+	if strings.HasPrefix(strings.ToLower(mimeType), "image/") {
+		return input
+	}
+
+	sample, err := base64.StdEncoding.DecodeString(payloadPrefix(payload, 128))
+	if err != nil {
+		sample = nil
+	}
+	return "data:" + normalizeImageMimeType(mimeType, sample) + ";base64," + payload
+}
+
+func payloadPrefix(payload string, maxLen int) string {
+	if maxLen <= 0 || len(payload) <= maxLen {
+		return payload
+	}
+	end := maxLen - (maxLen % 4)
+	if end <= 0 {
+		end = maxLen
+	}
+	return payload[:end]
+}
+
+func normalizeImageMimeType(mimeType string, data []byte) string {
+	normalized := strings.ToLower(strings.TrimSpace(mimeType))
+	if strings.HasPrefix(normalized, "image/") {
+		return normalized
+	}
+	if detected := http.DetectContentType(data); strings.HasPrefix(strings.ToLower(detected), "image/") {
+		return strings.ToLower(detected)
+	}
+	return "image/png"
+}
+
+func createImageFormFile(writer *multipart.Writer, fieldName, fileName, mimeType string) (io.Writer, error) {
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", fmt.Sprintf(
+		`form-data; name="%s"; filename="%s"`,
+		escapeQuotes(fieldName),
+		escapeQuotes(fileName),
+	))
+	header.Set("Content-Type", normalizeImageMimeType(mimeType, nil))
+	return writer.CreatePart(header)
+}
+
+func escapeQuotes(value string) string {
+	return strings.NewReplacer("\\", "\\\\", `"`, "\\\"").Replace(value)
 }
 
 func extensionForMimeType(mimeType string) string {

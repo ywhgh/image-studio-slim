@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.2.1 - 2026-05-16
+
+Patch release for image-to-image generation stability:
+
+- Fixed reference images with `application/octet-stream` data URLs by normalizing them back to real `image/*` MIME types on both frontend and backend.
+- Fixed OpenAI-compatible `/images/edits` multipart uploads by writing an explicit image `Content-Type` for each reference image part.
+- Expanded image-to-image compatibility for OpenAI image, chatgpt2api, and chat-completions-style relay paths with multiple accepted reference-image payload shapes.
+- Improved browser-direct fallback so CORS/network failures automatically fall back to the backend asynchronous queue.
+- Clamped browser-direct over-returned image results to the requested count, matching backend queue behavior.
+
+Validation:
+
+- `pnpm -s typecheck`
+- `go test ./...`
+
 ## v1.2.0 - 2026-05-16
 
 Compared with v1.1.0, this release focuses on the Image Studio workflow:

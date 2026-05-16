@@ -131,6 +131,82 @@ function parseMimeTypeFromDataUrl(dataUrl: string): string | undefined {
   return dataUrl.slice(5).split(';', 1)[0] || undefined
 }
 
+function detectImageMimeType(bytes: Uint8Array): string | undefined {
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    return 'image/png'
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg'
+  }
+  if (
+    bytes.length >= 6 &&
+    bytes[0] === 0x47 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46
+  ) {
+    return 'image/gif'
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return 'image/webp'
+  }
+  return undefined
+}
+
+function normalizeImageMimeType(mimeType: string | undefined, bytes: Uint8Array): string {
+  const normalized = (mimeType || '').trim().toLowerCase()
+  if (normalized.startsWith('image/')) {
+    return normalized
+  }
+  return detectImageMimeType(bytes) || 'image/png'
+}
+
+function base64PrefixToBytes(payload: string): Uint8Array {
+  try {
+    const binary = atob(payload.slice(0, 96))
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index)
+    }
+    return bytes
+  } catch {
+    return new Uint8Array()
+  }
+}
+
+function normalizeImageDataUrlMime(dataUrl: string): string {
+  if (!dataUrl.startsWith('data:')) {
+    return dataUrl
+  }
+  const commaIndex = dataUrl.indexOf(',')
+  if (commaIndex <= 5) {
+    return dataUrl
+  }
+  const metadata = dataUrl.slice(5, commaIndex)
+  const payload = dataUrl.slice(commaIndex + 1)
+  const mimeType = metadata.split(';', 1)[0]
+  if (mimeType.trim().toLowerCase().startsWith('image/')) {
+    return dataUrl
+  }
+  const normalizedMimeType = normalizeImageMimeType(mimeType, base64PrefixToBytes(payload))
+  return `data:${normalizedMimeType};base64,${payload}`
+}
+
 function buildDataUrl(base64Payload: string, mimeType: string): string {
   return `data:${mimeType};base64,${base64Payload.trim()}`
 }
@@ -648,19 +724,128 @@ function joinEndpoint(baseURL: string, endpointPath: string): string {
 
 function collectImageInputs(request: ExternalImageStudioRequest): string[] {
   if (request.image_inputs && request.image_inputs.length) {
-    return request.image_inputs.filter((s) => typeof s === 'string' && s.length > 0)
+    return request.image_inputs
+      .filter((s) => typeof s === 'string' && s.length > 0)
+      .map(normalizeImageDataUrlMime)
   }
-  return request.image_input ? [request.image_input] : []
+  return request.image_input ? [normalizeImageDataUrlMime(request.image_input)] : []
 }
 
-function mapExternalPayload(request: ExternalImageStudioRequest) {
+interface ExternalMappedPayload {
+  url: string
+  body: BodyInit | string
+  headers: Record<string, string>
+}
+
+function createOpenAIImageEditFormData(
+  request: ExternalImageStudioRequest,
+  count: number,
+  size: string,
+  imageInputs: string[],
+  imageFieldName: string,
+): FormData {
+  const formData = new FormData()
+  formData.set('model', request.model)
+  formData.set('prompt', request.prompt)
+  formData.set('n', String(count))
+  if (size) {
+    formData.set('size', size)
+  }
+  if (request.seed) {
+    formData.set('seed', request.seed)
+  }
+  if (request.quality) {
+    formData.set('quality', request.quality)
+  }
+  if (request.background) {
+    formData.set('background', request.background)
+  }
+  if (request.format) {
+    formData.set('output_format', request.format)
+  }
+
+  imageInputs.forEach((dataUrl, index) => {
+    const blob = dataUrlToBlob(dataUrl)
+    formData.append(
+      imageFieldName,
+      new File([blob], `reference-${index + 1}.${extensionForMimeType(blob.type)}`, { type: blob.type })
+    )
+  })
+  return formData
+}
+
+function buildChatCompletionImageFields(imageInputs: string[]): Record<string, unknown> {
+  if (!imageInputs.length) {
+    return {}
+  }
+  return {
+    image_input: imageInputs[0],
+    image_inputs: imageInputs,
+    input_image: imageInputs[0],
+    input_images: imageInputs,
+  }
+}
+
+function buildChatCompletionMultimodalMessages(prompt: string, imageInputs: string[]) {
+  return [{
+    role: 'user',
+    content: [
+      { type: 'text', text: prompt },
+      ...imageInputs.map((dataUrl) => ({
+        type: 'image_url',
+        image_url: { url: dataUrl },
+      })),
+    ],
+  }]
+}
+
+function buildChatCompletionInputImageMessages(prompt: string, imageInputs: string[]) {
+  return [{
+    role: 'user',
+    content: [
+      { type: 'input_text', text: prompt },
+      ...imageInputs.map((dataUrl) => ({
+        type: 'input_image',
+        image_url: dataUrl,
+      })),
+    ],
+  }]
+}
+
+function clampImageResultsForRequest(
+  results: NormalizedImageResult[],
+  request: ExternalImageStudioRequest,
+): NormalizedImageResult[] {
+  const count = normalizeImageRequestCount(request.count)
+  return results.length > count ? results.slice(0, count) : results
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === 'AbortError') ||
+    (error instanceof Error && error.name === 'AbortError')
+  )
+}
+
+function isBrowserDirectFallbackError(error: unknown): boolean {
+  if (error instanceof BrowserDirectGenerationError && error.fallbackSuggested) {
+    return true
+  }
+  if (error instanceof TypeError) {
+    return true
+  }
+  const message = error instanceof Error ? error.message : ''
+  return /failed to fetch|network error|cors|load failed/i.test(message)
+}
+
+function mapExternalPayloads(request: ExternalImageStudioRequest): ExternalMappedPayload[] {
   const count = normalizeImageRequestCount(request.count)
   const size = resolveSizeFromAspect(request.aspect_ratio, request.size)
   const imageInputs = collectImageInputs(request)
 
   if (request.profile === 'openai-image-api' || request.profile === 'chatgpt2api') {
     if (imageInputs.length === 0) {
-      return {
+      return [{
         url: joinEndpoint(request.base_url, '/images/generations'),
         body: JSON.stringify({
           model: request.model,
@@ -675,42 +860,37 @@ function mapExternalPayload(request: ExternalImageStudioRequest) {
         headers: {
           'Content-Type': 'application/json',
         },
-      }
+      }]
     }
 
-    const formData = new FormData()
-    formData.set('model', request.model)
-    formData.set('prompt', request.prompt)
-    formData.set('n', String(count))
-    if (size) {
-      formData.set('size', size)
-    }
-    if (request.seed) {
-      formData.set('seed', request.seed)
-    }
-    if (request.quality) {
-      formData.set('quality', request.quality)
-    }
-    if (request.background) {
-      formData.set('background', request.background)
-    }
-    if (request.format) {
-      formData.set('output_format', request.format)
-    }
-
-    imageInputs.forEach((dataUrl, index) => {
-      const blob = dataUrlToBlob(dataUrl)
-      formData.append(
-        'image[]',
-        new File([blob], `reference-${index + 1}.${extensionForMimeType(blob.type)}`, { type: blob.type })
-      )
-    })
-
-    return {
-      url: joinEndpoint(request.base_url, '/images/edits'),
-      body: formData,
+    const editEndpoint = joinEndpoint(request.base_url, '/images/edits')
+    const generationEndpoint = joinEndpoint(request.base_url, '/images/generations')
+    const editPayloads = ['image', 'image[]'].map((imageFieldName) => ({
+      url: editEndpoint,
+      body: createOpenAIImageEditFormData(request, count, size, imageInputs, imageFieldName),
       headers: {},
+    }))
+    const generationPayload: ExternalMappedPayload = {
+      url: generationEndpoint,
+      body: JSON.stringify({
+        model: request.model,
+        prompt: request.prompt,
+        n: count,
+        image_input: imageInputs[0],
+        image_inputs: imageInputs,
+        input_image: imageInputs[0],
+        input_images: imageInputs,
+        ...(size ? { size } : {}),
+        ...(request.seed ? { seed: request.seed } : {}),
+        ...(request.quality ? { quality: request.quality } : {}),
+        ...(request.background ? { background: request.background } : {}),
+        ...(request.format ? { output_format: request.format } : {}),
+      }),
+      headers: {
+        'Content-Type': 'application/json',
+      },
     }
+    return [...editPayloads, generationPayload]
   }
 
   if (request.profile === 'openai-responses') {
@@ -724,7 +904,7 @@ function mapExternalPayload(request: ExternalImageStudioRequest) {
       ...(count > 1 ? { n: count } : {}),
     }
 
-    return {
+    return [{
       url: joinEndpoint(request.base_url, '/responses'),
       body: JSON.stringify({
         model: request.model,
@@ -743,34 +923,97 @@ function mapExternalPayload(request: ExternalImageStudioRequest) {
       headers: {
         'Content-Type': 'application/json',
       },
-    }
+    }]
   }
 
-  return {
-    url: joinEndpoint(request.base_url, '/chat/completions'),
-    body: JSON.stringify({
-      model: request.model,
-      messages: [{ role: 'user', content: request.prompt }],
-      stream: false,
-      ...(imageInputs.length ? { image_input: imageInputs[0], image_inputs: imageInputs } : {}),
-      ...(request.seed ? { seed: request.seed } : {}),
-      ...(count > 1 ? { n_variants: count } : {}),
-    }),
+  const chatEndpoint = joinEndpoint(request.base_url, '/chat/completions')
+  const baseChatPayload: Record<string, unknown> = {
+    model: request.model,
+    stream: false,
+    ...(request.seed ? { seed: request.seed } : {}),
+    ...(count > 1 ? { n_variants: count } : {}),
+  }
+  const textPayload = {
+    ...baseChatPayload,
+    messages: [{ role: 'user', content: request.prompt }],
+    ...buildChatCompletionImageFields(imageInputs),
+  }
+  if (imageInputs.length === 0) {
+    return [{
+      url: chatEndpoint,
+      body: JSON.stringify(textPayload),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }]
+  }
+  const multimodalPayload = {
+    ...baseChatPayload,
+    messages: buildChatCompletionMultimodalMessages(request.prompt, imageInputs),
+    ...(count > 1 ? { n: count } : {}),
+  }
+  const inputImagePayload = {
+    ...baseChatPayload,
+    messages: buildChatCompletionInputImageMessages(request.prompt, imageInputs),
+    ...(count > 1 ? { n: count } : {}),
+  }
+  return [textPayload, multimodalPayload, inputImagePayload].map((payload) => ({
+    url: chatEndpoint,
+    body: JSON.stringify(payload),
     headers: {
       'Content-Type': 'application/json',
     },
+  }))
+}
+
+function describeMappedPayload(payload: ExternalMappedPayload): string {
+  try {
+    const parsed = new URL(payload.url)
+    return parsed.pathname || payload.url
+  } catch {
+    return payload.url
   }
+}
+
+async function fetchMappedImagePayload(
+  mapped: ExternalMappedPayload,
+  request: ExternalImageStudioRequest,
+  signal?: AbortSignal,
+): Promise<NormalizedImageResult[]> {
+  const requestHeaders = new Headers()
+  Object.entries(mapped.headers || {}).forEach(([key, value]) => {
+    if (typeof value === 'string') {
+      requestHeaders.set(key, value)
+    }
+  })
+  requestHeaders.set('Authorization', `Bearer ${request.api_key}`)
+  requestHeaders.set('Accept', 'application/json')
+
+  const response = await fetch(mapped.url, {
+    method: 'POST',
+    headers: requestHeaders,
+    body: mapped.body,
+    signal,
+  })
+
+  const payload = await response.json().catch(() => null)
+  if (!response.ok) {
+    throw new Error(parseFetchErrorBody(payload) || `Upstream image request failed (${response.status})`)
+  }
+
+  return normalizeImageStudioResults(payload, request.format)
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {
   const parts = dataUrl.split(',')
   const metadata = parts[0] || 'data:image/png;base64'
-  const mimeType = metadata.split(':')[1]?.split(';')[0] || 'image/png'
+  const mimeTypeHint = metadata.split(':')[1]?.split(';')[0]
   const binary = atob(parts[1] || '')
   const bytes = new Uint8Array(binary.length)
   for (let index = 0; index < binary.length; index += 1) {
     bytes[index] = binary.charCodeAt(index)
   }
+  const mimeType = normalizeImageMimeType(mimeTypeHint, bytes)
   return new Blob([bytes], { type: mimeType })
 }
 
@@ -1078,40 +1321,31 @@ async function generateImageWithExternalBrowserSingle(
   request: ExternalImageStudioRequest,
   options: InternalImageStudioGenerationOptions = {}
 ): Promise<NormalizedImageResult[]> {
-  const mapped = mapExternalPayload(request)
-  const requestHeaders = new Headers()
-  Object.entries(mapped.headers || {}).forEach(([key, value]) => {
-    if (typeof value === 'string') {
-      requestHeaders.set(key, value)
-    }
-  })
-  requestHeaders.set('Authorization', `Bearer ${request.api_key}`)
-  requestHeaders.set('Accept', 'application/json')
+  const mappedPayloads = mapExternalPayloads(request)
+  let lastError: unknown = null
 
-  let response: Response
-  try {
-    response = await fetch(mapped.url, {
-      method: 'POST',
-      headers: requestHeaders,
-      body: mapped.body as BodyInit,
-      signal: options.signal,
-    })
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw error
+  for (const mapped of mappedPayloads) {
+    try {
+      const results = await fetchMappedImagePayload(mapped, request, options.signal)
+      if (results.length > 0) {
+        return clampImageResultsForRequest(results, request)
+      }
+      lastError = new Error(`Upstream image request returned no image results from ${describeMappedPayload(mapped)}`)
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error
+      }
+      lastError = error
     }
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw error
-    }
-    throw new BrowserDirectGenerationError('Browser direct mode failed. The upstream provider may not allow CORS.', true)
   }
 
-  const payload = await response.json().catch(() => null)
-  if (!response.ok) {
-    throw new Error(parseFetchErrorBody(payload) || `Upstream image request failed (${response.status})`)
+  if (lastError instanceof Error) {
+    if (isBrowserDirectFallbackError(lastError)) {
+      throw new BrowserDirectGenerationError(lastError.message || 'Browser direct mode failed.', true)
+    }
+    throw lastError
   }
-
-  return normalizeImageStudioResults(payload, request.format)
+  throw new BrowserDirectGenerationError('Browser direct mode failed. The upstream provider may not allow CORS.', true)
 }
 
 export async function generateImageWithExternalBrowser(

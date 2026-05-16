@@ -6571,6 +6571,7 @@ async function generateImages(options: {
         prompt: requestPromptText,
         count: effectiveCount.value,
         image_input: imageInput,
+        image_inputs: imageInputs.length ? imageInputs : undefined,
         aspect_ratio: preferences.aspectRatio,
         quality: preferences.quality,
         background: preferences.background,
@@ -6582,7 +6583,10 @@ async function generateImages(options: {
         if (isAbortLikeError(error)) {
           throw error
         }
-        if (error instanceof BrowserDirectGenerationError && error.fallbackSuggested) {
+        if (
+          (error instanceof BrowserDirectGenerationError && error.fallbackSuggested) ||
+          isRetryableImageTransportError(error)
+        ) {
           appStore.showWarning(t('imageStudio.toasts.browserDirectFallback'))
           generatedResults = await generateImageWithExternalRelay(sub2apiPayload, generationOptions)
         } else {
