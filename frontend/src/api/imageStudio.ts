@@ -49,6 +49,10 @@ interface RelayImageJobResponse {
   error?: RelayImageJobError
 }
 
+interface UpstreamModelsResponse {
+  models?: string[]
+}
+
 export interface ImageStudioBatchProgress {
   total: number
   completed: number
@@ -1400,6 +1404,24 @@ export async function fetchChatgpt2ApiImageQuota(
   }
 
   return normalizeChatgpt2ApiImageQuota(payload)
+}
+
+export async function probeImageStudioUpstreamModels(
+  baseUrl: string,
+  apiKey: string,
+  signal?: AbortSignal
+): Promise<string[]> {
+  const { data } = await apiClient.post<UpstreamModelsResponse>(
+    '/image-studio/upstream/models',
+    {
+      base_url: baseUrl,
+      api_key: apiKey,
+    },
+    { signal, timeout: 30000 }
+  )
+  return Array.isArray(data.models)
+    ? data.models.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+    : []
 }
 
 export async function downloadRemoteImage(url: string, filename: string): Promise<Blob> {

@@ -31,6 +31,7 @@ export interface ImageStudioHistoryItem {
   count: number
   resolutionPreset?: ImageStudioResolutionPreset
   requestedSize?: string
+  outputMode?: 'native' | 'upscaled' | 'super-4k'
   quality?: string
   background?: string
   format?: string

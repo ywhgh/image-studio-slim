@@ -3,11 +3,13 @@ import { reactive, watch } from 'vue'
 type ImageStudioThemeMode = 'day' | 'night'
 type ImageStudioAccentTone = 'blue' | 'emerald' | 'amber' | 'rose'
 type ImageStudioTextureMode = 'soft' | 'glass' | 'solid'
+type ImageStudioTooltipStyle = 'outline' | 'plain' | 'soft'
 
 interface ImageStudioAppearancePreferences {
   themeMode: ImageStudioThemeMode
   accentTone: ImageStudioAccentTone
   textureMode: ImageStudioTextureMode
+  tooltipStyle: ImageStudioTooltipStyle
   radiusScale: number
   motionEnabled: boolean
 }
@@ -19,6 +21,7 @@ function getDefaultAppearance(): ImageStudioAppearancePreferences {
     themeMode: 'day',
     accentTone: 'blue',
     textureMode: 'soft',
+    tooltipStyle: 'outline',
     radiusScale: 14,
     motionEnabled: true,
   }
@@ -52,6 +55,9 @@ function loadAppearance(): Partial<ImageStudioAppearancePreferences> {
       textureMode: ['soft', 'glass', 'solid'].includes(parsed.textureMode || '')
         ? parsed.textureMode as ImageStudioTextureMode
         : getDefaultAppearance().textureMode,
+      tooltipStyle: ['outline', 'plain', 'soft'].includes(parsed.tooltipStyle || '')
+        ? parsed.tooltipStyle as ImageStudioTooltipStyle
+        : getDefaultAppearance().tooltipStyle,
       radiusScale: clampRadiusScale(parsed.radiusScale),
       motionEnabled: typeof parsed.motionEnabled === 'boolean'
         ? parsed.motionEnabled

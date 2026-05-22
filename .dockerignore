@@ -8,6 +8,7 @@ _legacy/
 **/.DS_Store
 **/Thumbs.db
 **/node_modules/
+**/.wrangler/
 **/dist/
 **/coverage/
 **/__tests__/
@@ -28,3 +29,4 @@ LICENSE
 *.tmp
 tmp/
 temp/
+.npm-cache/

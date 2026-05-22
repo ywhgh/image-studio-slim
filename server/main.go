@@ -75,6 +75,15 @@ type externalGenerateRequest struct {
 	Seed        string   `json:"seed,omitempty"`
 }
 
+type upstreamModelsRequest struct {
+	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key"`
+}
+
+type upstreamModelsData struct {
+	Models []string `json:"models"`
+}
+
 type normalizedResult struct {
 	URL           string `json:"url"`
 	Source        string `json:"source"`
@@ -134,6 +143,7 @@ func main() {
 	mux.HandleFunc("/api/v1/image-studio/generate-external/jobs/", withCORS(handleGenerateExternalJob(imageJobs)))
 	mux.HandleFunc("/api/v1/image-studio/generate-external", withCORS(withMethod(http.MethodPost, handleGenerateExternal(httpClient, cfg))))
 	mux.HandleFunc("/api/v1/image-studio/download", withCORS(withMethod(http.MethodGet, handleDownload(downloadClient, cfg))))
+	mux.HandleFunc("/api/v1/image-studio/upstream/models", withCORS(withMethod(http.MethodPost, handleProbeUpstreamModels(httpClient, cfg))))
 	mux.HandleFunc("/api/v1/health", withCORS(handleHealth))
 
 	// Frontend SPA fallback (must be last)
@@ -291,6 +301,84 @@ func (l *loggingResponseWriter) WriteHeader(code int) {
 func handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_, _ = w.Write([]byte(`{"code":0,"msg":"ok"}`))
+}
+
+func handleProbeUpstreamModels(client *http.Client, cfg config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req upstreamModelsRequest
+		decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+		if err := decoder.Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_JSON", "invalid json body")
+			return
+		}
+
+		baseURL := strings.TrimSpace(req.BaseURL)
+		apiKey := strings.TrimSpace(req.APIKey)
+		if baseURL == "" || apiKey == "" {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "base_url and api_key are required")
+			return
+		}
+
+		normalizedBaseURL, err := validateRemoteURL(baseURL, cfg.AllowPrivateUpstream)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_BASE_URL", err.Error())
+			return
+		}
+		endpoint, err := joinURL(normalizedBaseURL, "/models")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_BASE_URL", err.Error())
+			return
+		}
+
+		upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, endpoint, nil)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_BASE_URL", err.Error())
+			return
+		}
+		upstreamReq.Header.Set("Authorization", "Bearer "+apiKey)
+		upstreamReq.Header.Set("Accept", "application/json")
+
+		startedAt := time.Now()
+		resp, err := client.Do(upstreamReq)
+		if err != nil {
+			log.Printf("upstream models transport_error endpoint=%s duration_ms=%d msg=%s", safeEndpointForLog(endpoint), time.Since(startedAt).Milliseconds(), err.Error())
+			writeError(w, http.StatusBadGateway, "UPSTREAM_REQUEST_FAILED", "failed to reach upstream provider: "+err.Error())
+			return
+		}
+		defer resp.Body.Close()
+
+		body, truncated, err := readLimitedResponseBody(resp.Body, 4<<20)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "UPSTREAM_READ_FAILED", "failed to read upstream response: "+err.Error())
+			return
+		}
+		if truncated {
+			writeError(w, http.StatusBadGateway, "UPSTREAM_RESPONSE_TOO_LARGE", "upstream models response is too large")
+			return
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			msg := parseUpstreamErrorMessage(resp.StatusCode, body)
+			log.Printf("upstream models error endpoint=%s status=%d duration_ms=%d msg=%s", safeEndpointForLog(endpoint), resp.StatusCode, time.Since(startedAt).Milliseconds(), compactLogText(msg, 220))
+			writeError(w, http.StatusBadGateway, "UPSTREAM_ERROR", msg)
+			return
+		}
+
+		models, err := extractModelIDs(body)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "UPSTREAM_INVALID_RESPONSE", err.Error())
+			return
+		}
+
+		writeJSON(w, http.StatusOK, struct {
+			Code int                `json:"code"`
+			Msg  string             `json:"msg"`
+			Data upstreamModelsData `json:"data"`
+		}{
+			Code: 0,
+			Msg:  "ok",
+			Data: upstreamModelsData{Models: models},
+		})
+	}
 }
 
 type imageJobStatus string
@@ -990,6 +1078,9 @@ func shouldRetryCurrentExternalAttemptBeforeFallback(attempt int, status int, me
 	if status == http.StatusTooManyRequests {
 		return false
 	}
+	if isChargeableGatewayTimeout(status, message) {
+		return false
+	}
 	lower := strings.ToLower(message)
 	transientFragments := []string{
 		"stream disconnected",
@@ -1065,6 +1156,9 @@ func shouldRetryExternalGenerate(attempt int, status int, message string) bool {
 	if attempt >= maxExternalGenerateAttempts {
 		return false
 	}
+	if isChargeableGatewayTimeout(status, message) {
+		return false
+	}
 	if status == http.StatusRequestTimeout ||
 		status == http.StatusTooManyRequests ||
 		status == http.StatusBadGateway ||
@@ -1106,6 +1200,9 @@ func shouldTryNextExternalAttempt(variantIndex, variantCount, status int, messag
 	if variantIndex >= variantCount-1 {
 		return false
 	}
+	if isChargeableGatewayTimeout(status, message) {
+		return false
+	}
 	if status == http.StatusUnauthorized ||
 		status == http.StatusForbidden ||
 		status == http.StatusTooManyRequests ||
@@ -1124,6 +1221,9 @@ func shouldTryNextExternalAttempt(variantIndex, variantCount, status int, messag
 		"insufficient",
 		"billing",
 		"balance",
+		"image generation is not enabled",
+		"generation is not enabled for this group",
+		"not enabled for this group",
 		"model_not_found",
 		"model not found",
 		"model does not exist",
@@ -1165,6 +1265,17 @@ func shouldTryNextExternalAttempt(variantIndex, variantCount, status int, messag
 		}
 	}
 	return false
+}
+
+func isChargeableGatewayTimeout(status int, message string) bool {
+	if status != http.StatusGatewayTimeout && status != 524 {
+		return false
+	}
+	lower := strings.ToLower(message)
+	return strings.Contains(lower, "gateway time-out") ||
+		strings.Contains(lower, "gateway timeout") ||
+		strings.Contains(lower, "openresty") ||
+		strings.Contains(lower, "cloudflare")
 }
 
 func waitBeforeExternalRetry(ctx context.Context, reason string, attempt int) bool {
@@ -2152,6 +2263,65 @@ func getStringField(source map[string]any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func extractModelIDs(raw []byte) ([]string, error) {
+	var payload any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, fmt.Errorf("failed to parse upstream models response: %w", err)
+	}
+
+	seen := make(map[string]struct{})
+	models := make([]string, 0)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		models = append(models, value)
+	}
+
+	var visit func(any)
+	visit = func(value any) {
+		switch item := value.(type) {
+		case string:
+			add(item)
+		case []any:
+			for _, child := range item {
+				visit(child)
+			}
+		case map[string]any:
+			if id := getStringField(item, "id", "name", "model"); id != "" {
+				add(id)
+			}
+		}
+	}
+
+	if root, ok := payload.(map[string]any); ok {
+		if data, ok := root["data"]; ok {
+			visit(data)
+		}
+		if modelsValue, ok := root["models"]; ok {
+			visit(modelsValue)
+		}
+		if ids, ok := root["model_ids"]; ok {
+			visit(ids)
+		}
+		if len(models) == 0 {
+			visit(root)
+		}
+	} else {
+		visit(payload)
+	}
+
+	if len(models) == 0 {
+		return nil, errors.New("upstream models response did not contain model ids")
+	}
+	return models, nil
 }
 
 func parseUpstreamErrorMessage(status int, raw []byte) string {

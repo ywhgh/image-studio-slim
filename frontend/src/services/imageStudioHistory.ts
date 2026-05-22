@@ -4,6 +4,14 @@ const DB_NAME = 'sub2api-image-studio'
 const DB_VERSION = 1
 const STORE_NAME = 'generations'
 
+export interface ImageStudioStoragePersistenceStatus {
+  supported: boolean
+  persisted: boolean
+  granted?: boolean
+  usage?: number
+  quota?: number
+}
+
 interface StoredImageStudioResult {
   id: string
   source: 'remote-url' | 'data-url'
@@ -26,6 +34,7 @@ interface StoredImageStudioHistoryItem {
   count: number
   resolutionPreset?: ImageStudioHistoryItem['resolutionPreset']
   requestedSize?: string
+  outputMode?: ImageStudioHistoryItem['outputMode']
   quality?: string
   background?: string
   format?: string
@@ -53,6 +62,76 @@ function openDatabase(): Promise<IDBDatabase> {
       }
     }
   })
+}
+
+async function estimateStorage(): Promise<Pick<ImageStudioStoragePersistenceStatus, 'usage' | 'quota'>> {
+  if (typeof navigator === 'undefined' || !navigator.storage?.estimate) {
+    return {}
+  }
+  try {
+    const estimate = await navigator.storage.estimate()
+    return {
+      usage: estimate.usage,
+      quota: estimate.quota,
+    }
+  } catch {
+    return {}
+  }
+}
+
+export async function getImageStudioStoragePersistenceStatus(): Promise<ImageStudioStoragePersistenceStatus> {
+  const supported = typeof navigator !== 'undefined' &&
+    !!navigator.storage &&
+    typeof navigator.storage.persisted === 'function'
+  const storageEstimate = await estimateStorage()
+
+  if (!supported) {
+    return {
+      supported: false,
+      persisted: false,
+      ...storageEstimate,
+    }
+  }
+
+  try {
+    return {
+      supported: true,
+      persisted: await navigator.storage.persisted(),
+      ...storageEstimate,
+    }
+  } catch {
+    return {
+      supported: true,
+      persisted: false,
+      ...storageEstimate,
+    }
+  }
+}
+
+export async function requestImageStudioPersistentStorage(): Promise<ImageStudioStoragePersistenceStatus> {
+  const current = await getImageStudioStoragePersistenceStatus()
+  const canRequest = typeof navigator !== 'undefined' &&
+    !!navigator.storage &&
+    typeof navigator.storage.persist === 'function'
+
+  if (!current.supported || current.persisted || !canRequest) {
+    return current
+  }
+
+  try {
+    const granted = await navigator.storage.persist()
+    const next = await getImageStudioStoragePersistenceStatus()
+    return {
+      ...next,
+      granted,
+      persisted: next.persisted || granted,
+    }
+  } catch {
+    return {
+      ...current,
+      granted: false,
+    }
+  }
 }
 
 function withStore<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
@@ -103,7 +182,7 @@ export async function saveImageStudioHistoryItem(item: ImageStudioHistoryItem): 
     .filter((result): result is StoredImageStudioResult => !!result)
 
   if (!storedResults.length) {
-    return
+    throw new Error('No image blob is available for local history storage.')
   }
 
   const referenceImageUrls = normalizeReferenceImageUrls(item)
@@ -120,6 +199,7 @@ export async function saveImageStudioHistoryItem(item: ImageStudioHistoryItem): 
     count: storedResults.length,
     resolutionPreset: item.resolutionPreset,
     requestedSize: item.requestedSize,
+    outputMode: item.outputMode,
     quality: item.quality,
     background: item.background,
     format: item.format,
@@ -169,6 +249,7 @@ export async function replaceImageStudioHistoryItems(items: ImageStudioHistoryIt
         count: storedResults.length,
         resolutionPreset: item.resolutionPreset,
         requestedSize: item.requestedSize,
+        outputMode: item.outputMode,
         quality: item.quality,
         background: item.background,
         format: item.format,
@@ -217,6 +298,7 @@ export async function listImageStudioHistoryItems(): Promise<ImageStudioHistoryI
       count: record.count,
       resolutionPreset: record.resolutionPreset,
       requestedSize: record.requestedSize,
+      outputMode: record.outputMode,
       quality: record.quality,
       background: record.background,
       format: record.format,

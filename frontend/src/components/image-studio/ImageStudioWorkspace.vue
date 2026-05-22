@@ -11,6 +11,7 @@
 
   <div
     v-else
+    ref="studioShellRef"
     class="studio-shell"
     :class="[
       { embedded: props.embedded, 'motion-reduced': !studioAppearance.motionEnabled },
@@ -18,6 +19,11 @@
       `texture-${studioAppearance.textureMode}`,
     ]"
     :style="studioAppearanceStyle"
+    @focusin.capture="handleStudioTitleTooltipFocusIn"
+    @focusout.capture="handleStudioTitleTooltipFocusOut"
+    @keydown.esc.capture="hideStudioTitleTooltip"
+    @pointerout.capture="handleStudioTitleTooltipPointerOut"
+    @pointerover.capture="handleStudioTitleTooltipPointerOver"
   >
     <div class="studio-window">
       <header class="studio-header">
@@ -32,6 +38,33 @@
         </div>
 
         <div class="studio-header-actions">
+          <div ref="releasePanelRef" class="studio-release-popover">
+            <button
+              type="button"
+              class="studio-release-trigger"
+              :class="{ 'is-open': releasePanelOpen }"
+              :title="currentRelease.title"
+              @click.stop="releasePanelOpen = !releasePanelOpen"
+            >
+              <Icon name="gift" size="sm" />
+              <span>{{ currentRelease.version }}</span>
+            </button>
+
+            <transition name="studio-popover">
+              <div v-if="releasePanelOpen" class="studio-release-panel">
+                <div class="studio-release-head">
+                  <div>
+                    <p class="studio-release-title">{{ currentRelease.title }}</p>
+                    <p class="studio-release-subtitle">{{ currentRelease.subtitle }}</p>
+                  </div>
+                  <span class="studio-release-date">{{ currentRelease.date }}</span>
+                </div>
+                <ul class="studio-release-list">
+                  <li v-for="item in currentRelease.items" :key="item">{{ item }}</li>
+                </ul>
+              </div>
+            </transition>
+          </div>
           <div class="studio-header-pill" :class="`tone-${headerStatusTone}`">
             <span class="studio-pill-dot" :class="{ 'is-pulsing': generating }"></span>
             <div class="studio-pill-stack">
@@ -149,6 +182,23 @@
                       class="studio-appearance-segment is-column"
                       :class="{ active: studioAppearance.textureMode === option.value }"
                       @click="studioAppearance.textureMode = option.value"
+                    >
+                      <strong>{{ option.label }}</strong>
+                      <small>{{ option.description }}</small>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="studio-appearance-section">
+                  <p class="studio-appearance-label">{{ tooltipStyleSectionLabel }}</p>
+                  <div class="studio-appearance-segmented is-stack">
+                    <button
+                      v-for="option in tooltipStyleOptions"
+                      :key="option.value"
+                      type="button"
+                      class="studio-appearance-segment is-column"
+                      :class="{ active: studioAppearance.tooltipStyle === option.value }"
+                      @click="studioAppearance.tooltipStyle = option.value"
                     >
                       <strong>{{ option.label }}</strong>
                       <small>{{ option.description }}</small>
@@ -354,7 +404,14 @@
                             {{ option.label }}
                           </option>
                         </select>
-                        <p class="studio-helper">{{ t('imageStudio.hints.external') }}</p>
+                        <p class="studio-helper">{{ selectedCompatibilityProfileDescription }}</p>
+                        <div v-if="externalProfileWarning" class="studio-profile-advice">
+                          <Icon name="infoCircle" size="sm" />
+                          <span>{{ externalProfileWarning }}</span>
+                          <button type="button" @click="switchExternalProfileToOpenAIImageApi">
+                            {{ locale === 'zh' ? '切换到图片接口' : 'Use Images API' }}
+                          </button>
+                        </div>
                       </div>
 
                       <button
@@ -550,6 +607,18 @@
                     >
                       <Icon :name="autoCleanPlaceholders ? 'check' : 'x'" size="sm" />
                       <span>{{ t('imageStudio.promptPanel.autoCleanPlaceholders') }}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      class="studio-chip"
+                      :class="{ active: super4kEnabled }"
+                      :aria-pressed="super4kEnabled"
+                      :title="super4kTitle"
+                      @click="toggleSuper4k"
+                    >
+                      <Icon :name="super4kEnabled ? 'check' : 'x'" size="sm" />
+                      <span>{{ t('imageStudio.promptPanel.super4k') }}</span>
                     </button>
 
                     <button
@@ -929,20 +998,24 @@
                 <button
                   type="button"
                   class="studio-prompt-template-preview"
-                  :title="selectedPromptTemplatePrompt"
                   @click="selectedPromptLibraryOption ? openPromptLibraryDetails(selectedPromptLibraryOption) : openPromptLibrary()"
                 >
                   <img
                     v-if="selectedPromptTemplateImage"
+                    :class="selectedPromptTemplateImageClass"
                     :src="selectedPromptTemplateImage"
                     :alt="selectedPromptTemplateTitle"
                     loading="lazy"
+                    @load="handleSelectedPromptTemplateImageLoad"
+                    @error="resetSelectedPromptTemplateImageMeta"
                   />
                   <div v-else class="studio-prompt-template-empty">
                     <Icon name="grid" size="md" />
                     <span>{{ selectedPromptTemplatePrompt }}</span>
                   </div>
-                  <span class="studio-prompt-template-badge">模版效果图</span>
+                  <span v-if="selectedPromptTemplateMetaText" class="studio-prompt-template-badge">
+                    {{ selectedPromptTemplateMetaText }}
+                  </span>
                   <span class="studio-prompt-template-caption">
                     {{ selectedPromptTemplatePrompt }}
                   </span>
@@ -966,7 +1039,7 @@
                   </div>
 
                   <div class="studio-prompt-template-actions">
-                    <button type="button" class="studio-prompt-template-button" @click="focusPromptTextarea">
+                    <button type="button" class="studio-prompt-template-button" @click="openSelectedPromptTemplateEditor">
                       <Icon name="edit" size="sm" />
                       <span>{{ t('imageStudio.promptWorkspace.editShort') }}</span>
                     </button>
@@ -1469,7 +1542,7 @@
         </main>
 
         <aside class="studio-right-column">
-          <section class="studio-panel studio-side-panel">
+          <section class="studio-panel studio-side-panel studio-history-panel">
             <div class="studio-history-header">
               <div class="studio-history-title-row">
                 <p class="studio-panel-title">{{ t('imageStudio.sidebar.historyTitle') }}</p>
@@ -1510,6 +1583,10 @@
                 :format="historyFormatLabel(item)"
                 :restore-title="t('imageStudio.buttons.restore')"
                 :delete-title="t('imageStudio.buttons.delete')"
+                :tooltip-style="studioAppearance.tooltipStyle"
+                :tooltip-accent="accentPalette[studioAppearance.accentTone].color"
+                :tooltip-accent-deep="accentPalette[studioAppearance.accentTone].deep"
+                :tooltip-accent-rgb="accentPalette[studioAppearance.accentTone].rgb"
                 @select="selectHistoryRecord(item.id)"
                 @restore="restoreHistoryRecord(item.id)"
                 @delete="removeHistoryRecord(item.id)"
@@ -1660,65 +1737,92 @@
       <div
         v-if="previewLightboxOpen && previewTile"
         class="studio-lightbox"
-        :class="{ 'is-immersive': lightboxImmersive }"
+        :class="{
+          'is-immersive': lightboxImmersive,
+          'theme-night': studioAppearance.themeMode === 'night',
+        }"
+        :style="studioAppearanceStyle"
         @click.self="closePreviewLightbox"
       >
         <div class="studio-lightbox-panel">
           <div class="studio-lightbox-header">
-            <div class="min-w-0">
+            <div class="studio-lightbox-copy">
               <p class="studio-lightbox-title">{{ previewTile.result.filename }}</p>
-              <p class="studio-lightbox-caption">{{ previewTile.prompt }}</p>
-              <div class="studio-lightbox-meta">
-                <span v-if="lightboxNaturalSize" class="studio-lightbox-chip">
-                  {{ lightboxNaturalSize.width }} × {{ lightboxNaturalSize.height }}
-                </span>
-                <span v-if="previewTile.model" class="studio-lightbox-chip">{{ previewTile.model }}</span>
-                <span v-if="previewTile.aspectRatio" class="studio-lightbox-chip">{{ previewTile.aspectRatio }}</span>
-                <span v-if="previewIsTransient && lastGenerationDurationSeconds" class="studio-lightbox-chip is-accent">
-                  {{ t('imageStudio.workbench.durationSeconds', { value: lastGenerationDurationSeconds }) }}
-                </span>
+              <div class="studio-lightbox-prompt">
+                {{ previewTile.prompt }}
+              </div>
+              <div class="studio-lightbox-meta" aria-label="Image metadata">
+                <template v-for="(item, index) in lightboxMetaItems" :key="item.key">
+                  <span v-if="index" class="studio-lightbox-meta-dot">·</span>
+                  <span :class="{ primary: item.primary }">{{ item.label }}</span>
+                </template>
               </div>
             </div>
             <div class="studio-lightbox-actions">
-              <button type="button" class="studio-lightbox-button" @click="stepPreview(-1)">
+              <button
+                type="button"
+                class="studio-lightbox-button"
+                :aria-label="t('imageStudio.workbench.previousPreview')"
+                @click="stepPreview(-1)"
+              >
                 <Icon name="chevronLeft" size="sm" />
-                {{ t('imageStudio.workbench.previousPreview') }}
-              </button>
-              <button type="button" class="studio-lightbox-button" @click="stepPreview(1)">
-                <Icon name="chevronRight" size="sm" />
-                {{ t('imageStudio.workbench.nextPreview') }}
+                <span class="studio-lightbox-button-label">{{ t('imageStudio.workbench.previousPreview') }}</span>
               </button>
               <button
                 type="button"
                 class="studio-lightbox-button"
-                :class="{ active: lightboxViewMode === 'fit' }"
-                data-testid="studio-lightbox-view-mode"
-                @click="toggleLightboxViewMode"
+                :aria-label="t('imageStudio.workbench.nextPreview')"
+                @click="stepPreview(1)"
               >
-                <Icon :name="lightboxViewMode === 'fit' ? 'arrowsUpDown' : 'eye'" size="sm" />
-                {{ lightboxViewModeLabel }}
+                <Icon name="chevronRight" size="sm" />
+                <span class="studio-lightbox-button-label">{{ t('imageStudio.workbench.nextPreview') }}</span>
               </button>
               <button
                 type="button"
                 class="studio-lightbox-button"
                 :class="{ active: lightboxMagnifierEnabled }"
                 data-testid="studio-lightbox-magnifier"
+                :aria-label="lightboxMagnifierLabel"
                 @click="toggleLightboxMagnifier"
               >
                 <Icon :name="lightboxMagnifierEnabled ? 'eyeOff' : 'search'" size="sm" />
-                {{ lightboxMagnifierLabel }}
+                <span class="studio-lightbox-button-label">{{ lightboxMagnifierLabel }}</span>
               </button>
-              <button type="button" class="studio-lightbox-button" @click="downloadCurrentTile">
+              <button
+                type="button"
+                class="studio-lightbox-button"
+                :aria-label="t('imageStudio.buttons.downloadCurrent')"
+                @click="downloadCurrentTile"
+              >
                 <Icon name="download" size="sm" />
-                {{ t('imageStudio.buttons.downloadCurrent') }}
+                <span class="studio-lightbox-button-label">{{ t('imageStudio.buttons.downloadCurrent') }}</span>
               </button>
-              <button type="button" class="studio-lightbox-button" @click="copyCurrentTileImage">
+              <button
+                type="button"
+                class="studio-lightbox-button"
+                :aria-label="locale === 'zh' ? '复制参数' : 'Copy Details'"
+                @click="copyCurrentTileDetails"
+              >
+                <Icon name="clipboard" size="sm" />
+                <span class="studio-lightbox-button-label">{{ locale === 'zh' ? '复制参数' : 'Copy Details' }}</span>
+              </button>
+              <button
+                type="button"
+                class="studio-lightbox-button"
+                :aria-label="t('imageStudio.sidebar.copyImage')"
+                @click="copyCurrentTileImage"
+              >
                 <Icon name="copy" size="sm" />
-                {{ t('imageStudio.sidebar.copyImage') }}
+                <span class="studio-lightbox-button-label">{{ t('imageStudio.sidebar.copyImage') }}</span>
               </button>
-              <button type="button" class="studio-lightbox-button" @click="closePreviewLightbox">
+              <button
+                type="button"
+                class="studio-lightbox-button"
+                :aria-label="t('imageStudio.workbench.closePreview')"
+                @click="closePreviewLightbox"
+              >
                 <Icon name="x" size="sm" />
-                {{ t('imageStudio.workbench.closePreview') }}
+                <span class="studio-lightbox-button-label">{{ t('imageStudio.workbench.closePreview') }}</span>
               </button>
             </div>
           </div>
@@ -2073,6 +2177,7 @@
                   v-if="option.imageUrl"
                   :src="option.imageUrl"
                   :alt="option.title"
+                  @load="handlePromptPreviewImageLoad"
                   @error="(event) => ((event.target as HTMLImageElement).style.opacity = '0')"
                 />
                 <span v-else class="studio-prompt-library-card-fallback">
@@ -2105,8 +2210,16 @@
         <div class="studio-prompt-modal-panel is-upload">
           <div class="studio-prompt-modal-head">
             <div>
-              <p class="studio-prompt-modal-title">{{ t('imageStudio.promptWorkspace.uploadPrompt') }}</p>
-              <p class="studio-prompt-modal-text">本地保存预览图、标题、描述、提示词和分类。</p>
+              <p class="studio-prompt-modal-title">
+                {{ promptLibraryDraftMode === 'edit'
+                  ? (locale === 'zh' ? '编辑提示词' : 'Edit Prompt')
+                  : t('imageStudio.promptWorkspace.uploadPrompt') }}
+              </p>
+              <p class="studio-prompt-modal-text">
+                {{ promptLibraryDraftMode === 'edit'
+                  ? (locale === 'zh' ? '修改你上传的预览图、标题、描述、提示词和分类。' : 'Update the preview image, title, description, prompt, and category you uploaded.')
+                  : (locale === 'zh' ? '本地保存预览图、标题、描述、提示词和分类。' : 'Save the preview image, title, description, prompt, and category locally.') }}
+              </p>
             </div>
             <button type="button" class="studio-popover-close" @click="closePromptUploadModal">
               <Icon name="x" size="xs" />
@@ -2125,7 +2238,7 @@
                 @change="handlePromptLibraryImageSelect"
               />
               <img
-                v-if="promptLibraryDraftImageUrl"
+                v-if="promptLibraryDraftImageUrl && !promptLibraryDraftRemoveImage"
                 :src="promptLibraryDraftImageUrl"
                 alt=""
               />
@@ -2162,6 +2275,14 @@
               <p v-if="promptLibraryDraftError" class="studio-prompt-upload-error">
                 {{ promptLibraryDraftError }}
               </p>
+              <button
+                v-if="promptLibraryDraftImageUrl && !promptLibraryDraftRemoveImage"
+                type="button"
+                class="studio-prompt-upload-remove-image"
+                @click="removePromptLibraryDraftImage"
+              >
+                {{ locale === 'zh' ? '移除预览图' : 'Remove preview image' }}
+              </button>
             </div>
           </div>
           <div class="studio-prompt-modal-actions is-upload-actions">
@@ -2169,7 +2290,9 @@
               {{ t('imageStudio.promptWorkspace.cancel') }}
             </button>
             <button type="button" class="studio-prompt-upload-save" @click="savePromptLibraryDraft">
-              {{ t('imageStudio.promptWorkspace.saveLocalPrompt') }}
+              {{ promptLibraryDraftMode === 'edit'
+                ? (locale === 'zh' ? '保存修改' : 'Save Changes')
+                : t('imageStudio.promptWorkspace.saveLocalPrompt') }}
             </button>
           </div>
         </div>
@@ -2199,6 +2322,7 @@
               v-if="promptLibraryDetailsItem.imageUrl"
               :src="promptLibraryDetailsItem.imageUrl"
               :alt="promptLibraryDetailsItem.title"
+              @load="handlePromptPreviewImageLoad"
             />
             <Icon v-else name="sparkles" size="lg" />
           </div>
@@ -2259,6 +2383,19 @@
       </div>
     </Teleport>
 
+    <Teleport to="body">
+      <div
+        v-if="studioTitleTooltipVisible && studioTitleTooltipText"
+        ref="studioTitleTooltipRef"
+        class="studio-title-tooltip"
+        :class="[`is-${studioAppearance.tooltipStyle}`, { 'is-ready': studioTitleTooltipReady }]"
+        :style="studioTitleTooltipResolvedStyle"
+        role="tooltip"
+      >
+        {{ studioTitleTooltipText }}
+      </div>
+    </Teleport>
+
   </div>
 </template>
 
@@ -2275,6 +2412,7 @@ import {
   fetchImageStudioUsage,
   generateImageWithExternalBrowser,
   generateImageWithExternalRelay,
+  probeImageStudioUpstreamModels,
   resolveImageStudioSize,
 } from '@/api/imageStudio'
 import type { ImageStudioBatchProgress, ImageStudioGenerationOptions } from '@/api/imageStudio'
@@ -2285,6 +2423,7 @@ import {
   deleteImageStudioHistoryItem,
   listImageStudioHistoryItems,
   replaceImageStudioHistoryItems,
+  requestImageStudioPersistentStorage,
   revokeImageStudioHistoryItems,
   saveImageStudioHistoryItem,
 } from '@/services/imageStudioHistory'
@@ -2293,6 +2432,7 @@ import {
   listImageStudioPromptLibraryItems,
   revokeImageStudioPromptLibraryItems,
   saveImageStudioPromptLibraryItem,
+  updateImageStudioPromptLibraryItem,
 } from '@/services/imageStudioPromptLibrary'
 import { useAppStore } from '@/stores'
 import type {
@@ -2309,12 +2449,14 @@ import type {
 import type { ImageStudioPromptLibraryItem } from '@/services/imageStudioPromptLibrary'
 
 const WORKSPACE_ORDER_STORAGE_KEY = 'image-studio.workspace-order'
+const PROMPT_LIBRARY_SELECTED_STORAGE_KEY = 'image-studio.prompt-library-selected-id'
 const LIGHTBOX_LENS_SIZE = 184
 const LIGHTBOX_ZOOM_FACTOR = 1.9
 const LIGHTBOX_ZOOM_MIN = 1
 const LIGHTBOX_ZOOM_MAX = 4
 const LIGHTBOX_ZOOM_STEP = 0.35
 const PROMPT_LIBRARY_IMAGE_MAX_BYTES = 20 * 1024 * 1024
+const IMAGE_STUDIO_RELEASE_VERSION = 'v1.3.0'
 
 interface WorkspaceSyncOptions {
   prioritizedTileIds?: string[]
@@ -2339,6 +2481,14 @@ interface PromptLibraryOption {
   category?: string
 }
 
+type PreviewOrientation = 'landscape' | 'portrait' | 'square' | 'unknown'
+
+interface PromptTemplateImageMeta {
+  ratio: string
+  resolution: string
+  orientation: PreviewOrientation
+}
+
 type PromptLibraryCategoryIcon = 'grid' | 'book' | 'upload' | 'userCircle' | 'cube' | 'sparkles'
 
 interface PromptLibraryCategoryOption {
@@ -2359,6 +2509,14 @@ interface PromptDetailParticle {
   text: string
 }
 
+interface ImageStudioReleaseNotes {
+  version: string
+  title: string
+  subtitle: string
+  date: string
+  items: string[]
+}
+
 const props = withDefaults(defineProps<{
   embedded?: boolean
 }>(), {
@@ -2376,7 +2534,20 @@ const {
 const sub2apiApiKey = ref('')
 const externalApiKey = ref('')
 const prompt = ref('')
+const studioShellRef = ref<HTMLElement | null>(null)
 const promptTextareaRef = ref<HTMLTextAreaElement | null>(null)
+const studioTitleTooltipRef = ref<HTMLElement | null>(null)
+const studioTitleTooltipVisible = ref(false)
+const studioTitleTooltipReady = ref(false)
+const studioTitleTooltipText = ref('')
+const studioTitleTooltipStyle = ref<Record<string, string>>({
+  left: '0px',
+  top: '0px',
+  maxWidth: '460px',
+  '--tooltip-origin': 'top center',
+})
+const studioTitleTooltipTarget = ref<HTMLElement | null>(null)
+let studioTitleTooltipOpenTimer = 0
 const negativePrompt = ref('')
 const promptLibraryOpen = ref(false)
 const promptLibrarySearch = ref('')
@@ -2387,12 +2558,15 @@ const promptLibraryBatchMode = ref(false)
 const promptLibrarySelectedIds = ref<string[]>([])
 const promptLibraryApplyingId = ref<string | null>(null)
 const promptUploadModalOpen = ref(false)
+const promptLibraryDraftMode = ref<'create' | 'edit'>('create')
+const promptLibraryEditingId = ref('')
 const promptLibraryDraftTitle = ref('')
 const promptLibraryDraftDescription = ref('')
 const promptLibraryDraftPrompt = ref('')
 const promptLibraryDraftCategory = ref('')
 const promptLibraryDraftImageFile = ref<File | null>(null)
 const promptLibraryDraftImageUrl = ref('')
+const promptLibraryDraftRemoveImage = ref(false)
 const promptLibraryDraftError = ref('')
 const promptLibraryDetailsItem = ref<PromptLibraryOption | null>(null)
 const selectedPromptLibraryOption = ref<PromptLibraryOption | null>(null)
@@ -2405,6 +2579,7 @@ const compatibilityPreviewOriginal = ref('')
 const compatibilityPreviewPrompt = ref('')
 const confirmedCompatibilityPrompt = ref('')
 const autoCleanPlaceholders = ref(false)
+const super4kEnabled = ref(false)
 const referenceImages = ref<string[]>([])
 const REFERENCE_IMAGE_MAX_COUNT = 6
 const REFERENCE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
@@ -2415,6 +2590,28 @@ let promptLibraryDetailsPreviewTimer: number | null = null
 let promptLibraryLongPressTimer: number | null = null
 let promptDetailsParticleId = 0
 let promptDetailsParticleFrame = 0
+
+function readSelectedPromptLibraryOptionId(): string {
+  if (typeof window === 'undefined') return ''
+  try {
+    return window.localStorage.getItem(PROMPT_LIBRARY_SELECTED_STORAGE_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+function writeSelectedPromptLibraryOptionId(id: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    if (id) {
+      window.localStorage.setItem(PROMPT_LIBRARY_SELECTED_STORAGE_KEY, id)
+    } else {
+      window.localStorage.removeItem(PROMPT_LIBRARY_SELECTED_STORAGE_KEY)
+    }
+  } catch {
+    /* ignore storage errors */
+  }
+}
 
 function handleReferenceFileSelect(event: Event) {
   const input = event.target as HTMLInputElement
@@ -2543,6 +2740,7 @@ const workspaceTiles = ref<ImageStudioWorkspaceTile[]>([])
 const selectedTileIds = ref<string[]>([])
 const previewTileId = ref<string | null>(null)
 const activeHistoryId = ref<string | null>(null)
+let storagePersistenceWarningShown = false
 const previewMode = ref<'original' | 'compare'>('original')
 const previewLightboxOpen = ref(false)
 const lightboxViewMode = ref<'natural' | 'fit'>('natural')
@@ -2561,6 +2759,8 @@ const lightboxNaturalWidth = ref(0)
 const lightboxNaturalHeight = ref(0)
 const lightboxViewportWidth = ref(0)
 const lightboxViewportHeight = ref(0)
+const lightboxViewportOffsetX = ref(0)
+const lightboxViewportOffsetY = ref(0)
 const lightboxPointerDown = ref(false)
 const lightboxPointerButton = ref<number | null>(null)
 const lightboxDragStarted = ref(false)
@@ -2576,6 +2776,8 @@ const LIGHTBOX_LONG_PRESS_MS = 420
 const comparePosition = ref(50)
 const compareViewMode = ref<'side-by-side' | 'slider'>('side-by-side')
 const selectedStylePresetId = ref('default')
+const releasePanelOpen = ref(false)
+const releasePanelRef = ref<HTMLElement | null>(null)
 const appearancePanelOpen = ref(false)
 const appearancePanelRef = ref<HTMLElement | null>(null)
 const connectionPanelOpen = ref(false)
@@ -2602,6 +2804,39 @@ const translateLanguages = computed<{ value: TranslateLang; label: string }[]>((
   { value: 'zh', label: t('imageStudio.translate.languages.zh') },
   { value: 'ru', label: t('imageStudio.translate.languages.ru') },
 ])
+
+const currentRelease = computed<ImageStudioReleaseNotes>(() => {
+  if (locale.value === 'zh') {
+    return {
+      version: IMAGE_STUDIO_RELEASE_VERSION,
+      title: `${IMAGE_STUDIO_RELEASE_VERSION} 更新内容`,
+      subtitle: '图片工作流稳定性与提示词库增强',
+      date: '2026-05-23',
+      items: [
+        '新增 Cloudflare R2 提示词库 Worker，支持安全保存提示词、分类和预览图。',
+        '长按自定义提示词可编辑标题、分类、描述、提示词和预览图，内置模板保持只读。',
+        '恢复 4K 预设为按画幅长边 3840 生成，并保留超 4K 开关。',
+        '优化图生图提示词约束，减少参考图主体、姿态和构图跑偏。',
+        '增强历史记录保存兜底，浏览器持久化失败时仍保留本次完成图片。',
+        '优化 Sub2API / 外部中转探测、错误提示和生图请求兼容性。',
+      ],
+    }
+  }
+  return {
+    version: IMAGE_STUDIO_RELEASE_VERSION,
+    title: `${IMAGE_STUDIO_RELEASE_VERSION} Release Notes`,
+    subtitle: 'Image workflow stability and prompt library improvements',
+    date: '2026-05-23',
+    items: [
+      'Added a Cloudflare R2 prompt-library Worker for safe prompt, category, and preview-image storage.',
+      'Long-press custom prompts to edit title, category, description, prompt text, and preview image while built-in templates stay read-only.',
+      'Restored 4K presets to use a 3840 long edge by aspect ratio, with the over-4K switch preserved.',
+      'Tightened image-to-image prompt locking to better preserve subject, pose, and composition from references.',
+      'Improved history fallback so completed images stay in the current session when browser persistence fails.',
+      'Improved Sub2API / external relay probing, error messages, and image request compatibility.',
+    ],
+  }
+})
 
 function translateLanguageName(code: TranslateLang): string {
   switch (code) {
@@ -2949,6 +3184,59 @@ const textureOptions = computed(() => [
   },
 ])
 
+const tooltipStyleSectionLabel = computed(() => (
+  locale.value === 'zh' ? '文字提示' : 'Text tooltip'
+))
+
+const tooltipStyleOptions = computed(() => (
+  locale.value === 'zh'
+    ? [
+        {
+          value: 'outline' as const,
+          label: '描边主题色',
+          description: '跟随当前主题色的描边提示，适合信息密集区。',
+        },
+        {
+          value: 'plain' as const,
+          label: '简约黑字',
+          description: '白底黑字，无描边，视觉最轻。',
+        },
+        {
+          value: 'soft' as const,
+          label: '柔光主题色',
+          description: '跟随当前主题色的柔光卡片，长文本可读性更强。',
+        },
+      ]
+    : [
+        {
+          value: 'outline' as const,
+          label: 'Theme outline',
+          description: 'A bordered tooltip that follows the current theme color.',
+        },
+        {
+          value: 'plain' as const,
+          label: 'Plain text',
+          description: 'White surface with black text and no border.',
+        },
+        {
+          value: 'soft' as const,
+          label: 'Theme glow',
+          description: 'A theme-colored soft card for long readable text.',
+        },
+      ]
+))
+
+const studioTitleTooltipResolvedStyle = computed(() => {
+  const accent = accentPalette[studioAppearance.accentTone]
+  return {
+    ...studioTitleTooltipStyle.value,
+    '--tooltip-accent': accent.color,
+    '--tooltip-accent-deep': accent.deep,
+    '--tooltip-accent-rgb': accent.rgb,
+    '--tooltip-accent-soft': accent.soft,
+  }
+})
+
 
 const studioAppearanceStyle = computed(() => {
   const accent = accentPalette[studioAppearance.accentTone]
@@ -2960,6 +3248,9 @@ const studioAppearanceStyle = computed(() => {
     '--studio-accent-soft': accent.soft,
     '--studio-border-strong': accent.ring,
     '--studio-accent-shadow': accent.shadow,
+    '--theme-color': accent.color,
+    '--theme-color-rgb': accent.rgb,
+    '--theme-text-on-primary': '#ffffff',
     '--studio-radius-window': `${radius + 8}px`,
     '--studio-radius-panel': `${radius + 2}px`,
     '--studio-radius-control': `${Math.max(10, radius - 1)}px`,
@@ -2993,10 +3284,48 @@ const studioModalThemeStyle = computed(() => {
 })
 
 const compatibilityProfiles = computed(() => [
-  { value: 'openai-image-api', label: t('imageStudio.profiles.openaiImageApi') },
-  { value: 'openai-responses', label: t('imageStudio.profiles.openaiResponses') },
-  { value: 'sub2api-sora-compatible', label: t('imageStudio.profiles.sub2apiCompatible') },
+  {
+    value: 'openai-image-api' as const,
+    label: t('imageStudio.profiles.openaiImageApi'),
+    description: t('imageStudio.profileDescriptions.openaiImageApi'),
+  },
+  {
+    value: 'openai-responses' as const,
+    label: t('imageStudio.profiles.openaiResponses'),
+    description: t('imageStudio.profileDescriptions.openaiResponses'),
+  },
+  {
+    value: 'sub2api-sora-compatible' as const,
+    label: t('imageStudio.profiles.sub2apiCompatible'),
+    description: t('imageStudio.profileDescriptions.sub2apiCompatible'),
+  },
 ])
+
+const selectedCompatibilityProfileDescription = computed(() => (
+  compatibilityProfiles.value.find((option) => option.value === preferences.profile)?.description
+  || t('imageStudio.hints.external')
+))
+
+const selectedExternalModelLooksLikeImageApi = computed(() => (
+  /^gpt-image(?:[-.\w]*)?$/i.test(preferences.model.trim()) ||
+  detectedImageModels.value.some((modelId) => /^gpt-image(?:[-.\w]*)?$/i.test(modelId))
+))
+
+const externalProfileWarning = computed(() => {
+  if (preferences.providerMode === 'sub2api' || preferences.profile !== 'sub2api-sora-compatible') {
+    return ''
+  }
+  if (!selectedExternalModelLooksLikeImageApi.value) {
+    return ''
+  }
+  return locale.value === 'zh'
+    ? '检测到 gpt-image 图片模型。这个上游通常应选择“OpenAI 图片接口”，否则会请求 /chat/completions 并导致 404 或无图片。'
+    : 'A gpt-image model was detected. This upstream usually needs the OpenAI Images API; otherwise /chat/completions may return 404 or no image.'
+})
+
+function switchExternalProfileToOpenAIImageApi() {
+  preferences.profile = 'openai-image-api'
+}
 
 const currentSiteProfileOptions = computed(() => [
   {
@@ -3106,11 +3435,91 @@ function resolveGptImage2StandardSize(aspectRatio: string): string {
 
 const usesGptImage2SizeProfile = computed(() => /(^|[/:])gpt-image-2$/i.test(preferences.model.trim()))
 
+function resolveNativeFourKSize(aspectRatio: string): string {
+  const parsed = parseAspectRatioValue(aspectRatio)
+  if (!parsed || Math.max(parsed.width, parsed.height) / Math.min(parsed.width, parsed.height) > 3) {
+    return ''
+  }
+  return resolveImageStudioSize(aspectRatio, undefined, '4k')
+}
+
 function resolveWorkspaceImageSize(preset: ImageStudioResolutionPreset): string {
+  if (preset === '4k') {
+    return resolveNativeFourKSize(preferences.aspectRatio)
+  }
   if (preset === 'standard' && usesGptImage2SizeProfile.value) {
     return resolveGptImage2StandardSize(preferences.aspectRatio)
   }
   return resolveImageStudioSize(preferences.aspectRatio, undefined, preset)
+}
+
+function parseAspectRatioValue(value: string): { width: number; height: number } | null {
+  const match = /^\s*(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)\s*$/.exec(value)
+  if (!match) {
+    return null
+  }
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null
+  }
+  return { width, height }
+}
+
+const SUPER_4K_LONG_EDGE = 5120
+
+function roundToMultiple(value: number, step: number): number {
+  return Math.max(step, Math.round(value / step) * step)
+}
+
+function resolveLongEdgeImageSize(aspectRatio: string, longEdge: number): string {
+  const parsed = parseAspectRatioValue(aspectRatio)
+  if (!parsed) {
+    return ''
+  }
+  if (Math.max(parsed.width, parsed.height) / Math.min(parsed.width, parsed.height) > 3) {
+    return ''
+  }
+  if (parsed.width === parsed.height) {
+    return `${longEdge}x${longEdge}`
+  }
+  if (parsed.width > parsed.height) {
+    return `${longEdge}x${roundToMultiple((longEdge * parsed.height) / parsed.width, 16)}`
+  }
+  return `${roundToMultiple((longEdge * parsed.width) / parsed.height, 16)}x${longEdge}`
+}
+
+function resolveSuperFourKSize(aspectRatio: string): string {
+  return resolveLongEdgeImageSize(aspectRatio, SUPER_4K_LONG_EDGE)
+}
+
+const native4kSize = computed(() => resolveWorkspaceImageSize('4k'))
+const super4kAvailable = computed(() => !!resolveSuperFourKSize(preferences.aspectRatio))
+const super4kTargetSize = computed(() => (
+  super4kEnabled.value ? resolveSuperFourKSize(preferences.aspectRatio) : ''
+))
+
+const super4kTitle = computed(() => {
+  if (!super4kAvailable.value) {
+    return t('imageStudio.promptPanel.super4kNeedsRatio')
+  }
+  return super4kEnabled.value
+    ? t('imageStudio.promptPanel.super4kOn', { size: super4kTargetSize.value })
+    : t('imageStudio.promptPanel.super4kOff')
+})
+
+watch(super4kAvailable, (available) => {
+  if (!available && super4kEnabled.value) {
+    super4kEnabled.value = false
+  }
+})
+
+function toggleSuper4k() {
+  if (!super4kEnabled.value && !super4kAvailable.value) {
+    appStore.showWarning(t('imageStudio.promptPanel.super4kNeedsRatio'))
+    return
+  }
+  super4kEnabled.value = !super4kEnabled.value
 }
 
 const resolutionOptions = computed(() => {
@@ -3226,6 +3635,15 @@ const promptLibraryOptions = computed<PromptLibraryOption[]>(() => [
   ...builtinPromptLibraryOptions.value,
 ])
 
+function restoreSelectedPromptLibraryOption(): void {
+  const storedId = readSelectedPromptLibraryOptionId()
+  if (!storedId) return
+  const match = promptLibraryOptions.value.find((option) => option.id === storedId)
+  if (match) {
+    selectedPromptLibraryOption.value = match
+  }
+}
+
 const promptLibraryCategories = computed(() => {
   const categories = new Set<string>()
   promptLibraryOptions.value.forEach((option) => {
@@ -3317,6 +3735,115 @@ const selectedPromptTemplateImage = computed(() => (
   || ''
 ))
 
+function createEmptyPromptTemplateImageMeta(): PromptTemplateImageMeta {
+  return {
+    ratio: '',
+    resolution: '',
+    orientation: 'unknown',
+  }
+}
+
+const selectedPromptTemplateImageMeta = ref<PromptTemplateImageMeta>(createEmptyPromptTemplateImageMeta())
+
+function greatestCommonDivisor(left: number, right: number): number {
+  let a = Math.abs(Math.round(left))
+  let b = Math.abs(Math.round(right))
+  while (b !== 0) {
+    const next = a % b
+    a = b
+    b = next
+  }
+  return a || 1
+}
+
+function resolvePreviewOrientation(width: number, height: number): PreviewOrientation {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return 'unknown'
+  }
+  if (Math.abs(width - height) < 1) {
+    return 'square'
+  }
+  return width > height ? 'landscape' : 'portrait'
+}
+
+function buildPromptTemplateImageMeta(width: number, height: number): PromptTemplateImageMeta {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return createEmptyPromptTemplateImageMeta()
+  }
+  const safeWidth = Math.round(width)
+  const safeHeight = Math.round(height)
+  const divisor = greatestCommonDivisor(safeWidth, safeHeight)
+  return {
+    ratio: `${safeWidth / divisor}:${safeHeight / divisor}`,
+    resolution: `${safeWidth}x${safeHeight}`,
+    orientation: resolvePreviewOrientation(safeWidth, safeHeight),
+  }
+}
+
+function previewImagePositionClass(orientation: PreviewOrientation): string {
+  return orientation === 'portrait' ? 'is-preview-portrait' : 'is-preview-centered'
+}
+
+const selectedPromptTemplateImageClass = computed(() => (
+  previewImagePositionClass(selectedPromptTemplateImageMeta.value.orientation)
+))
+
+const selectedPromptTemplateMetaText = computed(() => (
+  [
+    selectedPromptTemplateImageMeta.value.ratio,
+    selectedPromptTemplateImageMeta.value.resolution,
+  ].filter(Boolean).join(' ')
+))
+
+function applyPreviewImageOrientation(image: HTMLImageElement, orientation: PreviewOrientation): void {
+  image.classList.remove('is-preview-portrait', 'is-preview-centered')
+  image.classList.add(previewImagePositionClass(orientation))
+}
+
+function handlePromptPreviewImageLoad(event: Event): void {
+  const image = event.currentTarget as HTMLImageElement | null
+  if (!image) return
+  const meta = buildPromptTemplateImageMeta(image.naturalWidth, image.naturalHeight)
+  applyPreviewImageOrientation(image, meta.orientation)
+}
+
+function handleSelectedPromptTemplateImageLoad(event: Event): void {
+  const image = event.currentTarget as HTMLImageElement | null
+  if (!image) return
+  const meta = buildPromptTemplateImageMeta(image.naturalWidth, image.naturalHeight)
+  selectedPromptTemplateImageMeta.value = meta
+  applyPreviewImageOrientation(image, meta.orientation)
+}
+
+function resetSelectedPromptTemplateImageMeta(): void {
+  selectedPromptTemplateImageMeta.value = createEmptyPromptTemplateImageMeta()
+}
+
+watch(selectedPromptTemplateImage, resetSelectedPromptTemplateImageMeta)
+
+watch(
+  () => selectedPromptLibraryOption.value?.id || '',
+  (id) => {
+    writeSelectedPromptLibraryOptionId(id)
+  }
+)
+
+watch(
+  promptLibraryOptions,
+  (options) => {
+    const selectedId = selectedPromptLibraryOption.value?.id
+    if (selectedId) {
+      const refreshed = options.find((option) => option.id === selectedId)
+      if (refreshed && refreshed !== selectedPromptLibraryOption.value) {
+        selectedPromptLibraryOption.value = refreshed
+      }
+      return
+    }
+    restoreSelectedPromptLibraryOption()
+  },
+  { immediate: true }
+)
+
 const FALLBACK_IMAGE_MODELS = ['gpt-image-1', 'gpt-image-2', 'dall-e-3', 'dall-e-2']
 const IMAGE_MODEL_KEYWORDS = /(image|sora|dall[-_]?e|flux|sdxl|stable[-_]?diffusion|midjourney|imagen|kling|mj|wan-?\d|pika|ideogram|firefly)/i
 
@@ -3348,18 +3875,64 @@ function currentSiteApiBaseCandidates(): string[] {
   return externalApiBaseCandidates(currentSiteBaseUrl.value)
 }
 
+function getProbeErrorStatus(error: unknown): number | undefined {
+  const status = (error as { status?: unknown })?.status
+  return typeof status === 'number' ? status : undefined
+}
+
+function shouldUseRelayProbeError(error: unknown): boolean {
+  const status = getProbeErrorStatus(error)
+  if (!status || status === 0 || status === 404) {
+    return false
+  }
+  return true
+}
+
 async function fetchImageModelIds(baseUrl: string, apiKey: string, signal?: AbortSignal): Promise<string[]> {
-  const response = await fetch(`${baseUrl}/models`, {
-    method: 'GET',
-    headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' },
-    signal,
-  })
+  let relayError: unknown = null
+  try {
+    const relayModels = await probeImageStudioUpstreamModels(baseUrl, apiKey, signal)
+    const filteredRelayModels = relayModels.filter((id) => IMAGE_MODEL_KEYWORDS.test(id))
+    if (filteredRelayModels.length) {
+      return Array.from(new Set(filteredRelayModels))
+    }
+  } catch (error) {
+    relayError = error
+    if ((error as { name?: string })?.name === 'AbortError') {
+      throw error
+    }
+    if (shouldUseRelayProbeError(error)) {
+      throw error
+    }
+  }
+
+  let response: Response
+  try {
+    response = await fetch(`${baseUrl}/models`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' },
+      signal,
+    })
+  } catch (error) {
+    if ((error as { name?: string })?.name === 'AbortError') {
+      throw error
+    }
+    if (relayError) {
+      throw relayError
+    }
+    throw error
+  }
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`)
+    const payload = await response.json().catch(() => null)
+    const detail = parseUpstreamModelProbeError(payload)
+    throw new Error(detail || `HTTP ${response.status}`)
   }
   const payload = await response.json().catch(() => null)
   const list: unknown = payload?.data || payload?.models || payload
   if (!Array.isArray(list)) {
+    if (relayError instanceof Error) {
+      throw relayError
+    }
     throw new Error('unexpected response shape')
   }
 
@@ -3375,6 +3948,28 @@ async function fetchImageModelIds(baseUrl: string, apiKey: string, signal?: Abor
     })
     .filter((id) => typeof id === 'string' && id.length > 0)
     .filter((id) => IMAGE_MODEL_KEYWORDS.test(id))))
+}
+
+function parseUpstreamModelProbeError(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') {
+    return ''
+  }
+  const root = payload as Record<string, unknown>
+  const nested = root.error && typeof root.error === 'object'
+    ? root.error as Record<string, unknown>
+    : null
+  const candidates = [
+    nested?.message,
+    nested?.msg,
+    root.message,
+    root.msg,
+    root.detail,
+    root.error,
+    root.err_code,
+    root.code,
+  ]
+  const found = candidates.find((value) => typeof value === 'string' && value.trim())
+  return typeof found === 'string' ? found.trim() : ''
 }
 
 const modelOptions = computed(() => {
@@ -3438,6 +4033,18 @@ async function fetchUpstreamImageModels(silent = true) {
       }
       if (!unique.includes(preferences.model)) {
         preferences.model = unique[0]
+      }
+      if (
+        preferences.providerMode !== 'sub2api' &&
+        preferences.profile === 'sub2api-sora-compatible' &&
+        unique.some((modelId) => /^gpt-image(?:[-.\w]*)?$/i.test(modelId))
+      ) {
+        preferences.profile = 'openai-image-api'
+        if (!silent) {
+          appStore.showWarning(locale.value === 'zh'
+            ? '检测到 gpt-image 图片接口，已切换为 OpenAI 图片接口。'
+            : 'Detected a gpt-image Images API upstream and switched to OpenAI Images API.')
+        }
       }
     } else {
       detectedImageModels.value = isCurrentSiteChatgpt2Api.value ? ['gpt-image-2'] : []
@@ -3511,6 +4118,9 @@ const countSliderDisabled = computed(() => (
 ))
 
 const resolvedSize = computed(() => {
+  if (super4kTargetSize.value) {
+    return super4kTargetSize.value
+  }
   if (!supportsCustomResolution.value) {
     return ''
   }
@@ -3522,6 +4132,13 @@ const standardGenerationSize = computed(() => {
     return ''
   }
   return resolveWorkspaceImageSize('standard')
+})
+
+const upstreamGenerationSize = computed(() => {
+  if (super4kTargetSize.value) {
+    return native4kSize.value || standardGenerationSize.value
+  }
+  return resolvedSize.value
 })
 
 const resolvedSizeDisplay = computed(() => (
@@ -3659,6 +4276,82 @@ const previewMetaText = computed(() => {
   }
 
   return `${previewTile.value.aspectRatio} · ${previewTile.value.model} · ${formatTime(previewTile.value.createdAt)}`
+})
+
+const previewHistoryRecord = computed(() => {
+  const tile = previewTile.value
+  if (!tile) return null
+  return historyItems.value.find((item) => item.id === tile.historyId) || null
+})
+
+function formatLightboxFileSize(bytes?: number): string {
+  if (!bytes || !Number.isFinite(bytes) || bytes <= 0) {
+    return locale.value === 'zh' ? '大小 -' : 'Size -'
+  }
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = bytes
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+  const digits = value >= 10 || unitIndex === 0 ? 0 : 1
+  return `${value.toFixed(digits)} ${units[unitIndex]}`
+}
+
+function formatLightboxTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return '-'
+  }
+  return new Intl.DateTimeFormat(locale.value === 'zh' ? 'zh-CN' : 'en-US', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
+const lightboxResolutionText = computed(() => {
+  if (lightboxNaturalSize.value) {
+    return `${lightboxNaturalSize.value.width} × ${lightboxNaturalSize.value.height}`
+  }
+  return previewHistoryRecord.value?.requestedSize?.trim() || '-'
+})
+
+function outputModeLabel(mode?: ImageStudioHistoryItem['outputMode']): string {
+  switch (mode) {
+    case 'super-4k':
+      return locale.value === 'zh' ? '超4K输出' : 'Super 4K output'
+    case 'upscaled':
+      return locale.value === 'zh' ? '本地放大' : 'Local upscale'
+    case 'native':
+      return locale.value === 'zh' ? '上游原生' : 'Native upstream'
+    default:
+      return ''
+  }
+}
+
+const lightboxDurationText = computed(() => {
+  const duration = previewHistoryRecord.value?.durationMs
+    ?? (previewIsTransient.value ? lastGenerationDurationMs.value : null)
+  const formatted = formatDurationMs(duration)
+  if (!formatted) return locale.value === 'zh' ? '耗时 -' : 'Took -'
+  return locale.value === 'zh' ? `耗时 ${formatted}` : `Took ${formatted}`
+})
+
+const lightboxMetaItems = computed(() => {
+  const tile = previewTile.value
+  if (!tile) return []
+  return [
+    { key: 'resolution', label: lightboxResolutionText.value, primary: true },
+    { key: 'ratio', label: tile.aspectRatio || '-', primary: true },
+    { key: 'output', label: outputModeLabel(previewHistoryRecord.value?.outputMode), primary: false },
+    { key: 'size', label: formatLightboxFileSize(tile.result.blob?.size), primary: false },
+    { key: 'duration', label: lightboxDurationText.value, primary: false },
+    { key: 'time', label: formatLightboxTime(tile.createdAt), primary: false },
+  ].filter((item) => item.label)
 })
 
 const headerRemainingText = computed(() => {
@@ -3975,12 +4668,6 @@ const previewTileDownloadText = computed(() => {
 
   return `${previewTile.value.result.filename} · ${previewTile.value.aspectRatio}`
 })
-
-const lightboxViewModeLabel = computed(() => (
-  lightboxViewMode.value === 'fit'
-    ? t('imageStudio.previewCanvas.actualSize')
-    : t('imageStudio.previewCanvas.openOverview')
-))
 
 const lightboxMagnifierLabel = computed(() => (
   lightboxMagnifierEnabled.value
@@ -4524,7 +5211,9 @@ function historyTimingLabel(item: ImageStudioHistoryItem): string {
 }
 
 function historyResolutionLabel(item: ImageStudioHistoryItem): string {
-  return item.requestedSize?.trim() || item.resolutionPreset?.toUpperCase() || '-'
+  const size = item.requestedSize?.trim() || item.resolutionPreset?.toUpperCase() || '-'
+  const mode = outputModeLabel(item.outputMode)
+  return mode ? `${size} · ${mode}` : size
 }
 
 function historyFormatLabel(item: ImageStudioHistoryItem): string {
@@ -4666,10 +5355,17 @@ async function deleteSelectedPromptLibraryOptions() {
     return
   }
 
+  const deletedSelectedTemplate = selectedPromptLibraryOption.value
+    ? selectedLocalIds.includes(selectedPromptLibraryOption.value.id)
+    : false
+
   try {
     await Promise.all(selectedLocalIds.map((id) => deleteImageStudioPromptLibraryItem(id)))
     appStore.showSuccess(t('imageStudio.promptWorkspace.localDeleted'))
     promptLibrarySelectedIds.value = []
+    if (deletedSelectedTemplate) {
+      selectedPromptLibraryOption.value = null
+    }
     await refreshPromptLibraryItems()
   } catch {
     appStore.showError(t('imageStudio.promptWorkspace.localDeleteFailed'))
@@ -4725,6 +5421,8 @@ function handlePromptLibraryDetailsLightboxWheel(event: WheelEvent) {
 }
 
 function openPromptUploadModal() {
+  promptLibraryDraftMode.value = 'create'
+  promptLibraryEditingId.value = ''
   promptUploadModalOpen.value = true
   promptLibraryDraftError.value = ''
   if (!promptLibraryDraftPrompt.value.trim()) {
@@ -4732,17 +5430,53 @@ function openPromptUploadModal() {
   }
 }
 
+function isUploadedPromptLibraryOption(option: PromptLibraryOption | null | undefined): boolean {
+  if (!option) return false
+  return savedPromptLibraryItems.value.some((item) => item.id === option.id)
+}
+
+function openSelectedPromptTemplateEditor() {
+  const option = selectedPromptLibraryOption.value
+  if (!isUploadedPromptLibraryOption(option)) {
+    appStore.showWarning(locale.value === 'zh' ? '内置模板不能修改，请先上传为自己的提示词。' : 'Built-in templates cannot be edited. Upload it as your own prompt first.')
+    return
+  }
+  const item = savedPromptLibraryItems.value.find((record) => record.id === option?.id)
+  if (!item) {
+    appStore.showWarning(locale.value === 'zh' ? '没有找到可编辑的上传提示词。' : 'Editable uploaded prompt was not found.')
+    return
+  }
+
+  promptLibraryDraftMode.value = 'edit'
+  promptLibraryEditingId.value = item.id
+  promptLibraryDraftTitle.value = item.title || ''
+  promptLibraryDraftDescription.value = item.description || ''
+  promptLibraryDraftPrompt.value = item.prompt || ''
+  promptLibraryDraftCategory.value = item.category || ''
+  promptLibraryDraftImageFile.value = null
+  promptLibraryDraftRemoveImage.value = false
+  promptLibraryDraftError.value = ''
+  if (promptLibraryDraftImageUrl.value?.startsWith('blob:')) {
+    URL.revokeObjectURL(promptLibraryDraftImageUrl.value)
+  }
+  promptLibraryDraftImageUrl.value = item.imageUrl || ''
+  promptUploadModalOpen.value = true
+}
+
 function resetPromptLibraryDraft() {
+  promptLibraryDraftMode.value = 'create'
+  promptLibraryEditingId.value = ''
   promptLibraryDraftTitle.value = ''
   promptLibraryDraftDescription.value = ''
   promptLibraryDraftPrompt.value = ''
   promptLibraryDraftCategory.value = ''
   promptLibraryDraftImageFile.value = null
+  promptLibraryDraftRemoveImage.value = false
   promptLibraryDraftError.value = ''
-  if (promptLibraryDraftImageUrl.value) {
+  if (promptLibraryDraftImageUrl.value?.startsWith('blob:')) {
     URL.revokeObjectURL(promptLibraryDraftImageUrl.value)
-    promptLibraryDraftImageUrl.value = ''
   }
+  promptLibraryDraftImageUrl.value = ''
 }
 
 function closePromptUploadModal() {
@@ -4761,11 +5495,21 @@ function setPromptLibraryDraftImage(file: File | undefined) {
     promptLibraryDraftError.value = t('imageStudio.promptWorkspace.imageTooLarge')
     return
   }
-  if (promptLibraryDraftImageUrl.value) {
+  if (promptLibraryDraftImageUrl.value?.startsWith('blob:')) {
     URL.revokeObjectURL(promptLibraryDraftImageUrl.value)
   }
   promptLibraryDraftImageFile.value = file
+  promptLibraryDraftRemoveImage.value = false
   promptLibraryDraftImageUrl.value = URL.createObjectURL(file)
+}
+
+function removePromptLibraryDraftImage() {
+  if (promptLibraryDraftImageUrl.value?.startsWith('blob:')) {
+    URL.revokeObjectURL(promptLibraryDraftImageUrl.value)
+  }
+  promptLibraryDraftImageFile.value = null
+  promptLibraryDraftImageUrl.value = ''
+  promptLibraryDraftRemoveImage.value = true
 }
 
 function handlePromptLibraryImageSelect(event: Event) {
@@ -4791,7 +5535,7 @@ async function savePromptLibraryDraft() {
   }
 
   try {
-    await saveImageStudioPromptLibraryItem({
+    const payload = {
       title: promptLibraryDraftTitle.value.trim() || t('imageStudio.promptWorkspace.uploadedPrompt'),
       description: promptLibraryDraftDescription.value.trim(),
       prompt: promptText,
@@ -4799,12 +5543,28 @@ async function savePromptLibraryDraft() {
       imageBlob: promptLibraryDraftImageFile.value || undefined,
       imageMimeType: promptLibraryDraftImageFile.value?.type,
       imageFilename: promptLibraryDraftImageFile.value?.name,
-    })
-    appStore.showSuccess(t('imageStudio.promptWorkspace.localSaved'))
+      removeImage: promptLibraryDraftRemoveImage.value,
+    }
+    if (promptLibraryDraftMode.value === 'edit') {
+      if (!promptLibraryEditingId.value) {
+        throw new Error('Missing prompt library item id.')
+      }
+      await updateImageStudioPromptLibraryItem(promptLibraryEditingId.value, payload)
+      if (selectedPromptLibraryOption.value?.id === promptLibraryEditingId.value) {
+        prompt.value = promptText
+      }
+    } else {
+      await saveImageStudioPromptLibraryItem(payload)
+    }
+    appStore.showSuccess(promptLibraryDraftMode.value === 'edit'
+      ? (locale.value === 'zh' ? '提示词已更新。' : 'Prompt updated.')
+      : t('imageStudio.promptWorkspace.localSaved'))
     closePromptUploadModal()
     await refreshPromptLibraryItems()
   } catch {
-    promptLibraryDraftError.value = t('imageStudio.promptWorkspace.localSaveFailed')
+    promptLibraryDraftError.value = promptLibraryDraftMode.value === 'edit'
+      ? (locale.value === 'zh' ? '更新提示词失败。' : 'Failed to update the prompt.')
+      : t('imageStudio.promptWorkspace.localSaveFailed')
   }
 }
 
@@ -4889,8 +5649,16 @@ function updateLightboxViewport() {
     return
   }
 
-  lightboxViewportWidth.value = lightboxStageRef.value.clientWidth
-  lightboxViewportHeight.value = lightboxStageRef.value.clientHeight
+  const style = window.getComputedStyle(lightboxStageRef.value)
+  const paddingLeft = Number.parseFloat(style.paddingLeft) || 0
+  const paddingRight = Number.parseFloat(style.paddingRight) || 0
+  const paddingTop = Number.parseFloat(style.paddingTop) || 0
+  const paddingBottom = Number.parseFloat(style.paddingBottom) || 0
+
+  lightboxViewportOffsetX.value = paddingLeft
+  lightboxViewportOffsetY.value = paddingTop
+  lightboxViewportWidth.value = Math.max(1, lightboxStageRef.value.clientWidth - paddingLeft - paddingRight)
+  lightboxViewportHeight.value = Math.max(1, lightboxStageRef.value.clientHeight - paddingTop - paddingBottom)
 }
 
 function clampLightboxPan(nextX: number, nextY: number) {
@@ -4903,13 +5671,15 @@ function clampLightboxPan(nextX: number, nextY: number) {
     return { x: nextX, y: nextY }
   }
 
+  const offsetX = lightboxViewportOffsetX.value
+  const offsetY = lightboxViewportOffsetY.value
   const x = renderedWidth <= viewportWidth
-    ? (viewportWidth - renderedWidth) / 2
-    : clampValue(nextX, viewportWidth - renderedWidth, 0)
+    ? offsetX + (viewportWidth - renderedWidth) / 2
+    : clampValue(nextX, offsetX + viewportWidth - renderedWidth, offsetX)
 
   const y = renderedHeight <= viewportHeight
-    ? (viewportHeight - renderedHeight) / 2
-    : clampValue(nextY, viewportHeight - renderedHeight, 0)
+    ? offsetY + (viewportHeight - renderedHeight) / 2
+    : clampValue(nextY, offsetY + viewportHeight - renderedHeight, offsetY)
 
   return { x, y }
 }
@@ -4920,8 +5690,10 @@ function resolveDefaultLightboxPan() {
   const viewportWidth = lightboxViewportWidth.value
   const viewportHeight = lightboxViewportHeight.value
 
-  const nextX = renderedWidth >= viewportWidth ? 0 : (viewportWidth - renderedWidth) / 2
-  const nextY = renderedHeight >= viewportHeight ? 0 : (viewportHeight - renderedHeight) / 2
+  const offsetX = lightboxViewportOffsetX.value
+  const offsetY = lightboxViewportOffsetY.value
+  const nextX = renderedWidth >= viewportWidth ? offsetX : offsetX + (viewportWidth - renderedWidth) / 2
+  const nextY = renderedHeight >= viewportHeight ? offsetY : offsetY + (viewportHeight - renderedHeight) / 2
   return clampLightboxPan(nextX, nextY)
 }
 
@@ -5051,14 +5823,10 @@ function closePreviewLightbox() {
   lightboxZoom.value = LIGHTBOX_ZOOM_MIN
   lightboxPanX.value = 0
   lightboxPanY.value = 0
+  lightboxViewportOffsetX.value = 0
+  lightboxViewportOffsetY.value = 0
   lightboxNaturalSize.value = null
   resetLightboxMagnifier()
-}
-
-function toggleLightboxViewMode() {
-  lightboxViewMode.value = lightboxViewMode.value === 'fit' ? 'natural' : 'fit'
-  resetLightboxMagnifier()
-  refreshLightboxLayout({ resetZoom: true })
 }
 
 function resetLightboxMagnifier() {
@@ -5179,8 +5947,152 @@ function handleLightboxPointerMove(event: MouseEvent) {
   lightboxLensVisible.value = true
 }
 
+function findStudioTitleTooltipTarget(rawTarget: EventTarget | null): HTMLElement | null {
+  if (!(rawTarget instanceof Element) || !studioShellRef.value) {
+    return null
+  }
+  const target = rawTarget.closest<HTMLElement>('[title], [data-studio-title-tooltip]')
+  if (!target || !studioShellRef.value.contains(target)) {
+    return null
+  }
+  return target
+}
+
+function detachStudioTitleTooltipText(target: HTMLElement): string {
+  const title = target.getAttribute('title')
+  if (title !== null) {
+    target.dataset.studioTitleTooltip = title
+    target.removeAttribute('title')
+    return title.trim()
+  }
+  return (target.dataset.studioTitleTooltip || '').trim()
+}
+
+function restoreStudioTitleTooltipTarget(target: HTMLElement | null): void {
+  if (!target) return
+  const stored = target.dataset.studioTitleTooltip
+  if (typeof stored !== 'string') return
+  target.setAttribute('title', stored)
+  delete target.dataset.studioTitleTooltip
+}
+
+function updateStudioTitleTooltipPosition(): void {
+  const target = studioTitleTooltipTarget.value
+  const tooltip = studioTitleTooltipRef.value
+  if (!target || !tooltip) return
+
+  const margin = 30
+  const gap = 10
+  const viewportWidth = window.innerWidth
+  const viewportHeight = window.innerHeight
+  const maxWidth = Math.max(220, Math.min(460, viewportWidth - margin * 2))
+
+  studioTitleTooltipStyle.value = {
+    ...studioTitleTooltipStyle.value,
+    maxWidth: `${maxWidth}px`,
+  }
+
+  const targetRect = target.getBoundingClientRect()
+  const tooltipRect = tooltip.getBoundingClientRect()
+  const tooltipWidth = Math.min(tooltipRect.width || maxWidth, maxWidth)
+  const tooltipHeight = tooltipRect.height || 1
+  const centerX = targetRect.left + targetRect.width / 2
+  const left = clampValue(centerX, margin + tooltipWidth / 2, viewportWidth - margin - tooltipWidth / 2)
+  const topCandidate = targetRect.top - tooltipHeight - gap
+  const bottomCandidate = targetRect.bottom + gap
+  const hasRoomAbove = topCandidate >= margin
+  const hasRoomBelow = bottomCandidate + tooltipHeight <= viewportHeight - margin
+  const placeAbove = hasRoomAbove || !hasRoomBelow
+  const top = clampValue(
+    placeAbove ? topCandidate : bottomCandidate,
+    margin,
+    Math.max(margin, viewportHeight - tooltipHeight - margin),
+  )
+
+  studioTitleTooltipStyle.value = {
+    left: `${Math.round(left)}px`,
+    top: `${Math.round(top)}px`,
+    maxWidth: `${maxWidth}px`,
+    '--tooltip-origin': placeAbove ? 'bottom center' : 'top center',
+  }
+  studioTitleTooltipReady.value = true
+}
+
+function clearStudioTitleTooltipOpenTimer(): void {
+  if (!studioTitleTooltipOpenTimer) return
+  window.clearTimeout(studioTitleTooltipOpenTimer)
+  studioTitleTooltipOpenTimer = 0
+}
+
+function showStudioTitleTooltip(target: HTMLElement, text: string, delay = 120): void {
+  clearStudioTitleTooltipOpenTimer()
+  if (!text) {
+    restoreStudioTitleTooltipTarget(target)
+    return
+  }
+
+  if (studioTitleTooltipTarget.value && studioTitleTooltipTarget.value !== target) {
+    restoreStudioTitleTooltipTarget(studioTitleTooltipTarget.value)
+  }
+
+  studioTitleTooltipTarget.value = target
+  studioTitleTooltipText.value = text
+  studioTitleTooltipOpenTimer = window.setTimeout(() => {
+    studioTitleTooltipOpenTimer = 0
+    studioTitleTooltipReady.value = false
+    studioTitleTooltipVisible.value = true
+    window.addEventListener('resize', updateStudioTitleTooltipPosition)
+    window.addEventListener('scroll', updateStudioTitleTooltipPosition, true)
+    nextTick(updateStudioTitleTooltipPosition)
+  }, delay)
+}
+
+function hideStudioTitleTooltip(): void {
+  clearStudioTitleTooltipOpenTimer()
+  restoreStudioTitleTooltipTarget(studioTitleTooltipTarget.value)
+  studioTitleTooltipVisible.value = false
+  studioTitleTooltipReady.value = false
+  studioTitleTooltipText.value = ''
+  studioTitleTooltipTarget.value = null
+  window.removeEventListener('resize', updateStudioTitleTooltipPosition)
+  window.removeEventListener('scroll', updateStudioTitleTooltipPosition, true)
+}
+
+function handleStudioTitleTooltipPointerOver(event: PointerEvent): void {
+  const target = findStudioTitleTooltipTarget(event.target)
+  if (!target || target === studioTitleTooltipTarget.value) return
+  const text = detachStudioTitleTooltipText(target)
+  showStudioTitleTooltip(target, text)
+}
+
+function handleStudioTitleTooltipPointerOut(event: PointerEvent): void {
+  const target = studioTitleTooltipTarget.value
+  if (!target) return
+  const related = event.relatedTarget
+  if (related instanceof Node && target.contains(related)) return
+  hideStudioTitleTooltip()
+}
+
+function handleStudioTitleTooltipFocusIn(event: FocusEvent): void {
+  const target = findStudioTitleTooltipTarget(event.target)
+  if (!target) return
+  const text = detachStudioTitleTooltipText(target)
+  showStudioTitleTooltip(target, text, 0)
+}
+
+function handleStudioTitleTooltipFocusOut(event: FocusEvent): void {
+  const target = studioTitleTooltipTarget.value
+  if (!target) return
+  const related = event.relatedTarget
+  if (related instanceof Node && target.contains(related)) return
+  hideStudioTitleTooltip()
+}
+
 function handleDocumentClick(event: MouseEvent) {
   const target = event.target as Node
+  if (releasePanelRef.value && !releasePanelRef.value.contains(target)) {
+    releasePanelOpen.value = false
+  }
   if (appearancePanelRef.value && !appearancePanelRef.value.contains(target)) {
     appearancePanelOpen.value = false
   }
@@ -5609,19 +6521,19 @@ function outputMimeTypeForFormat(format: string, fallback?: string): string {
   }
 }
 
-function appendResolutionSuffix(filename: string, preset: ImageStudioResolutionPreset): string {
-  if (preset === 'standard') {
+function appendResolutionSuffix(filename: string, suffix: string): string {
+  if (!suffix || suffix === 'standard') {
     return filename
   }
 
-  const suffix = `-${preset}`
+  const normalizedSuffix = `-${suffix}`
   const dotIndex = filename.lastIndexOf('.')
   const base = dotIndex > 0 ? filename.slice(0, dotIndex) : filename
   const extension = dotIndex > 0 ? filename.slice(dotIndex) : ''
-  if (base.endsWith(suffix)) {
+  if (base.endsWith(normalizedSuffix)) {
     return filename
   }
-  return `${base}${suffix}${extension}`
+  return `${base}${normalizedSuffix}${extension}`
 }
 
 function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string): Promise<Blob> {
@@ -5643,7 +6555,7 @@ function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string): Promise<Blob
 async function resizeResultToPixelSize(
   result: NormalizedImageResult,
   target: { width: number; height: number },
-  preset: ImageStudioResolutionPreset
+  suffix: string
 ): Promise<NormalizedImageResult> {
   const sourceBlob = await ensureResultBlob(result)
   const bitmap = await createImageBitmap(sourceBlob)
@@ -5652,7 +6564,7 @@ async function resizeResultToPixelSize(
     if (bitmap.width === target.width && bitmap.height === target.height) {
       console.info('[image-studio] output already matches target size', {
         filename: result.filename,
-        preset,
+        suffix,
         size: `${target.width}x${target.height}`,
         mimeType: sourceBlob.type || result.mimeType,
         bytes: sourceBlob.size,
@@ -5662,7 +6574,7 @@ async function resizeResultToPixelSize(
 
     console.info('[image-studio] resizing output to requested preset', {
       filename: result.filename,
-      preset,
+      suffix,
       sourceSize: `${bitmap.width}x${bitmap.height}`,
       targetSize: `${target.width}x${target.height}`,
       mimeType: sourceBlob.type || result.mimeType,
@@ -5693,7 +6605,7 @@ async function resizeResultToPixelSize(
     result.source = 'data-url'
     result.mimeType = mimeType
     result.blob = resizedBlob
-    result.filename = appendResolutionSuffix(result.filename, preset)
+    result.filename = appendResolutionSuffix(result.filename, suffix)
     return result
   } finally {
     bitmap.close()
@@ -5701,7 +6613,7 @@ async function resizeResultToPixelSize(
 }
 
 async function applyOutputResolutionPreset(results: NormalizedImageResult[]): Promise<NormalizedImageResult[]> {
-  if (!supportsCustomResolution.value || preferences.resolutionPreset === 'standard') {
+  if (!super4kTargetSize.value && (!supportsCustomResolution.value || preferences.resolutionPreset === 'standard')) {
     return results
   }
 
@@ -5710,8 +6622,9 @@ async function applyOutputResolutionPreset(results: NormalizedImageResult[]): Pr
     return results
   }
 
+  const suffix = super4kTargetSize.value ? 'super-4k' : preferences.resolutionPreset
   for (const result of results) {
-    await resizeResultToPixelSize(result, target, preferences.resolutionPreset)
+    await resizeResultToPixelSize(result, target, suffix)
   }
   return results
 }
@@ -6073,6 +6986,18 @@ function buildPromptText(basePrompt?: string): string {
   return parts.join('\n')
 }
 
+function buildImageToImagePrompt(basePrompt: string): string {
+  const normalized = basePrompt.trim()
+  const lockText = locale.value === 'zh'
+    ? '图生图约束：参考图是主体、姿态、构图和镜头角度的最高优先级。严格保留参考图中的主体身份与外观特征、人物/物体位置、画面比例、景别、视角、动作姿态和主要场景结构；只根据上面的文字调整风格、光影、材质、服装细节或氛围。不要更换主体，不要改变姿势，不要重构构图，不要凭空添加遮挡主体的大元素。如果文字与参考图冲突，以参考图为准。'
+    : 'Image-to-image constraint: the reference image has top priority for subject, pose, composition, and camera angle. Preserve the subject identity and visual traits, object/person placement, aspect framing, shot scale, perspective, pose/action, and main scene structure. Apply the text only to style, lighting, material, outfit detail, or mood. Do not replace the subject, change the pose, rebuild the composition, or add large elements that block the subject. If the text conflicts with the reference image, follow the reference image.'
+
+  if (!normalized) {
+    return lockText
+  }
+  return `${normalized}\n${lockText}`
+}
+
 function createExternalRequest(
   model: string,
   resolvedPromptText: string,
@@ -6093,7 +7018,7 @@ function createExternalRequest(
     count: effectiveCount.value,
     image_input: cleaned[0],
     image_inputs: cleaned.length ? cleaned : undefined,
-    size: (sizeOverride ?? resolvedSize.value) || undefined,
+    size: (sizeOverride ?? upstreamGenerationSize.value) || undefined,
     aspect_ratio: aspectValue || undefined,
     quality: preferences.quality,
     background: preferences.background,
@@ -6111,13 +7036,18 @@ async function persistCurrentResults(
 ) {
   const historyId = createHistoryId()
 
+  let blobError: unknown = null
   for (const result of generatedResults) {
-    await ensureResultBlob(result)
+    try {
+      await ensureResultBlob(result)
+    } catch (error) {
+      blobError = blobError || error
+    }
   }
 
   const cleanedInputs = (imageInputs || []).filter((s) => typeof s === 'string' && s.length > 0)
 
-  await saveImageStudioHistoryItem({
+  const historyItem: ImageStudioHistoryItem = {
     id: historyId,
     createdAt: new Date().toISOString(),
     providerMode: preferences.providerMode,
@@ -6129,6 +7059,9 @@ async function persistCurrentResults(
     count: effectiveCount.value,
     resolutionPreset: preferences.resolutionPreset,
     requestedSize: resolvedSize.value || undefined,
+    outputMode: super4kTargetSize.value
+      ? 'super-4k'
+      : (preferences.resolutionPreset === 'standard' ? 'native' : 'upscaled'),
     quality: preferences.quality,
     background: preferences.background,
     format: preferences.format,
@@ -6141,15 +7074,77 @@ async function persistCurrentResults(
     parentHistoryId: lineage?.parentHistoryId,
     parentTileId: lineage?.parentTileId,
     results: generatedResults.map((result) => ({ ...result })),
-  })
+  }
 
   const generatedTileIds = generatedResults.map((result) => createWorkspaceTileId(historyId, result.id))
-  await loadHistory({
+  const workspaceSyncOptions = {
     prioritizedTileIds: generatedTileIds,
     selectedTileIds: generatedTileIds,
     previewTileId: generatedTileIds[0] || null,
     activeHistoryId: historyId,
+  }
+
+  try {
+    if (blobError) {
+      throw blobError
+    }
+    await saveImageStudioHistoryItem(historyItem)
+  } catch (error) {
+    keepHistoryItemInCurrentSession(historyItem, workspaceSyncOptions)
+    throw error
+  }
+
+  await loadHistory({
+    ...workspaceSyncOptions,
   })
+}
+
+async function ensureImageStudioPersistentStorage(options: { silent?: boolean } = {}) {
+  try {
+    const status = await requestImageStudioPersistentStorage()
+    if (!status.supported || status.persisted) {
+      return
+    }
+    if (!options.silent && !storagePersistenceWarningShown) {
+      storagePersistenceWarningShown = true
+      appStore.showWarning(t('imageStudio.toasts.localStorageMayBeEvicted'), 8000)
+    }
+  } catch {
+    if (!options.silent && !storagePersistenceWarningShown) {
+      storagePersistenceWarningShown = true
+      appStore.showWarning(t('imageStudio.toasts.localStorageMayBeEvicted'), 8000)
+    }
+  }
+}
+
+function isLocalIpHost(hostname: string): boolean {
+  return hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    /^10\./.test(hostname) ||
+    /^192\.168\./.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+}
+
+function warnIfOriginCanSplitLocalHistory() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  if (!isLocalIpHost(window.location.hostname)) {
+    return
+  }
+
+  const key = 'image-studio.local-origin-warning-shown'
+  try {
+    if (window.sessionStorage.getItem(key)) {
+      return
+    }
+    window.sessionStorage.setItem(key, '1')
+  } catch {
+    // Session storage can be unavailable in private or hardened contexts.
+  }
+
+  appStore.showWarning(t('imageStudio.toasts.localOriginIsolationWarning'), 9000)
 }
 
 async function refreshSub2ApiUsage(options: { silent?: boolean } = {}) {
@@ -6259,6 +7254,25 @@ function classifyGenerationError(error: unknown): GenerationErrorDescription {
   const candidate = error as { status?: number; message?: string }
   const text = error instanceof Error ? error.message : (typeof candidate.message === 'string' ? candidate.message : '')
 
+  if (text && /504 gateway time-out|504 gateway timeout|gateway time-out|gateway timeout|openresty/i.test(text)) {
+    return createGenerationErrorDescription({
+      title: t('imageStudio.generationErrors.upstreamGatewayTimeoutTitle'),
+      message: t('imageStudio.generationErrors.upstreamGatewayTimeoutMessage'),
+      detail: t('imageStudio.generationErrors.upstreamGatewayTimeoutDetail'),
+      rawText: text,
+      kind: 'backend-unreachable',
+    })
+  }
+
+  if (text && /image generation is not enabled for this group|generation is not enabled for this group|not enabled for this group|图片生成.*未启用|当前分组.*图片/i.test(text)) {
+    return createGenerationErrorDescription({
+      title: t('imageStudio.generationErrors.groupImageDisabledTitle'),
+      message: t('imageStudio.generationErrors.groupImageDisabledMessage'),
+      detail: t('imageStudio.generationErrors.groupImageDisabledDetail'),
+      rawText: text,
+    })
+  }
+
   if (text && /stream disconnected|before completion/i.test(text)) {
     return createGenerationErrorDescription({
       title: t('imageStudio.generationErrors.streamDisconnectedTitle'),
@@ -6319,16 +7333,15 @@ function isRetryableImageTransportError(error: unknown): boolean {
 function isRetryableNativeResolutionError(error: unknown): boolean {
   const text = errorMessageText(error)
 
-  return /invalid size|unsupported size|longest edge|image size|invalid_value|尺寸|分辨率/i.test(text) ||
-    isRetryableImageTransportError(error)
+  return /invalid size|unsupported size|longest edge|image size|invalid_value|尺寸|分辨率/i.test(text)
 }
 
 function canFallbackToStandardResolution(error: unknown): boolean {
   return (
-    supportsCustomResolution.value &&
-    preferences.resolutionPreset !== 'standard' &&
+    (supportsCustomResolution.value || !!super4kTargetSize.value) &&
+    (preferences.resolutionPreset !== 'standard' || !!super4kTargetSize.value) &&
     !!standardGenerationSize.value &&
-    standardGenerationSize.value !== resolvedSize.value &&
+    standardGenerationSize.value !== upstreamGenerationSize.value &&
     isRetryableNativeResolutionError(error)
   )
 }
@@ -6410,6 +7423,33 @@ function buildSyntheticTile(
   }
 }
 
+function cloneResultForSessionHistory(result: NormalizedImageResult): NormalizedImageResult {
+  if (!result.blob) {
+    return { ...result }
+  }
+
+  return {
+    ...result,
+    originalUrl: result.originalUrl || result.url,
+    url: URL.createObjectURL(result.blob),
+  }
+}
+
+function keepHistoryItemInCurrentSession(
+  item: ImageStudioHistoryItem,
+  options: WorkspaceSyncOptions = {}
+) {
+  const sessionItem: ImageStudioHistoryItem = {
+    ...item,
+    results: item.results.map(cloneResultForSessionHistory),
+  }
+  historyItems.value = [
+    sessionItem,
+    ...historyItems.value.filter((historyItem) => historyItem.id !== item.id),
+  ]
+  rebuildWorkspace(options)
+}
+
 function prependSyntheticTiles(tiles: ImageStudioWorkspaceTile[]) {
   if (!tiles.length) {
     return
@@ -6463,6 +7503,9 @@ async function generateImages(options: {
   const imageInputs = (overrideArray.length ? overrideArray : referenceImages.value)
     .filter((s): s is string => typeof s === 'string' && s.length > 0)
   const imageInput = imageInputs[0] || undefined
+  if (imageInputs.length) {
+    requestPromptText = buildImageToImagePrompt(requestPromptText)
+  }
 
   if (!resolvedPromptText) {
     appStore.showWarning(t('imageStudio.toasts.promptRequired'))
@@ -6631,28 +7674,33 @@ async function generateImages(options: {
     }
     progress.value = 100
 
-    if (finalBatchProgress && finalBatchProgress.failed > 0 && generatedResults.length > 0) {
-      appStore.showWarning(t('imageStudio.toasts.batchGeneratedPartial', {
-        done: generatedResults.length,
-        total: finalBatchProgress.total,
-        failed: finalBatchProgress.failed,
-      }))
-    } else {
-      appStore.showSuccess(t('imageStudio.toasts.generatedCount', { count: generatedResults.length }))
-    }
+    try {
+      await persistCurrentResults(
+        resolvedModel,
+        generatedResults,
+        resolvedPromptText,
+        imageInputs,
+        { parentHistoryId: options.parentHistoryId, parentTileId: options.parentTileId }
+      )
+      await ensureImageStudioPersistentStorage()
 
-    void persistCurrentResults(
-      resolvedModel,
-      generatedResults,
-      resolvedPromptText,
-      imageInputs,
-      { parentHistoryId: options.parentHistoryId, parentTileId: options.parentTileId }
-    )
-      .catch((error) => {
-        const description = classifyGenerationError(error)
-        generationError.value = { ...description, kind: 'generic' }
-        appStore.showError(description.title)
+      if (finalBatchProgress && finalBatchProgress.failed > 0 && generatedResults.length > 0) {
+        appStore.showWarning(t('imageStudio.toasts.batchGeneratedPartial', {
+          done: generatedResults.length,
+          total: finalBatchProgress.total,
+          failed: finalBatchProgress.failed,
+        }))
+      } else {
+        appStore.showSuccess(t('imageStudio.toasts.generatedCount', { count: generatedResults.length }))
+      }
+    } catch (error) {
+      generationError.value = createGenerationErrorDescription({
+        title: t('imageStudio.toasts.historySaveFailed'),
+        message: t('imageStudio.toasts.historySaveFailedMessage'),
+        rawText: errorMessageText(error),
       })
+      appStore.showError(t('imageStudio.toasts.historySaveFailed'))
+    }
 
     if (preferences.providerMode === 'sub2api') {
       void refreshCurrentSiteUsage({ silent: true })
@@ -6734,6 +7782,15 @@ async function testUpstreamConnection() {
       throw lastError
     }
     detectedImageModels.value = modelIds
+    if (
+      preferences.profile === 'sub2api-sora-compatible' &&
+      modelIds.some((modelId) => /^gpt-image(?:[-.\w]*)?$/i.test(modelId))
+    ) {
+      preferences.profile = 'openai-image-api'
+      appStore.showWarning(locale.value === 'zh'
+        ? '检测到 gpt-image 图片接口，已切换为 OpenAI 图片接口。'
+        : 'Detected a gpt-image Images API upstream and switched to OpenAI Images API.')
+    }
     if (resolvedBaseUrl !== preferences.externalBaseUrl.trim().replace(/\/+$/, '')) {
       preferences.externalBaseUrl = resolvedBaseUrl
     }
@@ -7163,6 +8220,54 @@ async function copyCurrentTileImage() {
   }
 }
 
+async function copyCurrentTileDetails() {
+  const tile = previewTile.value
+  if (!tile) {
+    appStore.showWarning(t('imageStudio.toasts.noActiveImage'))
+    return
+  }
+  if (!navigator.clipboard?.writeText) {
+    appStore.showWarning(locale.value === 'zh' ? '当前浏览器不支持复制文本。' : 'Text copy is not supported in this browser.')
+    return
+  }
+
+  const fileSize = formatLightboxFileSize(tile.result.blob?.size)
+    .replace(/^大小\s*/, '')
+    .replace(/^Size\s*/, '')
+  const duration = lightboxDurationText.value
+    .replace(/^耗时\s*/, '')
+    .replace(/^Took\s*/, '')
+  const isZh = locale.value === 'zh'
+  const detailText = isZh
+    ? [
+        `文件名：${tile.result.filename}`,
+        `提示词：\n${tile.prompt}`,
+        `分辨率：${lightboxResolutionText.value}`,
+        `比例：${tile.aspectRatio || '-'}`,
+        `模型：${tile.model || '-'}`,
+        `大小：${fileSize || '-'}`,
+        `耗时：${duration || '-'}`,
+        `生成时间：${formatLightboxTime(tile.createdAt)}`,
+      ].join('\n')
+    : [
+        `Filename: ${tile.result.filename}`,
+        `Prompt:\n${tile.prompt}`,
+        `Resolution: ${lightboxResolutionText.value}`,
+        `Aspect ratio: ${tile.aspectRatio || '-'}`,
+        `Model: ${tile.model || '-'}`,
+        `Size: ${fileSize || '-'}`,
+        `Duration: ${duration || '-'}`,
+        `Created at: ${formatLightboxTime(tile.createdAt)}`,
+      ].join('\n')
+
+  try {
+    await navigator.clipboard.writeText(detailText)
+    appStore.showSuccess(isZh ? '参数已复制到剪贴板。' : 'Details copied to clipboard.')
+  } catch {
+    appStore.showError(isZh ? '复制参数失败。' : 'Failed to copy details.')
+  }
+}
+
 async function generateVariantFromPreview() {
   if (!previewTile.value) {
     appStore.showWarning(t('imageStudio.toasts.noActiveImage'))
@@ -7178,8 +8283,8 @@ async function generateVariantFromPreview() {
       prompt.value = basePrompt
     }
     const variantPrompt = locale.value === 'zh'
-      ? `${basePrompt}\n保持主体构图与氛围，生成新的风格变体版本。`
-      : `${basePrompt}\nKeep the overall composition and mood, but generate a fresh style variation.`
+      ? `${basePrompt}\n基于当前参考图生成一个轻微变体：主体、身份特征、姿态、构图、镜头角度和主体位置必须与参考图保持一致，只允许微调风格、光影、色彩、质感和细节氛围。`
+      : `${basePrompt}\nCreate a subtle variation from the current reference image: keep the subject, identity traits, pose, composition, camera angle, and subject placement consistent with the reference. Only adjust style, lighting, color, texture, and detail mood.`
 
     await generateImages({
       promptText: variantPrompt,
@@ -7297,9 +8402,12 @@ onMounted(async () => {
   window.addEventListener('mousemove', handleGlobalMouseMove)
   window.addEventListener('mouseup', handleGlobalMouseUp)
   window.addEventListener('resize', handleWindowResize)
+  warnIfOriginCanSplitLocalHistory()
+  void ensureImageStudioPersistentStorage({ silent: true })
   if (!appStore.publicSettingsLoaded) {
     await appStore.fetchPublicSettings()
   }
+  await refreshPromptLibraryItems()
   await loadHistory()
   applyStudioQaRouteState()
 })
@@ -7310,6 +8418,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('mousemove', handleGlobalMouseMove)
   window.removeEventListener('mouseup', handleGlobalMouseUp)
   window.removeEventListener('resize', handleWindowResize)
+  hideStudioTitleTooltip()
   clearProgressResetTimer()
   revokeImageStudioHistoryItems(historyItems.value)
   revokeImageStudioPromptLibraryItems(savedPromptLibraryItems.value)
@@ -7330,6 +8439,9 @@ onBeforeUnmount(() => {
   --studio-accent-deep: #1d4ed8;
   --studio-accent-soft: #eff6ff;
   --studio-accent-shadow: rgba(37, 99, 235, 0.12);
+  --theme-color: #2563eb;
+  --theme-color-rgb: 37, 99, 235;
+  --theme-text-on-primary: #ffffff;
   --studio-dark: #111827;
   --studio-card-background: #ffffff;
   --studio-soft-background: #f4f6fb;
@@ -7362,6 +8474,61 @@ onBeforeUnmount(() => {
   animation: none !important;
   transition: none !important;
   scroll-behavior: auto !important;
+}
+
+.studio-title-tooltip {
+  position: fixed;
+  z-index: 2147483000;
+  width: max-content;
+  max-height: min(42vh, 320px);
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  opacity: 0;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  scrollbar-width: thin;
+  text-align: left;
+  transform: translate(-50%, 4px) scale(0.98);
+  transform-origin: var(--tooltip-origin);
+  transition: opacity 140ms ease, transform 140ms ease;
+  white-space: pre-wrap;
+}
+
+.studio-title-tooltip.is-ready {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.studio-title-tooltip.is-outline {
+  border: 1px solid color-mix(in srgb, var(--tooltip-accent) 58%, transparent);
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--tooltip-accent-deep);
+  box-shadow: 0 14px 34px rgba(var(--tooltip-accent-rgb), 0.18), 0 8px 18px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.studio-title-tooltip.is-plain {
+  border: 0;
+  background: rgba(255, 255, 255, 0.98);
+  color: #111827;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.14);
+}
+
+.studio-title-tooltip.is-soft {
+  border: 1px solid rgba(255, 255, 255, 0.46);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255, 255, 255, 0.26), transparent 34%),
+    linear-gradient(135deg, color-mix(in srgb, #0f172a 72%, var(--tooltip-accent)), color-mix(in srgb, var(--tooltip-accent-deep) 86%, #0f172a));
+  color: #ffffff;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.26), 0 10px 24px rgba(var(--tooltip-accent-rgb), 0.2);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .studio-shell.theme-night {
@@ -7417,6 +8584,84 @@ onBeforeUnmount(() => {
 
 .studio-header-actions {
   @apply flex flex-wrap items-center gap-2;
+}
+
+.studio-release-popover {
+  @apply relative;
+}
+
+.studio-release-trigger {
+  @apply inline-flex h-10 items-center gap-2 rounded-full border px-3 text-sm font-semibold transition;
+  border-color: color-mix(in srgb, var(--theme-color) 24%, var(--studio-border));
+  background: color-mix(in srgb, var(--theme-color) 8%, var(--studio-card-background));
+  color: var(--studio-accent-deep);
+  box-shadow: 0 8px 22px rgba(var(--theme-color-rgb), 0.08);
+}
+
+.studio-release-trigger:hover,
+.studio-release-trigger.is-open {
+  border-color: color-mix(in srgb, var(--theme-color) 42%, var(--studio-border));
+  background: color-mix(in srgb, var(--theme-color) 12%, var(--studio-card-background));
+  color: var(--studio-accent);
+  transform: translateY(-1px);
+}
+
+.studio-release-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 80;
+  --studio-popover-shift-x: 0px;
+  width: min(360px, calc(100vw - 2rem));
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--theme-color) 20%, var(--studio-border));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--studio-card-background) 88%, transparent);
+  box-shadow: 0 22px 52px rgba(15, 23, 42, 0.16), 0 8px 24px rgba(var(--theme-color-rgb), 0.11);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.studio-release-head {
+  @apply flex items-start justify-between gap-3;
+}
+
+.studio-release-title {
+  @apply text-sm font-semibold;
+  color: var(--studio-text);
+}
+
+.studio-release-subtitle {
+  @apply mt-1 text-xs;
+  color: var(--studio-muted);
+}
+
+.studio-release-date {
+  @apply shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold;
+  background: color-mix(in srgb, var(--theme-color) 10%, transparent);
+  color: var(--studio-accent-deep);
+}
+
+.studio-release-list {
+  @apply mt-3 space-y-2 text-sm leading-relaxed;
+  color: color-mix(in srgb, var(--studio-text) 84%, var(--studio-muted));
+}
+
+.studio-release-list li {
+  position: relative;
+  padding-left: 14px;
+}
+
+.studio-release-list li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.72em;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--theme-color);
+  box-shadow: 0 0 0 4px rgba(var(--theme-color-rgb), 0.1);
 }
 
 .studio-header-pill {
@@ -7542,11 +8787,17 @@ onBeforeUnmount(() => {
 .studio-appearance-panel {
   @apply absolute right-0 top-[calc(100%+0.75rem)] z-50 w-[320px] rounded-[20px] border border-slate-200 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.12)];
   --studio-popover-shift-x: 0px;
+  max-height: min(78vh, 720px);
+  overflow-y: auto;
   border-radius: var(--studio-radius-panel);
   background: var(--studio-card-background);
   backdrop-filter: var(--studio-backdrop-filter);
   -webkit-backdrop-filter: var(--studio-backdrop-filter);
   transform: translateX(var(--studio-popover-shift-x));
+}
+
+.studio-appearance-panel::-webkit-scrollbar {
+  width: 0;
 }
 
 .studio-theme-trigger {
@@ -7663,13 +8914,13 @@ onBeforeUnmount(() => {
 
 @media (min-width: 1280px) {
   .studio-layout {
-    grid-template-columns: 260px minmax(0, 1fr) 340px;
+    grid-template-columns: 260px minmax(0, 1fr) 300px;
   }
 }
 
 @media (min-width: 1536px) {
   .studio-layout {
-    grid-template-columns: 280px minmax(0, 1fr) 380px;
+    grid-template-columns: 280px minmax(0, 1fr) 320px;
   }
 }
 
@@ -7793,6 +9044,49 @@ onBeforeUnmount(() => {
 
 .studio-select {
   @apply mt-2;
+}
+
+.studio-profile-advice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  border: 1px solid rgba(var(--theme-color-rgb), 0.26);
+  border-radius: 14px;
+  background: rgba(var(--theme-color-rgb), 0.08);
+  color: color-mix(in srgb, var(--studio-text) 82%, var(--studio-accent-deep) 18%);
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.studio-profile-advice svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--studio-accent-deep);
+}
+
+.studio-profile-advice span {
+  min-width: 0;
+  flex: 1;
+}
+
+.studio-profile-advice button {
+  flex-shrink: 0;
+  border: 1px solid rgba(var(--theme-color-rgb), 0.3);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--studio-accent-deep);
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.studio-profile-advice button:hover {
+  border-color: rgba(var(--theme-color-rgb), 0.5);
+  background: rgba(var(--theme-color-rgb), 0.12);
+  transform: translateY(-1px);
 }
 
 .studio-ratio-grid {
@@ -8185,7 +9479,16 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center center;
   transition: transform 180ms ease;
+}
+
+.studio-prompt-template-preview img.is-preview-portrait {
+  object-position: center 18%;
+}
+
+.studio-prompt-template-preview img.is-preview-centered {
+  object-position: center center;
 }
 
 .studio-prompt-template-preview::after {
@@ -8221,15 +9524,22 @@ onBeforeUnmount(() => {
   z-index: 2;
   max-width: calc(100% - 20px);
   overflow: hidden;
-  border-radius: 999px;
-  padding: 4px 8px;
-  background: rgba(15, 23, 42, 0.36);
-  color: rgba(255, 255, 255, 0.86);
+  border: 0;
+  border-radius: 0;
+  background: none !important;
+  box-shadow: none;
+  color: rgba(255, 255, 255, 0.9);
   font-size: 10px;
-  line-height: 1;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  padding: 0;
+  text-align: left;
   text-overflow: ellipsis;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.86), 0 0 8px rgba(0, 0, 0, 0.46);
   white-space: nowrap;
-  backdrop-filter: blur(10px);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .studio-prompt-template-caption {
@@ -8244,7 +9554,9 @@ onBeforeUnmount(() => {
   -webkit-line-clamp: 2;
   color: rgba(255, 255, 255, 0.9);
   font-size: 11px;
+  font-weight: 400;
   line-height: 1.45;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.68);
 }
 
 .studio-prompt-template-info {
@@ -8913,7 +10225,16 @@ onBeforeUnmount(() => {
 
 .studio-prompt-library-card-visual img {
   @apply h-full w-full object-cover;
+  object-position: center center;
   transition: transform 500ms ease, filter 260ms ease;
+}
+
+.studio-prompt-library-card-visual img.is-preview-portrait {
+  object-position: center 18%;
+}
+
+.studio-prompt-library-card-visual img.is-preview-centered {
+  object-position: center center;
 }
 
 .studio-prompt-library-item:hover .studio-prompt-library-card-visual img {
@@ -8983,13 +10304,23 @@ onBeforeUnmount(() => {
 .studio-prompt-upload-body {
   @apply grid gap-5 p-6;
   grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  min-height: 0;
+  overflow-y: auto;
   background:
     radial-gradient(circle at 10% 10%, rgba(var(--theme-color-rgb), 0.10), transparent 32%),
     rgba(255, 255, 255, 0.16);
+  scrollbar-width: none;
+}
+
+.studio-prompt-upload-body::-webkit-scrollbar {
+  display: none;
 }
 
 .studio-prompt-image-drop {
-  @apply relative flex min-h-[320px] cursor-pointer items-center justify-center overflow-hidden text-center transition;
+  @apply relative flex cursor-pointer items-center justify-center overflow-hidden text-center transition;
+  align-self: start;
+  height: clamp(360px, 56vh, 460px);
+  min-height: 0;
   border-radius: 24px;
   border: 1px dashed rgba(var(--theme-color-rgb), 0.34);
   background:
@@ -9009,6 +10340,8 @@ onBeforeUnmount(() => {
 
 .studio-prompt-image-drop img {
   @apply h-full w-full object-cover;
+  display: block;
+  object-position: center 18%;
 }
 
 .studio-prompt-image-drop span {
@@ -9069,6 +10402,28 @@ onBeforeUnmount(() => {
   color: #be123c;
 }
 
+.studio-prompt-upload-remove-image {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  border: 1px solid rgba(244, 63, 94, 0.18);
+  border-radius: 999px;
+  background: rgba(244, 63, 94, 0.08);
+  color: #be123c;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.studio-prompt-upload-remove-image:hover {
+  border-color: rgba(244, 63, 94, 0.32);
+  background: rgba(244, 63, 94, 0.12);
+  transform: translateY(-1px);
+}
+
 @keyframes prompt-card-in {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
@@ -9110,6 +10465,15 @@ onBeforeUnmount(() => {
 
 .studio-prompt-details-visual img {
   @apply h-full w-full object-cover;
+  object-position: center center;
+}
+
+.studio-prompt-details-visual img.is-preview-portrait {
+  object-position: center 18%;
+}
+
+.studio-prompt-details-visual img.is-preview-centered {
+  object-position: center center;
 }
 
 .studio-prompt-details-body {
@@ -9199,11 +10563,28 @@ onBeforeUnmount(() => {
 }
 
 .studio-prompt-modal-actions.is-upload-actions {
+  display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 10px;
   padding: 16px 24px;
   border-top: 1px solid rgba(255, 255, 255, 0.30);
   background: rgba(255, 255, 255, 0.22);
+}
+
+@media (max-width: 760px) {
+  .studio-prompt-upload-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .studio-prompt-image-drop {
+    height: clamp(280px, 48vh, 380px);
+  }
+
+  .studio-prompt-modal-actions.is-upload-actions {
+    flex-wrap: wrap;
+    padding: 14px 18px;
+  }
 }
 
 .studio-prompt-upload-cancel,
@@ -9934,9 +11315,18 @@ onBeforeUnmount(() => {
   @apply min-h-0;
 }
 
+.studio-history-panel {
+  --studio-history-card-width: 100%;
+  width: 100%;
+  max-width: 100%;
+  align-self: stretch;
+}
+
 .studio-history-header {
   display: grid;
   gap: 4px;
+  width: var(--studio-history-card-width);
+  max-width: 100%;
 }
 
 .studio-history-title-row {
@@ -9953,6 +11343,8 @@ onBeforeUnmount(() => {
 
 .studio-side-empty {
   @apply mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500;
+  width: var(--studio-history-card-width);
+  max-width: 100%;
 }
 
 .studio-history-clear {
@@ -9982,10 +11374,13 @@ onBeforeUnmount(() => {
 }
 
 .studio-history-list {
-  @apply mt-3;
+  margin-top: 10px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
+  width: var(--studio-history-card-width);
+  max-width: 100%;
+  padding: 0;
   overflow: visible;
 }
 
@@ -10239,33 +11634,168 @@ onBeforeUnmount(() => {
 }
 
 .studio-lightbox {
-  @apply fixed inset-0 z-[90] flex items-center justify-center bg-slate-950 p-4;
+  @apply fixed inset-0 z-[90] flex items-center justify-center p-4;
+  background: rgba(255, 255, 255, 0.56);
+  color: #1d1d1f;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  backdrop-filter: blur(22px) saturate(1.12);
+  -webkit-backdrop-filter: blur(22px) saturate(1.12);
+  transition: background-color 500ms ease, color 500ms ease, backdrop-filter 500ms ease;
+}
+
+.studio-lightbox.theme-night {
+  background: rgba(2, 6, 23, 0.78);
+  color: #f5f5f7;
 }
 
 .studio-lightbox-panel {
-  @apply flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[30px] border border-white/10 text-white shadow-[0_30px_100px_rgba(15,23,42,0.48)];
-  background: #05070d;
+  @apply flex w-full flex-col overflow-hidden;
+  max-width: min(90rem, calc(100vw - 48px));
+  max-height: min(92vh, calc(100vh - 48px));
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.16);
+  color: inherit;
+  backdrop-filter: blur(24px) saturate(1.08);
+  -webkit-backdrop-filter: blur(24px) saturate(1.08);
+  transition: background-color 500ms ease, border-color 500ms ease, box-shadow 500ms ease;
+}
+
+.studio-lightbox.theme-night .studio-lightbox-panel {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(5, 7, 13, 0.86);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.72);
 }
 
 .studio-lightbox-header {
-  @apply flex flex-wrap items-start justify-between gap-4 border-b border-white/10 px-5 py-4;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 24px;
+  transition: border-color 500ms ease;
+}
+
+.studio-lightbox.theme-night .studio-lightbox-header {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.studio-lightbox-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .studio-lightbox-title {
-  @apply text-base font-semibold;
+  margin: 0;
+  color: #1d1d1f;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  transition: color 500ms ease;
+}
+
+.studio-lightbox.theme-night .studio-lightbox-title {
+  color: #f5f5f7;
+}
+
+.studio-lightbox-prompt {
+  display: -webkit-box;
+  margin-top: 10px;
+  max-width: 100%;
+  max-height: 100px;
+  overflow: hidden;
+  border-radius: 0;
+  background: transparent;
+  color: #1d1d1f;
+  padding: 0;
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  transition: color 500ms ease;
+}
+
+.studio-lightbox.theme-night .studio-lightbox-prompt {
+  color: #f5f5f7;
 }
 
 .studio-lightbox-caption {
-  @apply mt-1 line-clamp-2 text-sm leading-6 text-slate-300;
+  margin-top: 6px;
+  color: #86868b;
+  font-size: 13px;
+  line-height: 1.5;
+  transition: color 500ms ease;
+}
+
+.studio-lightbox.theme-night .studio-lightbox-caption {
+  color: #8e8e93;
+}
+
+.studio-lightbox-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 8px;
+  margin-top: 12px;
+  color: #86868b;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.5;
+  transition: color 500ms ease;
+}
+
+.studio-lightbox.theme-night .studio-lightbox-meta {
+  color: #8e8e93;
+}
+
+.studio-lightbox-meta span.primary {
+  color: #1d1d1f;
+  font-weight: 500;
+}
+
+.studio-lightbox.theme-night .studio-lightbox-meta span.primary {
+  color: #f5f5f7;
+}
+
+.studio-lightbox-meta-dot {
+  color: #c7c7cc;
+}
+
+.studio-lightbox.theme-night .studio-lightbox-meta-dot {
+  color: #636366;
 }
 
 .studio-lightbox-actions {
-  @apply flex flex-wrap gap-2;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  background: transparent;
+  padding: 4px 0 0;
+  transition: color 500ms ease;
+}
+
+.studio-lightbox.theme-night .studio-lightbox-actions {
+  background: transparent;
 }
 
 .studio-lightbox-stage {
   @apply relative flex-1 overflow-hidden;
-  background: #05070d;
+  box-sizing: border-box;
+  padding: clamp(24px, 4vh, 44px) 0;
+  background: rgba(255, 255, 255, 0.28);
+  transition: background-color 500ms ease;
+}
+
+.studio-lightbox.theme-night .studio-lightbox-stage {
+  background: rgba(2, 6, 23, 0.3);
 }
 
 .studio-lightbox-frame {
@@ -10277,12 +11807,18 @@ onBeforeUnmount(() => {
 }
 
 .studio-lightbox-image {
-  @apply block rounded-[24px] shadow-[0_26px_72px_rgba(2,6,23,0.36)];
+  @apply block rounded-[24px];
   width: 100%;
   height: 100%;
   max-width: none;
   user-select: none;
   pointer-events: none;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.12);
+  transition: box-shadow 500ms ease;
+}
+
+.studio-lightbox.theme-night .studio-lightbox-image {
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.72);
 }
 
 .studio-lightbox-image.is-fit {
@@ -10290,14 +11826,72 @@ onBeforeUnmount(() => {
 }
 
 .studio-lightbox-button {
-  @apply inline-flex items-center justify-center gap-2 border border-white/10 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/10;
-  border-radius: var(--studio-radius-control);
+  position: relative;
+  display: inline-flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.56);
+  color: var(--theme-color, #007aff);
+  padding: 0 15px;
+  font-size: 14px;
+  font-weight: 500;
+  transform: translateZ(0);
+  backdrop-filter: blur(14px) saturate(1.08);
+  -webkit-backdrop-filter: blur(14px) saturate(1.08);
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease,
+    transform 260ms cubic-bezier(0.2, 0.9, 0.2, 1.2);
+}
+
+.studio-lightbox-button:hover {
+  border-color: rgba(var(--theme-color-rgb, 0, 122, 255), 0.28);
+  background: rgba(var(--theme-color-rgb, 0, 122, 255), 0.09);
+  box-shadow: 0 8px 22px rgba(var(--theme-color-rgb, 0, 122, 255), 0.14);
+  transform: translateY(-1px);
+}
+
+.studio-lightbox.theme-night .studio-lightbox-button {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--theme-color, #007aff);
+}
+
+.studio-lightbox.theme-night .studio-lightbox-button:hover {
+  border-color: rgba(var(--theme-color-rgb, 0, 122, 255), 0.42);
+  background: rgba(var(--theme-color-rgb, 0, 122, 255), 0.18);
+  color: var(--theme-color, #007aff);
+}
+
+.studio-lightbox-button:active {
+  transform: translateY(0) scale(0.95);
+  transition-duration: 110ms;
 }
 
 .studio-lightbox-button.active {
-  background: var(--studio-accent-soft);
-  border-color: var(--studio-border-strong);
-  color: #fff;
+  border-color: rgba(var(--theme-color-rgb, 0, 122, 255), 0.3);
+  background: rgba(var(--theme-color-rgb, 0, 122, 255), 0.15);
+  color: var(--theme-color, #007aff);
+}
+
+.studio-lightbox-button:disabled {
+  color: #8e8e93;
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.studio-lightbox-button-label {
+  display: inline-block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .studio-lightbox-stage.is-fit {
@@ -10523,8 +12117,7 @@ onBeforeUnmount(() => {
 }
 
 .studio-header,
-.studio-preview-header,
-.studio-lightbox-header {
+.studio-preview-header {
   border-color: var(--studio-border);
 }
 
@@ -10541,8 +12134,7 @@ onBeforeUnmount(() => {
 .studio-inline-tip,
 .studio-download-card span,
 .studio-resolution-size,
-.studio-empty-text,
-.studio-lightbox-caption {
+.studio-empty-text {
   color: var(--studio-muted);
 }
 
@@ -10556,8 +12148,7 @@ onBeforeUnmount(() => {
 .studio-progress-value,
 .studio-download-card strong,
 .studio-empty-title,
-.studio-disabled-title,
-.studio-lightbox-title {
+.studio-disabled-title {
   color: var(--studio-text);
 }
 
@@ -10688,27 +12279,8 @@ onBeforeUnmount(() => {
   background: var(--studio-accent);
 }
 
-.studio-lightbox {
-  background: #020617;
-}
-
-.studio-lightbox-panel {
-  border-radius: var(--studio-radius-window);
-  border-color: rgba(255, 255, 255, 0.08);
-  background: #05070d;
-}
-
 .studio-lightbox-stage {
   position: relative;
-  background: #05070d;
-}
-
-.studio-lightbox-title {
-  color: #fff;
-}
-
-.studio-lightbox-caption {
-  color: rgba(226, 232, 240, 0.82);
 }
 
 .studio-download-card.danger {
@@ -10813,6 +12385,21 @@ onBeforeUnmount(() => {
     --studio-popover-shift-x: -50%;
   }
 
+  .studio-release-popover {
+    @apply flex-1;
+  }
+
+  .studio-release-trigger {
+    @apply w-full justify-center;
+  }
+
+  .studio-release-panel {
+    left: 50%;
+    right: auto;
+    width: min(340px, calc(100vw - 1.25rem));
+    --studio-popover-shift-x: -50%;
+  }
+
   .studio-theme-trigger span {
     @apply hidden;
   }
@@ -10838,7 +12425,9 @@ onBeforeUnmount(() => {
   }
 
   .studio-lightbox-header {
-    @apply gap-3 px-4 py-3;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 16px;
   }
 
   .studio-lightbox-caption {
@@ -10847,14 +12436,16 @@ onBeforeUnmount(() => {
 
   .studio-lightbox-actions {
     @apply -mx-1 flex-nowrap overflow-x-auto px-1 pb-1;
+    justify-content: flex-start;
     scrollbar-width: thin;
   }
 
   .studio-lightbox-button {
-    @apply shrink-0 px-2.5 py-2 text-xs;
+    @apply shrink-0;
   }
 
   .studio-lightbox-stage {
+    padding-block: 18px;
     min-height: 260px;
   }
 
@@ -10982,6 +12573,65 @@ onBeforeUnmount(() => {
 .studio-reference-preview-panel {
   @apply flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-[24px] border border-white/10 text-white shadow-[0_30px_100px_rgba(15,23,42,0.48)];
   background: linear-gradient(180deg, rgba(7, 11, 27, 0.98) 0%, rgba(8, 13, 30, 0.94) 100%);
+}
+
+.studio-reference-preview {
+  background: rgba(2, 6, 23, 0.92);
+  color: #ffffff;
+}
+
+.studio-reference-preview .studio-lightbox-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 16px 20px;
+}
+
+.studio-reference-preview .studio-lightbox-title {
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.studio-reference-preview .studio-lightbox-caption {
+  color: rgba(226, 232, 240, 0.82);
+}
+
+.studio-reference-preview .studio-lightbox-actions {
+  flex-wrap: wrap;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.studio-reference-preview .studio-lightbox-button {
+  width: auto;
+  height: auto;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--studio-radius-control);
+  color: #ffffff;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.studio-reference-preview .studio-lightbox-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: none;
+}
+
+.studio-reference-preview .studio-lightbox-button:active {
+  transform: scale(0.98);
+}
+
+.studio-reference-preview .studio-lightbox-button:disabled {
+  color: rgba(226, 232, 240, 0.48);
 }
 
 .studio-reference-preview-stage {
@@ -11253,39 +12903,16 @@ onBeforeUnmount(() => {
   background: oklch(58% 0.20 35);
 }
 
-.studio-lightbox-meta {
-  @apply mt-2 flex flex-wrap gap-1.5;
-  max-height: 56px;
-  overflow-y: auto;
-}
-
-.studio-lightbox-chip {
-  @apply inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium;
-  background: rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-}
-
-.studio-lightbox-chip.is-accent {
-  background: color-mix(in srgb, var(--studio-accent) 28%, transparent);
-  color: white;
-  border-color: color-mix(in srgb, var(--studio-accent) 50%, transparent);
-}
-
 /* Ensure the lightbox stage always has room for the image, even when the
-   header grows due to long prompts or many metadata chips. */
+   header grows due to long prompts or metadata. */
 .studio-lightbox-stage {
   min-height: 60vh;
 }
 
 .studio-lightbox-header {
   flex-shrink: 0;
-  max-height: 32vh;
-  overflow-y: auto;
-}
-
-.studio-lightbox-caption {
-  -webkit-line-clamp: 3;
+  max-height: 36vh;
+  overflow: visible;
 }
 
 

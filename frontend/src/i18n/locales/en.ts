@@ -4304,9 +4304,15 @@ export default {
       upstreamConnectionTitle: 'Upstream relay connection failed',
       upstreamConnectionMessage: 'The relay or upstream API disconnected during the request, so this job did not finish.',
       upstreamConnectionDetail: 'Common causes include upstream timeout, account queueing, unstable gateway, or network interruption. Retry later; if it keeps failing, change the relay endpoint or check relay status.',
+      upstreamGatewayTimeoutTitle: 'Upstream gateway timed out before returning the image',
+      upstreamGatewayTimeoutMessage: 'The relay gateway returned 504 first, but the upstream generation may keep running and still bill the request.',
+      upstreamGatewayTimeoutDetail: 'This is a relay reverse-proxy timeout, not a wrong local endpoint. Increase the upstream Nginx/OpenResty/proxy timeout beyond 300 seconds, or use an async image endpoint with polling; otherwise synchronous generation can bill after the response has already disconnected.',
       streamDisconnectedTitle: 'Upstream stream disconnected before completion',
       streamDisconnectedMessage: 'The image API closed the stream before returning the final image, so no completed output was received.',
       streamDisconnectedDetail: 'Common causes: prompt safety checks, upstream queue timeout, or relay gateway interruption. Enable "Safety compatible" and retry, or reduce age, campus, camera-angle, and other wording that often triggers safety checks.',
+      groupImageDisabledTitle: 'Image generation is disabled for this group',
+      groupImageDisabledMessage: 'This API key can see the model list, but its relay group is not allowed to generate images.',
+      groupImageDisabledDetail: 'Check the group bound to this key in the sub2api admin panel, enable image generation/configure image billing, or retry with a key whose group has image generation enabled.',
       rawPrefix: 'Raw upstream error: {value}'
     },
     translate: {
@@ -4332,7 +4338,7 @@ export default {
       currentSiteKeyChatgpt2api: 'chatgpt2api Auth Key',
       baseUrl: 'Third-Party Base URL',
       apiKey: 'Third-Party API Key',
-      profile: 'Compatibility Profile',
+      profile: 'API Type',
       imageCount: 'Image Count',
       quality: 'Quality',
       background: 'Background',
@@ -4445,6 +4451,10 @@ export default {
       autoCleanPlaceholders: 'Clean Placeholders',
       autoCleanPlaceholdersOn: 'On: replace prompt-template placeholders with plain text before generation',
       autoCleanPlaceholdersOff: 'Off: keep template placeholders in the editor',
+      super4k: 'Super 4K',
+      super4kOn: 'On: final output is {size}; the upstream uses native 4K when possible, then local supersampling is applied.',
+      super4kOff: 'Off: click to enable Super 4K output.',
+      super4kNeedsRatio: 'Choose a specific aspect ratio before enabling Super 4K output.',
       negativeTitle: 'Negative Prompt',
       negativePlaceholder: 'Add things to avoid, such as blur, watermark, extra limbs...',
       quickCountLabel: 'Images',
@@ -4654,9 +4664,14 @@ export default {
       }
     },
     profiles: {
-      openaiImageApi: 'OpenAI Image API',
-      openaiResponses: 'OpenAI Responses API',
-      sub2apiCompatible: 'Sub2API / Sora Compatible'
+      openaiImageApi: 'OpenAI Images (/images/generations)',
+      openaiResponses: 'OpenAI Responses (/responses)',
+      sub2apiCompatible: 'Sora Chat Compatible (/chat/completions)'
+    },
+    profileDescriptions: {
+      openaiImageApi: 'Best for gpt-image-1, gpt-image-1.5, and gpt-image-2. This is the right choice for most OpenAI-compatible image relays.',
+      openaiResponses: 'Use only when the upstream explicitly supports /v1/responses with the image_generation tool. Usually limited to one image.',
+      sub2apiCompatible: 'Only for older Sora chat-compatible backends. It calls /chat/completions; do not use this when the upstream exposes gpt-image models.'
     },
     currentSiteProfiles: {
       sub2apiCompatible: {
@@ -4693,6 +4708,10 @@ export default {
       promptCompatibilityApplied: 'Using the upstream-compatible prompt for this generation. Your original prompt stays in history.',
       generatedCount: 'Generated {count} image(s).',
       batchGeneratedPartial: 'Generated {done}/{total} image(s); {failed} failed.',
+      historySaveFailed: 'Image generated, but local history was not saved.',
+      historySaveFailedMessage: 'The image is still in the workbench. Download it now; it may not survive a refresh or browser close.',
+      localStorageMayBeEvicted: 'The browser did not grant persistent storage. Local history still works, but it may be removed if site data is cleared or disk space gets tight.',
+      localOriginIsolationWarning: 'Local history is isolated by the exact address. Stick to one address, for example http://localhost:3000, and avoid mixing it with 127.0.0.1 or LAN IPs.',
       upstreamCompatibilityConfigure: 'Configure Base URL, API key, and model in the prompt-helper panel first.',
       upstreamCompatibilityBusy: 'The prompt-helper model is still working. Please try again shortly.',
       promptCompatibilityFailed: 'Safety-compatible rewrite failed',

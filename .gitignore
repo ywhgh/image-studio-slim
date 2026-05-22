@@ -1,6 +1,8 @@
 # Build artifacts
 frontend/dist/
 frontend/node_modules/
+workers/**/node_modules/
+workers/**/.wrangler/
 frontend/coverage/
 frontend/*.tsbuildinfo
 frontend/vite.config.js
@@ -49,6 +51,8 @@ Desktop.ini
 # Misc
 tmp/
 temp/
+tmp-npm-cache/
+.npm-cache/
 *.tmp
 *.bak
 .cache/

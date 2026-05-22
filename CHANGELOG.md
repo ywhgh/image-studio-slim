@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.3.0 - 2026-05-23
+
+Feature release for prompt-library storage, relay compatibility, and generation reliability:
+
+- Added a Cloudflare R2 Worker for prompt-library metadata and preview-image storage without exposing R2 credentials in the frontend.
+- Added editable custom prompt templates, including title, category, description, prompt text, and preview image updates while built-in templates remain read-only.
+- Added an in-app release badge so the Image Studio header shows the current version and update notes.
+- Restored 4K presets to the pre-upscale long-edge behavior, generating dimensions by aspect ratio from a 3840px long edge.
+- Improved image-to-image prompt handling to better preserve the reference subject, pose, camera angle, and composition.
+- Improved local history resilience so completed images remain available in the current session when browser persistent storage fails.
+- Improved Sub2API and external relay probing, upstream error messages, and OpenAI-compatible image request handling.
+
+Validation:
+
+- `pnpm -s typecheck`
+- `go test ./...`
+
 ## v1.2.1 - 2026-05-16
 
 Patch release for image-to-image generation stability:

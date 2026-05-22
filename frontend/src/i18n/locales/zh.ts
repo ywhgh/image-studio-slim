@@ -4476,9 +4476,15 @@ export default {
       upstreamConnectionTitle: '上游中转连接失败',
       upstreamConnectionMessage: '中转服务或上游接口在请求过程中断开，当前任务没有完成。',
       upstreamConnectionDetail: '常见原因是上游站点超时、账号排队、网关不稳定或网络断流。建议稍后重试，连续失败时更换中转地址或检查该中转站状态。',
+      upstreamGatewayTimeoutTitle: '上游网关超时，图片没有返回',
+      upstreamGatewayTimeoutMessage: '中转站的网关先返回了 504，但后台生成可能仍在继续并产生扣费。',
+      upstreamGatewayTimeoutDetail: '这是中转站反代超时问题，不是本地页面拿错接口。请把上游 Nginx/OpenResty/反代超时时间调到 300 秒以上，或改用支持异步任务/轮询结果的图片接口；否则同步生图会扣费但响应断开。',
       streamDisconnectedTitle: '上游连接中断，生成没有完成',
       streamDisconnectedMessage: '图像接口在返回完整结果前断开了流，所以没有拿到最终图片。',
       streamDisconnectedDetail: '常见原因：提示词触发上游风控、上游排队超时、中转网关断流。建议开启“风控兼容”开关后重试，或减少年龄、校园、镜头等容易触发风控的表达。',
+      groupImageDisabledTitle: '当前分组未开启图片生成',
+      groupImageDisabledMessage: '这个 API Key 所属的中转分组能看到模型列表，但没有图片生成权限。',
+      groupImageDisabledDetail: '请到 sub2api 后台检查该 Key 绑定的分组，开启图片生成能力/配置图片计费，或换一个已开通图片生成的 Key 后重试。',
       rawPrefix: '上游原始错误：{value}'
     },
     translate: {
@@ -4504,7 +4510,7 @@ export default {
       currentSiteKeyChatgpt2api: 'chatgpt2api Auth Key',
       baseUrl: '第三方 Base URL',
       apiKey: '第三方 API Key',
-      profile: '兼容协议',
+      profile: '接口类型',
       imageCount: '生成张数',
       quality: '质量',
       background: '背景',
@@ -4617,6 +4623,10 @@ export default {
       autoCleanPlaceholders: '去占位符',
       autoCleanPlaceholdersOn: '已开启：生成前会把模板占位符替换为纯文本',
       autoCleanPlaceholdersOff: '已关闭：不会自动改写编辑框里的模板占位符',
+      super4k: '超4K',
+      super4kOn: '已开启：最终输出 {size}，上游优先使用4K原生尺寸，随后本地超采样。',
+      super4kOff: '已关闭：点击开启超4K输出。',
+      super4kNeedsRatio: '请先选择明确的画面比例，再开启超4K输出。',
       negativeTitle: '负面提示',
       negativePlaceholder: '补充不希望出现的内容，例如模糊、水印、畸形手部...',
       quickCountLabel: '张数',
@@ -4826,9 +4836,14 @@ export default {
       }
     },
     profiles: {
-      openaiImageApi: 'OpenAI Image API',
-      openaiResponses: 'OpenAI Responses API',
-      sub2apiCompatible: 'Sub2API / Sora 兼容协议'
+      openaiImageApi: 'OpenAI 图片接口（/images/generations）',
+      openaiResponses: 'OpenAI Responses（/responses）',
+      sub2apiCompatible: 'Sora 聊天兼容（/chat/completions）'
+    },
+    profileDescriptions: {
+      openaiImageApi: '适合 gpt-image-1、gpt-image-1.5、gpt-image-2 这类图片模型，也是大多数 OpenAI 兼容中转的正确选择。',
+      openaiResponses: '适合明确支持 /v1/responses + image_generation 工具的上游；通常一次只生成一张。',
+      sub2apiCompatible: '只适合旧版 Sora 聊天兼容后端，会请求 /chat/completions；如果上游返回 gpt-image 模型，请不要选这个。'
     },
     currentSiteProfiles: {
       sub2apiCompatible: {
@@ -4865,6 +4880,10 @@ export default {
       promptCompatibilityApplied: '已使用上游兼容版提示词生成，原提示词仍保留在历史中。',
       generatedCount: '已生成 {count} 张图片。',
       batchGeneratedPartial: '已生成 {done}/{total} 张，其中 {failed} 张失败。',
+      historySaveFailed: '图片已生成，但本地历史保存失败。',
+      historySaveFailedMessage: '当前图片还在工作区里，请先下载保存；刷新或关闭页面后可能不会保留。',
+      localStorageMayBeEvicted: '浏览器没有授予持久化存储权限，本地历史仍可用，但在清理站点数据或空间紧张时可能被移除。',
+      localOriginIsolationWarning: '本地历史按访问地址隔离。建议固定使用同一个地址，例如 http://localhost:3000，避免和 127.0.0.1 或局域网 IP 混用。',
       upstreamCompatibilityConfigure: '请先在提示词模型面板配置 Base URL、API Key 和模型名。',
       upstreamCompatibilityBusy: '提示词模型正在处理，请稍后再试。',
       promptCompatibilityFailed: '风控兼容重写失败',
