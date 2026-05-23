@@ -4661,6 +4661,10 @@ export default {
       externalBrowser: {
         label: 'Browser Direct',
         description: 'Use direct browser requests when the provider allows CORS.'
+      },
+      gptImagePlayground: {
+        label: 'Native 4K',
+        description: 'Calculate size using gpt-image-playground rules and request native 4K upstream.'
       }
     },
     profiles: {
@@ -4752,7 +4756,8 @@ export default {
       providerLabels: {
         sub2api: 'Sub2API',
         externalBrowser: 'Browser Direct',
-        externalRelay: 'Relay'
+        externalRelay: 'Relay',
+        gptImagePlayground: 'Native 4K'
       }
     },
     sidebar: {

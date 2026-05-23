@@ -38,33 +38,6 @@
         </div>
 
         <div class="studio-header-actions">
-          <div ref="releasePanelRef" class="studio-release-popover">
-            <button
-              type="button"
-              class="studio-release-trigger"
-              :class="{ 'is-open': releasePanelOpen }"
-              :title="currentRelease.title"
-              @click.stop="releasePanelOpen = !releasePanelOpen"
-            >
-              <Icon name="gift" size="sm" />
-              <span>{{ currentRelease.version }}</span>
-            </button>
-
-            <transition name="studio-popover">
-              <div v-if="releasePanelOpen" class="studio-release-panel">
-                <div class="studio-release-head">
-                  <div>
-                    <p class="studio-release-title">{{ currentRelease.title }}</p>
-                    <p class="studio-release-subtitle">{{ currentRelease.subtitle }}</p>
-                  </div>
-                  <span class="studio-release-date">{{ currentRelease.date }}</span>
-                </div>
-                <ul class="studio-release-list">
-                  <li v-for="item in currentRelease.items" :key="item">{{ item }}</li>
-                </ul>
-              </div>
-            </transition>
-          </div>
           <div class="studio-header-pill" :class="`tone-${headerStatusTone}`">
             <span class="studio-pill-dot" :class="{ 'is-pulsing': generating }"></span>
             <div class="studio-pill-stack">
@@ -221,8 +194,55 @@
             </transition>
           </div>
           <LocaleSwitcher />
-          <div class="studio-avatar">
-            <Icon name="userCircle" size="md" />
+          <div ref="releasePanelRef" class="studio-avatar-popover">
+            <button
+              type="button"
+              class="studio-avatar"
+              :title="locale === 'zh' ? '我的菜单' : 'My menu'"
+              @click.stop="toggleAvatarMenu"
+            >
+              <Icon name="userCircle" size="md" />
+            </button>
+
+            <transition name="studio-popover">
+              <div v-if="avatarMenuOpen" class="studio-avatar-menu">
+                <button
+                  type="button"
+                  class="studio-avatar-menu-item"
+                  @click.stop="openReleasePanelFromAvatar"
+                >
+                  <span class="studio-avatar-menu-icon">
+                    <Icon name="gift" size="sm" />
+                  </span>
+                  <span>{{ currentRelease.title }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="studio-avatar-menu-item"
+                  @click.stop="openGitHubProject"
+                >
+                  <span class="studio-avatar-menu-icon">
+                    <Icon name="externalLink" size="sm" />
+                  </span>
+                  <span>{{ locale === 'zh' ? 'GitHub 项目地址' : 'GitHub Project' }}</span>
+                </button>
+              </div>
+            </transition>
+
+            <transition name="studio-popover">
+              <div v-if="releasePanelOpen" class="studio-release-panel is-avatar-release">
+                <div class="studio-release-head">
+                  <div>
+                    <p class="studio-release-title">{{ currentRelease.title }}</p>
+                    <p class="studio-release-subtitle">{{ currentRelease.subtitle }}</p>
+                  </div>
+                  <span class="studio-release-date">{{ currentRelease.date }}</span>
+                </div>
+                <ul class="studio-release-list">
+                  <li v-for="item in currentRelease.items" :key="item">{{ item }}</li>
+                </ul>
+              </div>
+            </transition>
           </div>
         </div>
       </header>
@@ -1507,6 +1527,9 @@
                   </button>
 
                   <div class="studio-workbench-tile-actions">
+                    <span class="studio-workbench-drag-hotzone" aria-hidden="true">
+                      <Icon name="grid" size="xs" />
+                    </span>
                     <button
                       type="button"
                       class="studio-workbench-icon"
@@ -1523,10 +1546,6 @@
                     >
                       <Icon :name="selectedTileIds.includes(tile.id) ? 'check' : 'plus'" size="xs" />
                     </button>
-                    <span class="studio-workbench-drag-pill">
-                      <Icon name="grid" size="xs" />
-                      {{ t('imageStudio.workbench.dragHandle') }}
-                    </span>
                   </div>
                 </article>
               </div>
@@ -1581,6 +1600,8 @@
                 :seed-copy-title="historySeedCopyTitle(item)"
                 :file-size-text="historyFileSizeLabel(item)"
                 :format="historyFormatLabel(item)"
+                :output-mode="item.outputMode"
+                :output-mode-title="outputModeLabel(item.outputMode)"
                 :restore-title="t('imageStudio.buttons.restore')"
                 :delete-title="t('imageStudio.buttons.delete')"
                 :tooltip-style="studioAppearance.tooltipStyle"
@@ -2418,6 +2439,7 @@ import {
 import type { ImageStudioBatchProgress, ImageStudioGenerationOptions } from '@/api/imageStudio'
 import { useImageStudioAppearance } from '@/composables/useImageStudioAppearance'
 import { useImageStudioPreferences } from '@/composables/useImageStudioPreferences'
+import { calculateGptImagePlaygroundSize } from '@/utils/gptImagePlaygroundSize'
 import {
   clearImageStudioHistory,
   deleteImageStudioHistoryItem,
@@ -2456,7 +2478,8 @@ const LIGHTBOX_ZOOM_MIN = 1
 const LIGHTBOX_ZOOM_MAX = 4
 const LIGHTBOX_ZOOM_STEP = 0.35
 const PROMPT_LIBRARY_IMAGE_MAX_BYTES = 20 * 1024 * 1024
-const IMAGE_STUDIO_RELEASE_VERSION = 'v1.3.0'
+const IMAGE_STUDIO_RELEASE_VERSION = 'v1.3.1'
+const GITHUB_PROJECT_URL = 'https://github.com/ywhgh/image-studio-slim'
 
 interface WorkspaceSyncOptions {
   prioritizedTileIds?: string[]
@@ -2776,6 +2799,7 @@ const LIGHTBOX_LONG_PRESS_MS = 420
 const comparePosition = ref(50)
 const compareViewMode = ref<'side-by-side' | 'slider'>('side-by-side')
 const selectedStylePresetId = ref('default')
+const avatarMenuOpen = ref(false)
 const releasePanelOpen = ref(false)
 const releasePanelRef = ref<HTMLElement | null>(null)
 const appearancePanelOpen = ref(false)
@@ -2837,6 +2861,23 @@ const currentRelease = computed<ImageStudioReleaseNotes>(() => {
     ],
   }
 })
+
+function toggleAvatarMenu() {
+  avatarMenuOpen.value = !avatarMenuOpen.value
+  if (avatarMenuOpen.value) {
+    releasePanelOpen.value = false
+  }
+}
+
+function openReleasePanelFromAvatar() {
+  avatarMenuOpen.value = false
+  releasePanelOpen.value = true
+}
+
+function openGitHubProject() {
+  avatarMenuOpen.value = false
+  window.open(GITHUB_PROJECT_URL, '_blank', 'noopener,noreferrer')
+}
 
 function translateLanguageName(code: TranslateLang): string {
   switch (code) {
@@ -3113,6 +3154,11 @@ const providerModes = computed(() => [
     label: t('imageStudio.providerModes.externalBrowser.label'),
     description: t('imageStudio.providerModes.externalBrowser.description'),
   },
+  {
+    value: 'gpt-image-playground' as const,
+    label: t('imageStudio.providerModes.gptImagePlayground.label'),
+    description: t('imageStudio.providerModes.gptImagePlayground.description'),
+  },
 ])
 
 const accentPalette = {
@@ -3344,6 +3390,8 @@ const isCurrentSiteChatgpt2Api = computed(() => (
   preferences.providerMode === 'sub2api' && preferences.currentSiteProfile === 'chatgpt2api'
 ))
 
+const isGptImagePlaygroundMode = computed(() => preferences.providerMode === 'gpt-image-playground')
+
 const externalImageControlsVisible = computed(() => (
   preferences.providerMode !== 'sub2api' || isCurrentSiteChatgpt2Api.value
 ))
@@ -3444,6 +3492,10 @@ function resolveNativeFourKSize(aspectRatio: string): string {
 }
 
 function resolveWorkspaceImageSize(preset: ImageStudioResolutionPreset): string {
+  if (isGptImagePlaygroundMode.value) {
+    const tier = preset === '2k' ? '2K' : preset === '4k' ? '4K' : '1K'
+    return calculateGptImagePlaygroundSize(tier, preferences.aspectRatio)
+  }
   if (preset === '4k') {
     return resolveNativeFourKSize(preferences.aspectRatio)
   }
@@ -3494,9 +3546,9 @@ function resolveSuperFourKSize(aspectRatio: string): string {
 }
 
 const native4kSize = computed(() => resolveWorkspaceImageSize('4k'))
-const super4kAvailable = computed(() => !!resolveSuperFourKSize(preferences.aspectRatio))
+const super4kAvailable = computed(() => !isGptImagePlaygroundMode.value && !!resolveSuperFourKSize(preferences.aspectRatio))
 const super4kTargetSize = computed(() => (
-  super4kEnabled.value ? resolveSuperFourKSize(preferences.aspectRatio) : ''
+  super4kEnabled.value && super4kAvailable.value ? resolveSuperFourKSize(preferences.aspectRatio) : ''
 ))
 
 const super4kTitle = computed(() => {
@@ -3880,8 +3932,15 @@ function getProbeErrorStatus(error: unknown): number | undefined {
   return typeof status === 'number' ? status : undefined
 }
 
+function isPrivateUpstreamBlockedError(error: unknown): boolean {
+  return /private\/loopback|private.*hosts|loopback hosts|ALLOW_PRIVATE_UPSTREAM|INVALID_BASE_URL/i.test(errorMessageText(error))
+}
+
 function shouldUseRelayProbeError(error: unknown): boolean {
   const status = getProbeErrorStatus(error)
+  if (isPrivateUpstreamBlockedError(error)) {
+    return false
+  }
   if (!status || status === 0 || status === 404) {
     return false
   }
@@ -4957,6 +5016,8 @@ function providerLabel(mode: ImageStudioProviderMode): string {
   switch (mode) {
     case 'sub2api':
       return t('imageStudio.history.providerLabels.sub2api')
+    case 'gpt-image-playground':
+      return t('imageStudio.history.providerLabels.gptImagePlayground')
     case 'external-browser':
       return t('imageStudio.history.providerLabels.externalBrowser')
     default:
@@ -5105,6 +5166,16 @@ function changeProviderMode(mode: ImageStudioProviderMode) {
     return
   }
 
+  if (mode === 'gpt-image-playground') {
+    preferences.profile = 'openai-image-api'
+    preferences.model = 'gpt-image-2'
+    preferences.resolutionPreset = '4k'
+    if (!preferences.externalBaseUrl.trim()) {
+      preferences.externalBaseUrl = 'https://api.openai.com/v1'
+    }
+    return
+  }
+
   if (preferences.profile === 'sub2api-sora-compatible') {
     preferences.profile = 'openai-image-api'
   }
@@ -5211,9 +5282,7 @@ function historyTimingLabel(item: ImageStudioHistoryItem): string {
 }
 
 function historyResolutionLabel(item: ImageStudioHistoryItem): string {
-  const size = item.requestedSize?.trim() || item.resolutionPreset?.toUpperCase() || '-'
-  const mode = outputModeLabel(item.outputMode)
-  return mode ? `${size} · ${mode}` : size
+  return item.requestedSize?.trim() || item.resolutionPreset?.toUpperCase() || '-'
 }
 
 function historyFormatLabel(item: ImageStudioHistoryItem): string {
@@ -6091,6 +6160,7 @@ function handleStudioTitleTooltipFocusOut(event: FocusEvent): void {
 function handleDocumentClick(event: MouseEvent) {
   const target = event.target as Node
   if (releasePanelRef.value && !releasePanelRef.value.contains(target)) {
+    avatarMenuOpen.value = false
     releasePanelOpen.value = false
   }
   if (appearancePanelRef.value && !appearancePanelRef.value.contains(target)) {
@@ -6457,8 +6527,11 @@ async function ensureResultBlob(result: NormalizedImageResult): Promise<Blob> {
   }
 
   const sourceUrl = result.originalUrl || result.url
-  if (sourceUrl.startsWith('data:')) {
+  if (sourceUrl.startsWith('data:') || sourceUrl.startsWith('blob:')) {
     const response = await fetch(sourceUrl)
+    if (!response.ok) {
+      throw new Error(t('imageStudio.toasts.downloadFailed'))
+    }
     const blob = await response.blob()
     result.blob = blob
     result.mimeType = result.mimeType || blob.type
@@ -6492,7 +6565,7 @@ function triggerBlobDownload(blob: Blob, filename: string) {
   anchor.href = url
   anchor.download = filename
   anchor.click()
-  URL.revokeObjectURL(url)
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 function parsePixelSize(value: string): { width: number; height: number } | null {
@@ -6612,7 +6685,70 @@ async function resizeResultToPixelSize(
   }
 }
 
+async function readBlobImageDimensions(blob: Blob): Promise<{ width: number; height: number }> {
+  const bitmap = await createImageBitmap(blob)
+  try {
+    return {
+      width: bitmap.width,
+      height: bitmap.height,
+    }
+  } finally {
+    bitmap.close()
+  }
+}
+
+async function auditGeneratedImageDimensions(results: NormalizedImageResult[], context: {
+  model: string
+  source: string
+}) {
+  if (!results.length) {
+    return
+  }
+
+  const requestedSize = resolvedSize.value || ''
+  const upstreamSize = upstreamGenerationSize.value || ''
+  const requestedPixels = parsePixelSize(requestedSize)
+
+  try {
+    const items = await Promise.all(results.map(async (result) => {
+      const blob = await ensureResultBlob(result)
+      const dimensions = await readBlobImageDimensions(blob)
+      const actualSize = `${dimensions.width}x${dimensions.height}`
+      const localResizeApplied = Boolean(result.originalUrl)
+      const nativeRequestMatched = Boolean(
+        requestedPixels &&
+        dimensions.width === requestedPixels.width &&
+        dimensions.height === requestedPixels.height &&
+        !localResizeApplied
+      )
+
+      return {
+        filename: result.filename,
+        requestedSize,
+        upstreamSize,
+        actualSize,
+        nativeRequestMatched,
+        localResizeApplied,
+        mode: preferences.providerMode,
+        profile: isCurrentSiteChatgpt2Api.value ? 'chatgpt2api' : preferences.profile,
+        model: context.model,
+        source: context.source,
+        mimeType: blob.type || result.mimeType || '',
+        bytes: blob.size,
+      }
+    }))
+
+    console.info('[image-studio] generation output audit', items)
+  } catch (error) {
+    console.warn('[image-studio] generation output audit failed', error)
+  }
+}
+
 async function applyOutputResolutionPreset(results: NormalizedImageResult[]): Promise<NormalizedImageResult[]> {
+  if (isGptImagePlaygroundMode.value) {
+    return results
+  }
+
   if (!super4kTargetSize.value && (!supportsCustomResolution.value || preferences.resolutionPreset === 'standard')) {
     return results
   }
@@ -7061,7 +7197,7 @@ async function persistCurrentResults(
     requestedSize: resolvedSize.value || undefined,
     outputMode: super4kTargetSize.value
       ? 'super-4k'
-      : (preferences.resolutionPreset === 'standard' ? 'native' : 'upscaled'),
+      : (isGptImagePlaygroundMode.value || preferences.resolutionPreset === 'standard' ? 'native' : 'upscaled'),
     quality: preferences.quality,
     background: preferences.background,
     format: preferences.format,
@@ -7318,11 +7454,23 @@ function classifyGenerationError(error: unknown): GenerationErrorDescription {
 }
 
 function errorMessageText(error: unknown): string {
-  return error instanceof Error
-    ? error.message
-    : typeof (error as { message?: unknown })?.message === 'string'
-      ? String((error as { message?: unknown }).message)
-      : ''
+  if (!error) return ''
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  if (typeof error !== 'object') return ''
+
+  const record = error as Record<string, unknown>
+  return [
+    record.message,
+    record.msg,
+    record.detail,
+    record.error,
+    record.err_code,
+    record.code,
+  ]
+    .filter((value): value is string | number => typeof value === 'string' || typeof value === 'number')
+    .map((value) => String(value))
+    .join(' ')
 }
 
 function isRetryableImageTransportError(error: unknown): boolean {
@@ -7346,16 +7494,32 @@ function canFallbackToStandardResolution(error: unknown): boolean {
   )
 }
 
+function showPrivateUpstreamBrowserFallbackWarning() {
+  appStore.showWarning(locale.value === 'zh'
+    ? '后端中转默认禁止访问私网地址，已改用浏览器直连。若要保持后端中转，请设置 ALLOW_PRIVATE_UPSTREAM=true 并重启后端。'
+    : 'Relay mode blocks private upstream hosts by default, so browser direct mode was used. Set ALLOW_PRIVATE_UPSTREAM=true and restart the backend to keep using relay mode.')
+}
+
 async function generateWithExternalProvider(
   model: string,
   requestPromptText: string,
   imageInputs: string[],
   generationOptions: ImageStudioGenerationOptions
 ): Promise<NormalizedImageResult[]> {
-  const runRelay = (sizeOverride?: string) => generateImageWithExternalRelay(
-    createExternalRequest(model, requestPromptText, imageInputs, sizeOverride),
-    generationOptions
-  )
+  const runRelay = async (sizeOverride?: string) => {
+    const request = createExternalRequest(model, requestPromptText, imageInputs, sizeOverride)
+    try {
+      return await generateImageWithExternalRelay(request, generationOptions)
+    } catch (error) {
+      if (isPrivateUpstreamBlockedError(error)) {
+        if (!isGptImagePlaygroundMode.value) {
+          showPrivateUpstreamBrowserFallbackWarning()
+        }
+        return await generateImageWithExternalBrowser(request, generationOptions)
+      }
+      throw error
+    }
+  }
 
   const runBrowser = async (sizeOverride?: string) => {
     try {
@@ -7578,6 +7742,10 @@ async function generateImages(options: {
       }
 
       const preparedResults = await applyOutputResolutionPreset(uniqueResults)
+      await auditGeneratedImageDimensions(preparedResults, {
+        model: resolvedModel,
+        source: 'preview',
+      })
       preparedResults.forEach((result) => {
         displayedResultIds.add(result.id)
         displayedResults.push(result)
@@ -8180,19 +8348,30 @@ async function downloadSelectedTiles() {
     return
   }
 
-  try {
-    for (const [index, tile] of selectedTiles.value.entries()) {
+  let downloadedCount = 0
+  let lastError: unknown = null
+  for (const [index, tile] of selectedTiles.value.entries()) {
+    try {
       const blob = await ensureResultBlob(tile.result)
       triggerBlobDownload(blob, tile.result.filename)
+      downloadedCount += 1
       if (index < selectedTiles.value.length - 1) {
         await new Promise((resolve) => window.setTimeout(resolve, 100))
       }
+    } catch (error) {
+      lastError = error
     }
-
-    appStore.showSuccess(t('imageStudio.toasts.selectedDownloaded', { count: selectedTiles.value.length }))
-  } catch (error) {
-    appStore.showError(error instanceof Error ? error.message : t('imageStudio.toasts.downloadFailed'))
   }
+
+  if (downloadedCount === selectedTiles.value.length) {
+    appStore.showSuccess(t('imageStudio.toasts.selectedDownloaded', { count: downloadedCount }))
+    return
+  }
+  if (downloadedCount > 0) {
+    appStore.showWarning(t('imageStudio.toasts.selectedDownloaded', { count: downloadedCount }))
+    return
+  }
+  appStore.showError(lastError instanceof Error ? lastError.message : t('imageStudio.toasts.downloadFailed'))
 }
 
 async function copyCurrentTileImage() {
@@ -8586,7 +8765,7 @@ onBeforeUnmount(() => {
   @apply flex flex-wrap items-center gap-2;
 }
 
-.studio-release-popover {
+.studio-avatar-popover {
   @apply relative;
 }
 
@@ -8662,6 +8841,67 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   background: var(--theme-color);
   box-shadow: 0 0 0 4px rgba(var(--theme-color-rgb), 0.1);
+}
+
+.studio-avatar-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 82;
+  --studio-popover-shift-x: 0px;
+  display: grid;
+  width: min(240px, calc(100vw - 2rem));
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--theme-color) 18%, var(--studio-border));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--studio-card-background) 92%, transparent);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.14), 0 8px 22px rgba(var(--theme-color-rgb), 0.08);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.studio-avatar-menu-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  padding: 9px 10px;
+  color: var(--studio-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: left;
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.studio-avatar-menu-item:hover {
+  background: color-mix(in srgb, var(--theme-color) 10%, transparent);
+  color: var(--studio-accent-deep);
+  transform: translateX(2px);
+}
+
+.studio-avatar-menu-item span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-avatar-menu-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--theme-color) 9%, var(--studio-soft-background));
+  color: var(--studio-accent-deep);
 }
 
 .studio-header-pill {
@@ -8778,6 +9018,14 @@ onBeforeUnmount(() => {
 
 .studio-avatar {
   @apply flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-700;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.studio-avatar:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
 }
 
 .studio-appearance-popover {
@@ -11160,6 +11408,7 @@ onBeforeUnmount(() => {
 
 .studio-workbench-panel {
   @apply gap-0;
+  overflow: hidden;
 }
 
 .studio-workbench-header,
@@ -11183,7 +11432,9 @@ onBeforeUnmount(() => {
 }
 
 .studio-workbench-toolbar {
-  @apply mt-4;
+  @apply mt-3 rounded-2xl px-3 py-3;
+  border: 1px solid var(--studio-border);
+  background: color-mix(in srgb, var(--studio-card-background) 82%, transparent);
 }
 
 .studio-workbench-toolbar-title {
@@ -11201,12 +11452,29 @@ onBeforeUnmount(() => {
 }
 
 .studio-workbench-surface {
-  @apply relative mt-4 overflow-auto rounded-[24px] border border-slate-200;
-  min-height: 320px;
-  max-height: 560px;
+  --studio-workbench-gap: 14px;
+  --studio-workbench-padding: 16px;
+  --studio-workbench-columns: 4;
+  @apply relative mt-4 overflow-y-auto overflow-x-hidden rounded-[24px] border border-slate-200;
+  min-height: 0;
+  max-height: min(
+    74vh,
+    calc(
+      ((100% - (var(--studio-workbench-padding) * 2) - (var(--studio-workbench-gap) * (var(--studio-workbench-columns) - 1))) / var(--studio-workbench-columns) * 3)
+      + (var(--studio-workbench-gap) * 2)
+      + (var(--studio-workbench-padding) * 2)
+    )
+  );
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   background:
     radial-gradient(circle at top left, color-mix(in srgb, var(--studio-accent) 16%, transparent) 0%, transparent 28%),
     linear-gradient(180deg, color-mix(in srgb, var(--studio-card-background) 92%, white 8%) 0%, color-mix(in srgb, var(--studio-soft-background) 92%, transparent) 100%);
+}
+
+.studio-workbench-surface::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .studio-workbench-surface.is-selecting {
@@ -11218,8 +11486,12 @@ onBeforeUnmount(() => {
 }
 
 .studio-workbench-grid {
-  @apply grid gap-3 p-4;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  display: grid;
+  gap: var(--studio-workbench-gap);
+  padding: var(--studio-workbench-padding);
+  grid-template-columns: repeat(var(--studio-workbench-columns), minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  align-items: start;
 }
 
 .studio-workbench-tile {
@@ -11278,7 +11550,7 @@ onBeforeUnmount(() => {
 }
 
 .studio-workbench-tile-actions {
-  @apply absolute left-2 right-2 top-2 z-[2] flex items-center justify-between gap-2;
+  @apply absolute left-2 right-2 top-2 z-[2] flex items-center justify-end gap-2;
 }
 
 .studio-workbench-icon {
@@ -11286,11 +11558,13 @@ onBeforeUnmount(() => {
   background-color: rgba(2, 6, 23, 0.68);
 }
 
-.studio-workbench-drag-pill {
-  @apply inline-flex items-center gap-1 rounded-full border border-white/30 px-2.5 py-1 text-[11px] font-medium text-white;
-  background-color: rgba(2, 6, 23, 0.62);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+.studio-workbench-drag-hotzone {
+  @apply absolute inset-0 cursor-grab text-transparent;
+  z-index: -1;
+}
+
+.studio-workbench-tile:active .studio-workbench-drag-hotzone {
+  cursor: grabbing;
 }
 
 .studio-workbench-marquee {
@@ -11374,14 +11648,43 @@ onBeforeUnmount(() => {
 }
 
 .studio-history-list {
-  margin-top: 10px;
+  margin: 10px -18px 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  width: var(--studio-history-card-width);
-  max-width: 100%;
-  padding: 0;
-  overflow: visible;
+  box-sizing: border-box;
+  width: calc(var(--studio-history-card-width) + 36px);
+  max-width: calc(100% + 36px);
+  max-height: 632px;
+  padding: 18px 18px 30px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scroll-padding: 18px 18px 30px;
+  scroll-snap-type: y proximity;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.studio-history-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.studio-history-list :deep(.glass-card) {
+  scroll-snap-align: start;
+}
+
+@media (max-width: 1280px) {
+  .studio-history-list {
+    max-height: 596px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .studio-history-list {
+    max-height: min(72vh, 632px);
+  }
 }
 
 .studio-history-thumb-wrap {
@@ -12385,19 +12688,11 @@ onBeforeUnmount(() => {
     --studio-popover-shift-x: -50%;
   }
 
-  .studio-release-popover {
-    @apply flex-1;
-  }
-
-  .studio-release-trigger {
-    @apply w-full justify-center;
-  }
-
   .studio-release-panel {
-    left: 50%;
-    right: auto;
+    left: auto;
+    right: 0;
     width: min(340px, calc(100vw - 1.25rem));
-    --studio-popover-shift-x: -50%;
+    --studio-popover-shift-x: 0px;
   }
 
   .studio-theme-trigger span {
@@ -12454,12 +12749,8 @@ onBeforeUnmount(() => {
   }
 
   .studio-workbench-surface {
+    --studio-workbench-columns: 2;
     min-height: 260px;
-    max-height: 420px;
-  }
-
-  .studio-workbench-drag-pill {
-    @apply hidden;
   }
 }
 
@@ -12917,43 +13208,20 @@ onBeforeUnmount(() => {
 
 
 .studio-workbench-grid {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 0.75rem;
-  padding: 1rem;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-gutter: stable;
-  scroll-snap-type: x proximity;
-  scroll-behavior: smooth;
-  grid-template-columns: none;
-}
-
-.studio-workbench-grid > .studio-workbench-tile {
-  flex: 0 0 168px;
-  scroll-snap-align: start;
-}
-
-.studio-workbench-grid::-webkit-scrollbar {
-  height: 8px;
-}
-
-.studio-workbench-grid::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.studio-workbench-grid::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--studio-accent) 30%, transparent);
-  border-radius: 999px;
+  display: grid;
+  gap: var(--studio-workbench-gap, 14px);
+  padding: var(--studio-workbench-padding, 16px);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
 }
 
 @media (max-width: 600px) {
-  .studio-workbench-grid {
-    flex-wrap: wrap;
-    overflow-x: visible;
+  .studio-workbench-surface {
+    --studio-workbench-columns: 2;
   }
-  .studio-workbench-grid > .studio-workbench-tile {
-    flex: 1 1 140px;
+
+  .studio-workbench-grid {
+    grid-template-columns: repeat(var(--studio-workbench-columns), minmax(0, 1fr));
   }
 }
 

@@ -62,7 +62,17 @@
       </div>
 
       <div class="content-bottom">
-        <span class="format">{{ format }}</span>
+        <span class="format">
+          {{ format }}
+          <span
+            v-if="outputMode"
+            class="output-mode-dot"
+            :class="`tone-${outputModeTone}`"
+            :title="outputModeTitle"
+            :aria-label="outputModeTitle"
+            role="img"
+          ></span>
+        </span>
         <div class="actions">
           <button
             type="button"
@@ -92,6 +102,8 @@ import Icon from '@/components/icons/Icon.vue'
 import ImageStudioTextTooltip from '@/components/image-studio/ImageStudioTextTooltip.vue'
 
 type PreviewOrientation = 'landscape' | 'portrait' | 'square' | 'unknown'
+type OutputMode = 'native' | 'upscaled' | 'super-4k'
+type OutputModeTone = 'native' | 'upscaled' | 'super4k'
 type TooltipStyle = 'outline' | 'plain' | 'soft'
 
 const props = withDefaults(defineProps<{
@@ -109,6 +121,8 @@ const props = withDefaults(defineProps<{
   seedCopyTitle: string
   fileSizeText: string
   format: string
+  outputMode?: OutputMode
+  outputModeTitle?: string
   restoreTitle: string
   deleteTitle: string
   tooltipStyle?: TooltipStyle
@@ -119,6 +133,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   styleLabel: '',
   seed: '',
+  outputModeTitle: '',
   tooltipStyle: 'outline',
   tooltipAccent: '#2563eb',
   tooltipAccentDeep: '#1d4ed8',
@@ -161,6 +176,18 @@ const posterPositionClass = computed(() => (
     ? 'is-preview-portrait'
     : 'is-preview-centered'
 ))
+
+const outputModeTone = computed<OutputModeTone>(() => {
+  switch (props.outputMode) {
+    case 'super-4k':
+      return 'super4k'
+    case 'upscaled':
+      return 'upscaled'
+    case 'native':
+    default:
+      return 'native'
+  }
+})
 
 defineEmits<{
   select: []
@@ -322,7 +349,7 @@ defineEmits<{
   left: 6px;
   z-index: 2;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 3px;
   max-width: calc(100% - 12px);
   pointer-events: none;
@@ -507,7 +534,40 @@ defineEmits<{
   min-width: 0;
 }
 
+.output-mode-dot {
+  position: relative;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  box-shadow:
+    0 0 0 3px var(--output-mode-halo, rgba(16, 185, 129, 0.12)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  background: var(--output-mode-color, #10b981);
+}
+
+.output-mode-dot.tone-native {
+  --output-mode-color: #10b981;
+  --output-mode-halo: rgba(16, 185, 129, 0.14);
+}
+
+.output-mode-dot.tone-upscaled {
+  --output-mode-color: #f59e0b;
+  --output-mode-halo: rgba(245, 158, 11, 0.16);
+}
+
+.output-mode-dot.tone-super4k {
+  --output-mode-color: #3b82f6;
+  --output-mode-halo: rgba(59, 130, 246, 0.16);
+}
+
 .format {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
   color: var(--theme-color-deep);
   font-size: 12px;
   font-weight: 600;

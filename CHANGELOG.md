@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.3.1 - 2026-05-23
+
+Patch release for native 4K generation, workspace layout, and local result recovery:
+
+- Added a separate native 4K generation option based on the `gpt_image_playground` size-budget logic.
+- Improved Image Studio history cards, hidden-scroll history/workbench browsing, and avatar-hosted update notes.
+- Fixed generated `blob:` images failing to download by resolving local browser URLs before falling back to backend download.
+- Fixed oversized local history records by avoiding duplicated `data:` / `blob:` URLs in IndexedDB payloads.
+- Improved IndexedDB save completion handling so history writes only succeed after the transaction completes.
+
+Validation:
+
+- `pnpm typecheck`
+- `pnpm build`
+
 ## v1.3.0 - 2026-05-23
 
 Feature release for prompt-library storage, relay compatibility, and generation reliability:

@@ -140,12 +140,24 @@ function withStore<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => I
       const tx = db.transaction(STORE_NAME, mode)
       const store = tx.objectStore(STORE_NAME)
       const request = fn(store)
+      let result: T
 
-      request.onerror = () => reject(request.error)
-      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => {
+        reject(request.error)
+      }
+      request.onsuccess = () => {
+        result = request.result
+      }
 
-      tx.oncomplete = () => db.close()
+      tx.oncomplete = () => {
+        db.close()
+        resolve(result)
+      }
       tx.onerror = () => {
+        db.close()
+        reject(tx.error)
+      }
+      tx.onabort = () => {
         db.close()
         reject(tx.error)
       }
@@ -158,13 +170,18 @@ function toStoredResult(result: NormalizedImageResult): StoredImageStudioResult 
     return null
   }
 
+  const originalUrl = result.originalUrl || result.url
+  const storableOriginalUrl = originalUrl.startsWith('data:') || originalUrl.startsWith('blob:')
+    ? undefined
+    : originalUrl
+
   return {
     id: result.id,
     source: result.source,
     mimeType: result.mimeType,
     revisedPrompt: result.revisedPrompt,
     filename: result.filename,
-    originalUrl: result.originalUrl || result.url,
+    originalUrl: storableOriginalUrl,
     blob: result.blob,
   }
 }

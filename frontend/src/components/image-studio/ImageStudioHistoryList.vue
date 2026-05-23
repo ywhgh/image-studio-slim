@@ -97,6 +97,8 @@ function providerLabel(mode: ImageStudioProviderMode): string {
   switch (mode) {
     case 'sub2api':
       return t('imageStudio.history.providerLabels.sub2api')
+    case 'gpt-image-playground':
+      return t('imageStudio.history.providerLabels.gptImagePlayground')
     case 'external-browser':
       return t('imageStudio.history.providerLabels.externalBrowser')
     default:

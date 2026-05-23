@@ -1,4 +1,4 @@
-export type ImageStudioProviderMode = 'sub2api' | 'external-relay' | 'external-browser'
+export type ImageStudioProviderMode = 'sub2api' | 'external-relay' | 'external-browser' | 'gpt-image-playground'
 
 export type ImageStudioProtocolProfile =
   | 'openai-image-api'

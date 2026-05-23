@@ -4833,6 +4833,10 @@ export default {
       externalBrowser: {
         label: '浏览器直连',
         description: '仅在上游允许 CORS 时使用浏览器直接请求。'
+      },
+      gptImagePlayground: {
+        label: '原生 4K',
+        description: '按 gpt-image-playground 规则计算尺寸，直接请求上游原生 4K。'
       }
     },
     profiles: {
@@ -4924,7 +4928,8 @@ export default {
       providerLabels: {
         sub2api: 'Sub2API',
         externalBrowser: '浏览器直连',
-        externalRelay: '中转'
+        externalRelay: '中转',
+        gptImagePlayground: '原生 4K'
       }
     },
     sidebar: {
