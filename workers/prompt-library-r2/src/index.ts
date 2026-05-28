@@ -16,6 +16,24 @@ interface PromptRecord {
   createdAt: string
 }
 
+type PromptImageUpload = File
+
+interface PromptImagePayload {
+  size: number
+  mimeType: string
+  filename: string
+  body: ReadableStream | ArrayBuffer
+}
+
+interface PromptPayload {
+  title: string
+  description: string
+  prompt: string
+  category: string
+  removeImage: boolean
+  image?: PromptImagePayload
+}
+
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 const PROMPT_PREFIX = 'prompts/'
 const IMAGE_PREFIX = 'images/'
@@ -35,13 +53,18 @@ function corsHeaders(request?: Request, env?: Env): HeadersInit {
   const origin = request?.headers.get('Origin') || ''
   const configured = (env?.ALLOWED_ORIGINS || '*').split(',').map((item) => item.trim()).filter(Boolean)
   const allowAny = configured.length === 0 || configured.includes('*')
-  const allowedOrigin = allowAny ? '*' : configured.includes(origin) ? origin : configured[0]
-  return {
-    'Access-Control-Allow-Origin': allowedOrigin || '*',
-      'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+  const headers: Record<string, string> = {
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Prompt-Library-Token',
     'Access-Control-Max-Age': '86400',
+    'Vary': 'Origin',
   }
+  if (allowAny) {
+    headers['Access-Control-Allow-Origin'] = '*'
+  } else if (origin && configured.includes(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin
+  }
+  return headers
 }
 
 function readToken(request: Request): string {
@@ -73,6 +96,10 @@ function cleanText(value: FormDataEntryValue | null, fallback = ''): string {
   return typeof value === 'string' ? value.trim() : fallback
 }
 
+function cleanJsonText(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value.trim() : fallback
+}
+
 function objectKeyForPrompt(id: string): string {
   return `${PROMPT_PREFIX}${id}.json`
 }
@@ -92,6 +119,128 @@ function extensionForMimeType(mimeType: string): string {
       return '.avif'
     default:
       return '.bin'
+  }
+}
+
+function isPromptImageUpload(value: FormDataEntryValue | null): value is PromptImageUpload {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const candidate = value as Partial<PromptImageUpload>
+  return (
+    typeof candidate.size === 'number' &&
+    typeof candidate.type === 'string' &&
+    typeof candidate.stream === 'function'
+  )
+}
+
+function promptImageFilename(image: PromptImageUpload, fallback: string): string {
+  return typeof image.name === 'string' && image.name.trim()
+    ? image.name.trim()
+    : fallback
+}
+
+function arrayBufferFromBytes(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(buffer).set(bytes)
+  return buffer
+}
+
+function parseDataUrlImage(
+  value: unknown,
+  mimeType?: unknown,
+  filename?: unknown
+): PromptImagePayload | undefined {
+  if (typeof value !== 'string' || !value.trim()) {
+    return undefined
+  }
+
+  const match = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(value.trim())
+  if (!match) {
+    return undefined
+  }
+
+  const resolvedMimeType = cleanJsonText(mimeType, match[1] || 'application/octet-stream')
+  const rawData = match[3] || ''
+  let bytes: Uint8Array
+  if (match[2]) {
+    const binary = atob(rawData)
+    bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index)
+    }
+  } else {
+    bytes = new TextEncoder().encode(decodeURIComponent(rawData))
+  }
+
+  return {
+    size: bytes.byteLength,
+    mimeType: resolvedMimeType,
+    filename: cleanJsonText(filename, `preview${extensionForMimeType(resolvedMimeType)}`),
+    body: arrayBufferFromBytes(bytes),
+  }
+}
+
+async function readPromptPayload(request: Request): Promise<PromptPayload> {
+  const contentType = request.headers.get('Content-Type') || ''
+  if (contentType.toLowerCase().includes('application/json')) {
+    const body = await request.json<Record<string, unknown>>()
+    return {
+      title: cleanJsonText(body.title, 'Uploaded prompt'),
+      description: cleanJsonText(body.description),
+      prompt: cleanJsonText(body.prompt),
+      category: cleanJsonText(body.category),
+      removeImage: body.removeImage === true || body.removeImage === '1',
+      image: parseDataUrlImage(body.imageDataUrl, body.imageMimeType, body.imageFilename),
+    }
+  }
+
+  const form = await request.formData()
+  const image = form.get('image')
+  const imagePayload = isPromptImageUpload(image) && image.size > 0
+    ? {
+        size: image.size,
+        mimeType: image.type || 'application/octet-stream',
+        filename: promptImageFilename(image, `preview${extensionForMimeType(image.type || 'application/octet-stream')}`),
+        body: image.stream(),
+      }
+    : undefined
+
+  return {
+    title: cleanText(form.get('title'), 'Uploaded prompt'),
+    description: cleanText(form.get('description')),
+    prompt: cleanText(form.get('prompt')),
+    category: cleanText(form.get('category')),
+    removeImage: cleanText(form.get('removeImage')) === '1',
+    image: imagePayload,
+  }
+}
+
+function validatePromptImage(image: PromptImagePayload, request: Request, env: Env): Response | null {
+  if (!image.mimeType.startsWith('image/')) {
+    return json({ error: { code: 'invalid_image', message: 'image must be an image file.' } }, { status: 400 }, request, env)
+  }
+  if (image.size > MAX_IMAGE_BYTES) {
+    return json({ error: { code: 'image_too_large', message: 'image exceeds 20 MB.' } }, { status: 413 }, request, env)
+  }
+  return null
+}
+
+async function savePromptImage(
+  bucket: R2Bucket,
+  id: string,
+  image: PromptImagePayload
+): Promise<Pick<PromptRecord, 'imageKey' | 'imageMimeType' | 'imageFilename'>> {
+  const imageKey = `${IMAGE_PREFIX}${id}${extensionForMimeType(image.mimeType)}`
+  await bucket.put(imageKey, image.body, {
+    httpMetadata: {
+      contentType: image.mimeType,
+    },
+  })
+  return {
+    imageKey,
+    imageMimeType: image.mimeType,
+    imageFilename: image.filename,
   }
 }
 
@@ -128,41 +277,31 @@ async function listPrompts(request: Request, env: Env): Promise<Response> {
 }
 
 async function createPrompt(request: Request, env: Env): Promise<Response> {
-  const form = await request.formData()
-  const prompt = cleanText(form.get('prompt'))
-  if (!prompt) {
+  const payload = await readPromptPayload(request)
+  if (!payload.prompt) {
     return json({ error: { code: 'invalid_request', message: 'prompt is required.' } }, { status: 400 }, request, env)
   }
 
   const id = crypto.randomUUID()
-  const image = form.get('image')
   let imageKey: string | undefined
   let imageMimeType: string | undefined
   let imageFilename: string | undefined
 
-  if (image instanceof File && image.size > 0) {
-    if (!image.type.startsWith('image/')) {
-      return json({ error: { code: 'invalid_image', message: 'image must be an image file.' } }, { status: 400 }, request, env)
-    }
-    if (image.size > MAX_IMAGE_BYTES) {
-      return json({ error: { code: 'image_too_large', message: 'image exceeds 20 MB.' } }, { status: 413 }, request, env)
-    }
-    imageMimeType = image.type || 'application/octet-stream'
-    imageFilename = image.name || `preview${extensionForMimeType(imageMimeType)}`
-    imageKey = `${IMAGE_PREFIX}${id}${extensionForMimeType(imageMimeType)}`
-    await env.PROMPT_BUCKET.put(imageKey, image.stream(), {
-      httpMetadata: {
-        contentType: imageMimeType,
-      },
-    })
+  if (payload.image) {
+    const imageError = validatePromptImage(payload.image, request, env)
+    if (imageError) return imageError
+    const storedImage = await savePromptImage(env.PROMPT_BUCKET, id, payload.image)
+    imageKey = storedImage.imageKey
+    imageMimeType = storedImage.imageMimeType
+    imageFilename = storedImage.imageFilename
   }
 
   const record: PromptRecord = {
     id,
-    title: cleanText(form.get('title'), 'Uploaded prompt'),
-    description: cleanText(form.get('description')),
-    prompt,
-    category: cleanText(form.get('category')),
+    title: payload.title || 'Uploaded prompt',
+    description: payload.description,
+    prompt: payload.prompt,
+    category: payload.category,
     imageKey,
     imageMimeType,
     imageFilename,
@@ -184,51 +323,40 @@ async function updatePrompt(request: Request, env: Env, id: string): Promise<Res
     return json({ error: { code: 'not_found', message: 'prompt not found.' } }, { status: 404 }, request, env)
   }
 
-  const form = await request.formData()
-  const prompt = cleanText(form.get('prompt'))
-  if (!prompt) {
+  const payload = await readPromptPayload(request)
+  if (!payload.prompt) {
     return json({ error: { code: 'invalid_request', message: 'prompt is required.' } }, { status: 400 }, request, env)
   }
 
-  const image = form.get('image')
-  const removeImage = cleanText(form.get('removeImage')) === '1'
   let imageKey = existing.imageKey
   let imageMimeType = existing.imageMimeType
   let imageFilename = existing.imageFilename
 
-  if (removeImage && existing.imageKey) {
+  if (payload.removeImage && existing.imageKey) {
     await env.PROMPT_BUCKET.delete(existing.imageKey)
     imageKey = undefined
     imageMimeType = undefined
     imageFilename = undefined
   }
 
-  if (image instanceof File && image.size > 0) {
-    if (!image.type.startsWith('image/')) {
-      return json({ error: { code: 'invalid_image', message: 'image must be an image file.' } }, { status: 400 }, request, env)
-    }
-    if (image.size > MAX_IMAGE_BYTES) {
-      return json({ error: { code: 'image_too_large', message: 'image exceeds 20 MB.' } }, { status: 413 }, request, env)
-    }
+  if (payload.image) {
+    const imageError = validatePromptImage(payload.image, request, env)
+    if (imageError) return imageError
     if (existing.imageKey) {
       await env.PROMPT_BUCKET.delete(existing.imageKey)
     }
-    imageMimeType = image.type || 'application/octet-stream'
-    imageFilename = image.name || `preview${extensionForMimeType(imageMimeType)}`
-    imageKey = `${IMAGE_PREFIX}${id}${extensionForMimeType(imageMimeType)}`
-    await env.PROMPT_BUCKET.put(imageKey, image.stream(), {
-      httpMetadata: {
-        contentType: imageMimeType,
-      },
-    })
+    const storedImage = await savePromptImage(env.PROMPT_BUCKET, id, payload.image)
+    imageKey = storedImage.imageKey
+    imageMimeType = storedImage.imageMimeType
+    imageFilename = storedImage.imageFilename
   }
 
   const record: PromptRecord = {
     ...existing,
-    title: cleanText(form.get('title'), 'Uploaded prompt'),
-    description: cleanText(form.get('description')),
-    prompt,
-    category: cleanText(form.get('category')),
+    title: payload.title || 'Uploaded prompt',
+    description: payload.description,
+    prompt: payload.prompt,
+    category: payload.category,
     imageKey,
     imageMimeType,
     imageFilename,

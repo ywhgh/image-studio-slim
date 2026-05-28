@@ -17,6 +17,7 @@ function getDefaultPreferences(): ImageStudioPreferences {
     background: 'auto',
     format: 'png',
     externalBaseUrl: 'https://api.openai.com/v1',
+    externalRelayLocalUpscale: false,
   }
 }
 
@@ -52,6 +53,10 @@ export function useImageStudioPreferences() {
 
   if (!preferences.externalBaseUrl.trim()) {
     preferences.externalBaseUrl = 'https://api.openai.com/v1'
+  }
+
+  if (typeof preferences.externalRelayLocalUpscale !== 'boolean') {
+    preferences.externalRelayLocalUpscale = false
   }
 
   watch(

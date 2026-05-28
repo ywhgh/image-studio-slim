@@ -44,10 +44,14 @@ const router = createRouter({
 
 const navigationLoading = useNavigationLoadingState()
 
+function updateDocumentTitle(route = router.currentRoute.value): void {
+  const appStore = useAppStore()
+  document.title = resolveDocumentTitle(route.meta.title, appStore.siteName, route.meta.titleKey as string)
+}
+
 router.beforeEach((to, _from, next) => {
   navigationLoading.startNavigation()
-  const appStore = useAppStore()
-  document.title = resolveDocumentTitle(to.meta.title, appStore.siteName, to.meta.titleKey as string)
+  updateDocumentTitle(to)
   next()
 })
 
@@ -65,13 +69,28 @@ router.onError((error) => {
 
   if (isChunkLoadError) {
     const reloadKey = 'chunk_reload_attempted'
-    const lastReload = sessionStorage.getItem(reloadKey)
+    let lastReload = ''
+    try {
+      lastReload = sessionStorage.getItem(reloadKey) || ''
+    } catch {
+      lastReload = ''
+    }
     const now = Date.now()
     if (!lastReload || now - parseInt(lastReload, 10) > 10000) {
-      sessionStorage.setItem(reloadKey, now.toString())
+      try {
+        sessionStorage.setItem(reloadKey, now.toString())
+      } catch {
+        // Reload anyway; storage is only used to avoid a tight loop.
+      }
       window.location.reload()
     }
   }
 })
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('app-locale-changed', () => {
+    updateDocumentTitle()
+  })
+}
 
 export default router

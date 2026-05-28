@@ -3,7 +3,7 @@
     <button
       @click="toggleDropdown"
       :disabled="switching"
-      class="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
+      class="locale-switcher-trigger"
       :title="currentLocale?.name"
     >
       <span class="text-base">{{ currentLocale?.flag }}</span>
@@ -11,7 +11,7 @@
       <Icon
         name="chevronDown"
         size="xs"
-        class="text-gray-400 transition-transform duration-200"
+        class="locale-switcher-chevron"
         :class="{ 'rotate-180': isOpen }"
       />
     </button>
@@ -19,16 +19,16 @@
     <transition name="dropdown">
       <div
         v-if="isOpen"
-        class="absolute right-0 z-50 mt-1 w-32 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg dark:border-dark-700 dark:bg-dark-800"
+        class="locale-switcher-menu"
       >
         <button
           v-for="locale in availableLocales"
           :key="locale.code"
           :disabled="switching"
           @click="selectLocale(locale.code)"
-          class="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
+          class="locale-switcher-item"
           :class="{
-            'bg-primary-50 text-primary-600 dark:bg-primary-900/20 dark:text-primary-400':
+            active:
               locale.code === currentLocaleCode
           }"
         >
@@ -99,5 +99,60 @@ onBeforeUnmount(() => {
 .dropdown-leave-to {
   opacity: 0;
   transform: scale(0.95) translateY(-4px);
+}
+
+.locale-switcher-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: var(--studio-radius-control, 0.5rem);
+  padding: 0.375rem 0.5rem;
+  color: var(--studio-muted, #4b5563);
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.locale-switcher-trigger:hover {
+  background: var(--studio-soft-background, #f3f4f6);
+  color: var(--studio-text, #111827);
+}
+
+.locale-switcher-chevron {
+  color: color-mix(in srgb, var(--studio-muted, #9ca3af) 76%, transparent);
+  transition: transform 200ms ease;
+}
+
+.locale-switcher-menu {
+  position: absolute;
+  right: 0;
+  z-index: 50;
+  margin-top: 0.25rem;
+  width: 8rem;
+  overflow: hidden;
+  border: 1px solid var(--studio-border, #e5e7eb);
+  border-radius: var(--studio-radius-control, 0.5rem);
+  background: var(--studio-card-background, #ffffff);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
+}
+
+.locale-switcher-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  color: var(--studio-text, #374151);
+  font-size: 0.875rem;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.locale-switcher-item:hover {
+  background: var(--studio-soft-background, #f3f4f6);
+}
+
+.locale-switcher-item.active {
+  background: var(--studio-accent-soft, #eff6ff);
+  color: var(--studio-accent-deep, #2563eb);
 }
 </style>

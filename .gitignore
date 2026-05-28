@@ -56,10 +56,14 @@ tmp-npm-cache/
 *.tmp
 *.bak
 .cache/
+.codex-run/
 tmp-screens/
 frontend/.edge-shot-profile/
+frontend/.tmp-chrome-*/
 frontend/tmp-edge-history-card-sfc-*/
 frontend/*-check*.png
+frontend/global-*.png
+frontend/night-*.png
 frontend/current-image-studio-compare.png
 
 # Legacy backup (the old sub2api monolith — too big, not needed for slim deploy)

@@ -48,6 +48,40 @@ function redirectToPublicEntry(): void {
   }
 }
 
+function readLocalStorage(key: string): string {
+  try {
+    return localStorage.getItem(key) || ''
+  } catch {
+    return ''
+  }
+}
+
+function writeLocalStorage(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Storage can be unavailable in private mode or locked-down browsers.
+  }
+}
+
+function removeLocalStorage(...keys: string[]): void {
+  keys.forEach((key) => {
+    try {
+      localStorage.removeItem(key)
+    } catch {
+      // Ignore storage failures; the in-memory request flow can continue.
+    }
+  })
+}
+
+function writeSessionStorage(key: string, value: string): void {
+  try {
+    sessionStorage.setItem(key, value)
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
 // ==================== Request Interceptor ====================
 
 // Get user's timezone
@@ -62,7 +96,7 @@ const getUserTimezone = (): string => {
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     // Attach token from localStorage
-    const token = localStorage.getItem('auth_token')
+    const token = readLocalStorage('auth_token')
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -128,11 +162,7 @@ apiClient.interceptors.response.use(
       // Ops monitoring disabled: treat as feature-flagged 404, and proactively redirect away
       // from ops pages to avoid broken UI states.
       if (status === 404 && apiData.message === 'Ops monitoring is disabled') {
-        try {
-          localStorage.setItem('ops_monitoring_enabled_cached', 'false')
-        } catch {
-          // ignore localStorage failures
-        }
+        writeLocalStorage('ops_monitoring_enabled_cached', 'false')
         try {
           window.dispatchEvent(new CustomEvent('ops-monitoring-disabled'))
         } catch {
@@ -154,7 +184,7 @@ apiClient.interceptors.response.use(
       // 401: Try to refresh the token if we have a refresh token
       // This handles TOKEN_EXPIRED, INVALID_TOKEN, TOKEN_REVOKED, etc.
       if (status === 401 && !originalRequest._retry) {
-        const refreshToken = localStorage.getItem('refresh_token')
+        const refreshToken = readLocalStorage('refresh_token')
         const isAuthEndpoint =
           url.includes('/auth/login') || url.includes('/auth/register') || url.includes('/auth/refresh')
 
@@ -204,9 +234,9 @@ apiClient.interceptors.response.use(
               const { access_token, refresh_token: newRefreshToken, expires_in } = refreshData.data
 
               // Update tokens in localStorage (convert expires_in to timestamp)
-              localStorage.setItem('auth_token', access_token)
-              localStorage.setItem('refresh_token', newRefreshToken)
-              localStorage.setItem('token_expires_at', String(Date.now() + expires_in * 1000))
+              writeLocalStorage('auth_token', access_token)
+              writeLocalStorage('refresh_token', newRefreshToken)
+              writeLocalStorage('token_expires_at', String(Date.now() + expires_in * 1000))
 
               // Notify subscribers with new token
               onTokenRefreshed(access_token)
@@ -228,11 +258,8 @@ apiClient.interceptors.response.use(
             isRefreshing = false
 
             // Clear tokens and return to the public entry page
-            localStorage.removeItem('auth_token')
-            localStorage.removeItem('refresh_token')
-            localStorage.removeItem('auth_user')
-            localStorage.removeItem('token_expires_at')
-            sessionStorage.setItem('auth_expired', '1')
+            removeLocalStorage('auth_token', 'refresh_token', 'auth_user', 'token_expires_at')
+            writeSessionStorage('auth_expired', '1')
             redirectToPublicEntry()
 
             return Promise.reject({
@@ -244,7 +271,7 @@ apiClient.interceptors.response.use(
         }
 
         // No refresh token or is auth endpoint - clear auth and redirect
-        const hasToken = !!localStorage.getItem('auth_token')
+        const hasToken = !!readLocalStorage('auth_token')
         const headers = error.config?.headers as Record<string, unknown> | undefined
         const authHeader = headers?.Authorization ?? headers?.authorization
         const sentAuth =
@@ -254,12 +281,9 @@ apiClient.interceptors.response.use(
               ? authHeader.length > 0
               : !!authHeader
 
-        localStorage.removeItem('auth_token')
-        localStorage.removeItem('refresh_token')
-        localStorage.removeItem('auth_user')
-        localStorage.removeItem('token_expires_at')
+        removeLocalStorage('auth_token', 'refresh_token', 'auth_user', 'token_expires_at')
         if ((hasToken || sentAuth) && !isAuthEndpoint) {
-          sessionStorage.setItem('auth_expired', '1')
+          writeSessionStorage('auth_expired', '1')
         }
         redirectToPublicEntry()
       }

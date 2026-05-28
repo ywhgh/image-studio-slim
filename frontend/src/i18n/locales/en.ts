@@ -4264,6 +4264,7 @@ export default {
       external: 'Relay mode is recommended by default. Switch to browser direct only when the upstream supports CORS.',
       aspectRatio: 'Pick the frame first, then choose the resolution preset that best fits your provider.',
       resolution: 'Standard keeps the best compatibility. 2K/4K tries native large output first; if the upstream rejects the size, it generates a compatible image and upscales locally.',
+      resolutionNoLocalUpscale: 'Local upscaling is off. 2K/4K only requests the native upstream size; unsupported sizes fail instead of falling back to a smaller image and resizing locally.',
       resolutionSub2api: 'Sub2API mode uses built-in Sora image sizes. The 4K preset becomes effective when you use an external compatible provider.',
       imageCount: 'The Responses profile is limited to one image. Other modes allow up to three.',
       referenceImage: 'Uploads stay in the active session and browser-local history only. Nothing is persisted on the server.'
@@ -4423,6 +4424,10 @@ export default {
       viewAll: 'All styles',
       customRatio: 'Custom',
       defaultLabel: 'Default',
+      localUpscaleOn: 'Allow Local Upscale',
+      localUpscaleOff: 'Block Local Upscale',
+      localUpscaleHintOn: 'If native large output fails in relay mode, a standard-size image may be generated and resized locally in the browser.',
+      localUpscaleHintOff: 'Relay mode keeps the upstream image unchanged, making it easier to verify true native 4K output.',
       seedTitle: 'Random Seed',
       seedHint: 'Reuse a seed for similar reruns',
       seedPlaceholder: 'Optional seed value',
@@ -4451,6 +4456,9 @@ export default {
       autoCleanPlaceholders: 'Clean Placeholders',
       autoCleanPlaceholdersOn: 'On: replace prompt-template placeholders with plain text before generation',
       autoCleanPlaceholdersOff: 'Off: keep template placeholders in the editor',
+      replacementEditor: 'Replace',
+      replacementEditorWithCount: 'This prompt has {count} template replacement slot(s)',
+      replacementEditorSmart: 'When there are no template slots, use the prompt assistant to identify editable spans',
       super4k: 'Super 4K',
       super4kOn: 'On: final output is {size}; the upstream uses native 4K when possible, then local supersampling is applied.',
       super4kOff: 'Off: click to enable Super 4K output.',
@@ -4509,6 +4517,33 @@ export default {
       uploadTooLarge: 'File is too large. Please upload a prompt file under 256KB.',
       uploadParseFailed: 'No usable prompts were found in this file.',
       uploadReadFailed: 'Could not read the file. Please upload it again.'
+    },
+    promptReplacements: {
+      title: 'Prompt Replacements',
+      templateSubtitle: 'Template slots were detected. Edit them here and apply the replacements back to the current prompt.',
+      smartSubtitle: 'When no explicit slots exist, the prompt assistant can identify editable subject, scene, style, and lighting spans.',
+      templateMode: 'Template slots',
+      smartMode: 'Smart detected',
+      smartAnalyze: 'Smart Detect',
+      analyzing: 'Detecting...',
+      templateSlot: 'Template',
+      smartSlot: 'Smart',
+      fullPrompt: 'Full Prompt',
+      hoverHint: 'Move over a highlighted span on the left to edit it on the right.',
+      currentText: 'Current text',
+      replacementText: 'Replace with',
+      resetCurrent: 'Reset to source',
+      locate: 'Locate source',
+      contextTitle: 'Source location',
+      slot: 'Slot',
+      emptyTitle: 'No replacement items yet',
+      emptyText: 'If the prompt has no {argument} slots, use the button above to let the prompt assistant detect editable spans.',
+      smartParseFailed: 'The prompt assistant did not return parseable JSON.',
+      noSmartItems: 'No safe editable spans were found. Adjust the prompt and try again.',
+      noChanges: 'There are no replacements to apply.',
+      applied: 'Applied {count} replacement(s).',
+      cancel: 'Cancel',
+      apply: 'Apply Replacements'
     },
     previewCanvas: {
       splitCurrent: 'This',
@@ -4651,8 +4686,8 @@ export default {
     },
     providerModes: {
       sub2api: {
-        label: 'Current Site API Key',
-        description: 'Use the current project API key without signing in.'
+        label: 'Other Sites',
+        description: 'Use API keys from compatible sites such as Sub2API, chatgpt2api, and NewAPI.'
       },
       externalRelay: {
         label: 'External Relay',
@@ -4670,11 +4705,13 @@ export default {
     profiles: {
       openaiImageApi: 'OpenAI Images (/images/generations)',
       openaiResponses: 'OpenAI Responses (/responses)',
+      xaiGrokImage: 'Grok Images (xAI /images)',
       sub2apiCompatible: 'Sora Chat Compatible (/chat/completions)'
     },
     profileDescriptions: {
       openaiImageApi: 'Best for gpt-image-1, gpt-image-1.5, and gpt-image-2. This is the right choice for most OpenAI-compatible image relays.',
       openaiResponses: 'Use only when the upstream explicitly supports /v1/responses with the image_generation tool. Usually limited to one image.',
+      xaiGrokImage: 'Uses xAI Grok Imagine image endpoints. Set Base URL to https://api.x.ai/v1; model probing calls /image-generation-models.',
       sub2apiCompatible: 'Only for older Sora chat-compatible backends. It calls /chat/completions; do not use this when the upstream exposes gpt-image models.'
     },
     currentSiteProfiles: {
@@ -4712,6 +4749,7 @@ export default {
       promptCompatibilityApplied: 'Using the upstream-compatible prompt for this generation. Your original prompt stays in history.',
       generatedCount: 'Generated {count} image(s).',
       batchGeneratedPartial: 'Generated {done}/{total} image(s); {failed} failed.',
+      historySavedPartial: 'Saved as much multi-image history as possible: {done}/{total} image(s) persisted. Download the rest from the current workbench.',
       historySaveFailed: 'Image generated, but local history was not saved.',
       historySaveFailedMessage: 'The image is still in the workbench. Download it now; it may not survive a refresh or browser close.',
       localStorageMayBeEvicted: 'The browser did not grant persistent storage. Local history still works, but it may be removed if site data is cleared or disk space gets tight.',
@@ -4774,6 +4812,13 @@ export default {
       helperModel: 'Model',
       helperModelPlaceholder: 'e.g. gpt-4o-mini',
       helperModelHint: 'Used by Optimize prompt, Random idea, and Translate prompt.',
+      helperModelDetecting: 'Probing upstream for prompt models...',
+      helperModelDetected: 'Detected {count} usable prompt model(s)',
+      helperModelRefresh: 'Probe prompt models',
+      helperModelProbeFailed: 'Prompt model probing failed',
+      helperModelProbeTimeout: 'Prompt model probing timed out',
+      helperModelProbeNoModels: 'Connection works, but no model list was returned',
+      helperModelNotDetected: 'The current model was not in the upstream model list. You can keep it manually; choose from the list if it fails.',
       helperQualityMissing: 'Choose a strong text model; better prompt-writing models make optimization and ideas more stable.',
       helperQualityImageModel: 'This looks like an image model. Use a text/chat model for steadier prompt optimization and ideas.',
       helperQualityStrong: 'This model is a good fit for the prompt assistant and should produce concrete visual wording.',

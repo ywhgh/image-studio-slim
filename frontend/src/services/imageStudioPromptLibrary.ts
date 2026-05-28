@@ -3,6 +3,7 @@ const DB_VERSION = 1
 const STORE_NAME = 'prompts'
 const REMOTE_API_BASE = (import.meta.env.VITE_PROMPT_LIBRARY_API_BASE || '').trim().replace(/\/+$/, '')
 const REMOTE_API_TOKEN = (import.meta.env.VITE_PROMPT_LIBRARY_TOKEN || '').trim()
+const PROMPT_LIBRARY_STORAGE_MODE = (import.meta.env.VITE_PROMPT_LIBRARY_STORAGE_MODE || 'remote').trim()
 const REMOTE_READ_TIMEOUT_MS = 12000
 const REMOTE_WRITE_TIMEOUT_MS = 60000
 
@@ -40,13 +41,52 @@ interface RemotePromptLibraryItem {
 }
 
 function remoteEnabled(): boolean {
-  return REMOTE_API_BASE !== ''
+  return PROMPT_LIBRARY_STORAGE_MODE !== 'local' && REMOTE_API_BASE !== ''
+}
+
+export function isImageStudioPromptLibraryRemoteEnabled(): boolean {
+  return remoteEnabled()
 }
 
 function remoteHeaders(): HeadersInit {
   if (!REMOTE_API_TOKEN) return {}
   return {
     Authorization: `Bearer ${REMOTE_API_TOKEN}`,
+  }
+}
+
+function remoteJsonHeaders(): HeadersInit {
+  return {
+    ...remoteHeaders(),
+    'Content-Type': 'application/json',
+  }
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result)
+        return
+      }
+      reject(new Error('Failed to read prompt preview image.'))
+    }
+    reader.onerror = () => reject(reader.error || new Error('Failed to read prompt preview image.'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function buildPromptLibraryJson(input: ImageStudioPromptLibraryInput) {
+  return {
+    title: input.title.trim(),
+    description: input.description?.trim() || '',
+    prompt: input.prompt.trim(),
+    category: input.category?.trim() || '',
+    removeImage: !!input.removeImage,
+    imageDataUrl: input.imageBlob ? await blobToDataUrl(input.imageBlob) : undefined,
+    imageMimeType: input.imageMimeType || input.imageBlob?.type,
+    imageFilename: input.imageFilename || 'preview-image',
   }
 }
 
@@ -88,19 +128,10 @@ async function fetchRemote(input: RequestInfo | URL, init: RequestInit, timeoutM
 }
 
 async function saveRemotePromptLibraryItem(input: ImageStudioPromptLibraryInput): Promise<string> {
-  const form = new FormData()
-  form.set('title', input.title.trim())
-  form.set('description', input.description?.trim() || '')
-  form.set('prompt', input.prompt.trim())
-  form.set('category', input.category?.trim() || '')
-  if (input.imageBlob) {
-    form.set('image', input.imageBlob, input.imageFilename || 'preview-image')
-  }
-
   const response = await fetchRemote(`${REMOTE_API_BASE}/prompts`, {
     method: 'POST',
-    headers: remoteHeaders(),
-    body: form,
+    headers: remoteJsonHeaders(),
+    body: JSON.stringify(await buildPromptLibraryJson(input)),
   }, REMOTE_WRITE_TIMEOUT_MS)
   if (!response.ok) {
     throw new Error(await parseRemoteError(response))
@@ -113,26 +144,11 @@ async function saveRemotePromptLibraryItem(input: ImageStudioPromptLibraryInput)
   return id
 }
 
-function buildPromptLibraryForm(input: ImageStudioPromptLibraryInput): FormData {
-  const form = new FormData()
-  form.set('title', input.title.trim())
-  form.set('description', input.description?.trim() || '')
-  form.set('prompt', input.prompt.trim())
-  form.set('category', input.category?.trim() || '')
-  if (input.removeImage) {
-    form.set('removeImage', '1')
-  }
-  if (input.imageBlob) {
-    form.set('image', input.imageBlob, input.imageFilename || 'preview-image')
-  }
-  return form
-}
-
 async function updateRemotePromptLibraryItem(id: string, input: ImageStudioPromptLibraryInput): Promise<void> {
   const response = await fetchRemote(`${REMOTE_API_BASE}/prompts/${encodeURIComponent(id)}`, {
     method: 'PUT',
-    headers: remoteHeaders(),
-    body: buildPromptLibraryForm(input),
+    headers: remoteJsonHeaders(),
+    body: JSON.stringify(await buildPromptLibraryJson(input)),
   }, REMOTE_WRITE_TIMEOUT_MS)
   if (!response.ok) {
     throw new Error(await parseRemoteError(response))
@@ -208,11 +224,17 @@ function withStore<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => I
       const tx = db.transaction(STORE_NAME, mode)
       const store = tx.objectStore(STORE_NAME)
       const request = fn(store)
+      let result: T
 
       request.onerror = () => reject(request.error)
-      request.onsuccess = () => resolve(request.result)
+      request.onsuccess = () => {
+        result = request.result
+      }
 
-      tx.oncomplete = () => db.close()
+      tx.oncomplete = () => {
+        db.close()
+        resolve(result)
+      }
       tx.onerror = () => {
         db.close()
         reject(tx.error)

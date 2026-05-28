@@ -17,35 +17,33 @@
           v-for="toast in toasts"
           :key="toast.id"
           :class="[
-            'pointer-events-auto min-w-[320px] max-w-md overflow-hidden rounded-lg shadow-lg',
-            'bg-white dark:bg-dark-800',
-            'border-l-4',
-            getBorderColor(toast.type)
+            'studio-toast',
+            `type-${toast.type}`,
+            { 'theme-night': studioToastAppearance.themeMode === 'night' }
           ]"
+          :style="toastAppearanceStyle"
         >
-          <div class="p-4">
-            <div class="flex items-start gap-3">
+          <div class="studio-toast-body">
+            <div class="studio-toast-content-row">
               <!-- Icon -->
-              <div class="mt-0.5 flex-shrink-0">
+              <div class="studio-toast-icon-wrap">
                 <Icon
                   :name="getToastIconName(toast.type)"
                   size="md"
-                  :class="getIconColor(toast.type)"
+                  class="studio-toast-icon"
                   aria-hidden="true"
                 />
               </div>
 
               <!-- Content -->
-              <div class="min-w-0 flex-1">
-                <p v-if="toast.title" class="text-sm font-semibold text-gray-900 dark:text-white">
+              <div class="studio-toast-copy">
+                <p v-if="toast.title" class="studio-toast-title">
                   {{ toast.title }}
                 </p>
                 <p
                   :class="[
-                    'text-sm leading-relaxed',
-                    toast.title
-                      ? 'mt-1 text-gray-600 dark:text-gray-300'
-                      : 'text-gray-900 dark:text-white'
+                    'studio-toast-message',
+                    { 'has-title': toast.title }
                   ]"
                 >
                   {{ toast.message }}
@@ -55,7 +53,7 @@
               <!-- Close button -->
               <button
                 @click="removeToast(toast.id)"
-                class="-m-1 flex-shrink-0 rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:text-gray-500 dark:hover:bg-dark-700 dark:hover:text-gray-300"
+                class="studio-toast-close"
                 aria-label="Close notification"
               >
                 <Icon name="x" size="sm" />
@@ -64,9 +62,9 @@
           </div>
 
           <!-- Progress bar -->
-          <div v-if="toast.duration" class="h-1 bg-gray-100 dark:bg-dark-700">
+          <div v-if="toast.duration" class="studio-toast-progress-track">
             <div
-              :class="['h-full toast-progress', getProgressBarColor(toast.type)]"
+              class="studio-toast-progress"
               :style="{ animationDuration: `${toast.duration}ms` }"
             ></div>
           </div>
@@ -77,13 +75,79 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
+const STUDIO_APPEARANCE_STORAGE_KEY = 'image-studio.appearance'
+
+interface StudioToastAppearance {
+  themeMode: 'day' | 'night'
+  radiusScale: number
+}
 
 const toasts = computed(() => appStore.toasts)
+const studioToastAppearance = ref<StudioToastAppearance>(readStudioToastAppearance())
+
+const toastAppearanceStyle = computed(() => {
+  const radius = Math.min(24, Math.max(0, studioToastAppearance.value.radiusScale))
+  const radiusOrZero = (value: number) => radius === 0 ? 0 : value
+
+  return {
+    '--studio-radius-control': `${radiusOrZero(Math.max(10, radius - 1))}px`,
+    '--studio-radius-soft': `${radiusOrZero(Math.max(8, radius - 5))}px`,
+  }
+})
+
+function readStudioToastAppearance(): StudioToastAppearance {
+  if (typeof window === 'undefined') {
+    return {
+      themeMode: 'day',
+      radiusScale: 14,
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(STUDIO_APPEARANCE_STORAGE_KEY) || '{}') as Partial<StudioToastAppearance>
+    return {
+      themeMode: parsed.themeMode === 'night' ? 'night' : 'day',
+      radiusScale: typeof parsed.radiusScale === 'number' && Number.isFinite(parsed.radiusScale)
+        ? Math.min(24, Math.max(0, Math.round(parsed.radiusScale)))
+        : 14,
+    }
+  } catch {
+    return {
+      themeMode: 'day',
+      radiusScale: 14,
+    }
+  }
+}
+
+function refreshStudioToastAppearance() {
+  studioToastAppearance.value = readStudioToastAppearance()
+}
+
+function handleStudioAppearanceChanged(event: Event) {
+  const detail = (event as CustomEvent<Partial<StudioToastAppearance>>).detail
+  if (!detail) {
+    refreshStudioToastAppearance()
+    return
+  }
+
+  studioToastAppearance.value = {
+    themeMode: detail.themeMode === 'night' ? 'night' : 'day',
+    radiusScale: typeof detail.radiusScale === 'number' && Number.isFinite(detail.radiusScale)
+      ? Math.min(24, Math.max(0, Math.round(detail.radiusScale)))
+      : studioToastAppearance.value.radiusScale,
+  }
+}
+
+function handleStorage(event: StorageEvent) {
+  if (event.key === STUDIO_APPEARANCE_STORAGE_KEY) {
+    refreshStudioToastAppearance()
+  }
+}
 
 const getToastIconName = (type: string): 'checkCircle' | 'xCircle' | 'exclamationTriangle' | 'infoCircle' => {
   switch (type) {
@@ -99,47 +163,151 @@ const getToastIconName = (type: string): 'checkCircle' | 'xCircle' | 'exclamatio
   }
 }
 
-const getIconColor = (type: string): string => {
-  const colors: Record<string, string> = {
-    success: 'text-green-500',
-    error: 'text-red-500',
-    warning: 'text-yellow-500',
-    info: 'text-blue-500'
-  }
-  return colors[type] || colors.info
-}
-
-const getBorderColor = (type: string): string => {
-  const colors: Record<string, string> = {
-    success: 'border-green-500',
-    error: 'border-red-500',
-    warning: 'border-yellow-500',
-    info: 'border-blue-500'
-  }
-  return colors[type] || colors.info
-}
-
-const getProgressBarColor = (type: string): string => {
-  const colors: Record<string, string> = {
-    success: 'bg-green-500',
-    error: 'bg-red-500',
-    warning: 'bg-yellow-500',
-    info: 'bg-blue-500'
-  }
-  return colors[type] || colors.info
-}
-
 const removeToast = (id: string) => {
   appStore.hideToast(id)
 }
+
+onMounted(() => {
+  refreshStudioToastAppearance()
+  window.addEventListener('image-studio-appearance-changed', handleStudioAppearanceChanged)
+  window.addEventListener('storage', handleStorage)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('image-studio-appearance-changed', handleStudioAppearanceChanged)
+  window.removeEventListener('storage', handleStorage)
+})
 </script>
 
 <style scoped>
-.toast-progress {
+.studio-toast {
+  --toast-accent: #2563eb;
+  pointer-events: auto;
+  min-width: 320px;
+  max-width: 28rem;
+  overflow: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-left: 4px solid var(--toast-accent);
+  border-radius: var(--studio-radius-control, 12px);
+  background: rgba(255, 255, 255, 0.96);
+  color: #111827;
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.14);
+}
+
+.studio-toast.type-success {
+  --toast-accent: #22c55e;
+}
+
+.studio-toast.type-error {
+  --toast-accent: #ef4444;
+}
+
+.studio-toast.type-warning {
+  --toast-accent: #eab308;
+}
+
+.studio-toast.type-info {
+  --toast-accent: #3b82f6;
+}
+
+.studio-toast-body {
+  padding: 16px;
+}
+
+.studio-toast-content-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.studio-toast-icon-wrap {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--toast-accent);
+}
+
+.studio-toast-icon {
+  color: currentColor;
+}
+
+.studio-toast-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.studio-toast-title {
+  color: #111827;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.studio-toast-message {
+  color: #111827;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.studio-toast-message.has-title {
+  margin-top: 4px;
+  color: #4b5563;
+}
+
+.studio-toast-close {
+  margin: -4px;
+  flex-shrink: 0;
+  border-radius: var(--studio-radius-soft, 6px);
+  padding: 4px;
+  color: #9ca3af;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.studio-toast-close:hover {
+  background: rgba(15, 23, 42, 0.06);
+  color: #4b5563;
+}
+
+.studio-toast-progress-track {
+  height: 4px;
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.studio-toast-progress {
+  height: 100%;
   width: 100%;
+  background: var(--toast-accent);
   animation-name: toast-progress-shrink;
   animation-timing-function: linear;
   animation-fill-mode: forwards;
+}
+
+.studio-toast.theme-night {
+  border-color: rgba(255, 255, 255, 0.10);
+  border-left-color: var(--toast-accent);
+  background: rgba(24, 26, 34, 0.96);
+  color: #e5eefc;
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.42);
+}
+
+.studio-toast.theme-night .studio-toast-title,
+.studio-toast.theme-night .studio-toast-message {
+  color: #e5eefc;
+}
+
+.studio-toast.theme-night .studio-toast-message.has-title {
+  color: #a9b5c7;
+}
+
+.studio-toast.theme-night .studio-toast-close {
+  color: #9aa6b8;
+}
+
+.studio-toast.theme-night .studio-toast-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e5eefc;
+}
+
+.studio-toast.theme-night .studio-toast-progress-track {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 @keyframes toast-progress-shrink {

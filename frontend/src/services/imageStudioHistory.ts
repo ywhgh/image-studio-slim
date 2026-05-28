@@ -3,6 +3,7 @@ import type { ImageStudioHistoryItem, NormalizedImageResult } from '@/types/imag
 const DB_NAME = 'sub2api-image-studio'
 const DB_VERSION = 1
 const STORE_NAME = 'generations'
+const MAX_HISTORY_ITEMS = 50
 
 export interface ImageStudioStoragePersistenceStatus {
   supported: boolean
@@ -19,7 +20,7 @@ interface StoredImageStudioResult {
   revisedPrompt?: string
   filename: string
   originalUrl?: string
-  blob: Blob
+  blob?: Blob
 }
 
 interface StoredImageStudioHistoryItem {
@@ -34,6 +35,7 @@ interface StoredImageStudioHistoryItem {
   count: number
   resolutionPreset?: ImageStudioHistoryItem['resolutionPreset']
   requestedSize?: string
+  actualSize?: string
   outputMode?: ImageStudioHistoryItem['outputMode']
   quality?: string
   background?: string
@@ -47,6 +49,21 @@ interface StoredImageStudioHistoryItem {
   parentHistoryId?: string
   parentTileId?: string
   results: StoredImageStudioResult[]
+}
+
+type HistoryStorageBlobPolicy = 'all' | 'remote-preferred' | 'remote-only'
+
+export type ImageStudioHistorySaveMode =
+  | 'full'
+  | 'remote-preferred'
+  | 'remote-only'
+  | 'split'
+  | 'partial-split'
+
+export interface ImageStudioHistorySaveResult {
+  mode: ImageStudioHistorySaveMode
+  requestedResultCount: number
+  storedResultCount: number
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -165,15 +182,102 @@ function withStore<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => I
   )
 }
 
-function toStoredResult(result: NormalizedImageResult): StoredImageStudioResult | null {
-  if (!result.blob) {
-    return null
+function toStorableOriginalUrl(result: NormalizedImageResult): string | undefined {
+  const originalUrl = (result.originalUrl || result.url || '').trim()
+  if (!originalUrl || originalUrl.startsWith('data:') || originalUrl.startsWith('blob:')) {
+    return undefined
+  }
+  return originalUrl
+}
+
+function dataUrlToBlob(dataUrl: string): Blob | undefined {
+  const commaIndex = dataUrl.indexOf(',')
+  if (!dataUrl.startsWith('data:') || commaIndex <= 5) {
+    return undefined
   }
 
-  const originalUrl = result.originalUrl || result.url
-  const storableOriginalUrl = originalUrl.startsWith('data:') || originalUrl.startsWith('blob:')
-    ? undefined
-    : originalUrl
+  const metadata = dataUrl.slice(5, commaIndex)
+  const payload = dataUrl.slice(commaIndex + 1)
+  const mimeType = metadata.split(';', 1)[0] || 'image/png'
+  const isBase64 = metadata.toLowerCase().includes(';base64')
+
+  try {
+    const binary = isBase64
+      ? atob(payload)
+      : decodeURIComponent(payload)
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index)
+    }
+    return new Blob([bytes], {
+      type: mimeType.startsWith('image/') ? mimeType : 'image/png',
+    })
+  } catch {
+    return undefined
+  }
+}
+
+function resultUrlCandidates(result: NormalizedImageResult): string[] {
+  return [result.originalUrl, result.url]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => value.trim())
+}
+
+async function recoverLocalBlobForStorage(result: NormalizedImageResult): Promise<NormalizedImageResult> {
+  if (result.blob) {
+    return result
+  }
+
+  const dataUrl = resultUrlCandidates(result).find((url) => url.startsWith('data:image/'))
+  if (dataUrl) {
+    const blob = dataUrlToBlob(dataUrl)
+    if (blob) {
+      return {
+        ...result,
+        blob,
+        mimeType: result.mimeType || blob.type,
+      }
+    }
+  }
+
+  const blobUrl = resultUrlCandidates(result).find((url) => url.startsWith('blob:'))
+  if (blobUrl && typeof fetch === 'function') {
+    try {
+      const response = await fetch(blobUrl)
+      if (response.ok) {
+        const blob = await response.blob()
+        return {
+          ...result,
+          blob,
+          mimeType: result.mimeType || blob.type,
+        }
+      }
+    } catch {
+      // The object URL may already have been revoked; the remote URL fallback
+      // below still keeps history recoverable when the upstream returned one.
+    }
+  }
+
+  return result
+}
+
+async function prepareResultsForStorage(results: NormalizedImageResult[]): Promise<NormalizedImageResult[]> {
+  return Promise.all(results.map((result) => recoverLocalBlobForStorage(result)))
+}
+
+function toStoredResult(
+  result: NormalizedImageResult,
+  blobPolicy: HistoryStorageBlobPolicy = 'all'
+): StoredImageStudioResult | null {
+  const storableOriginalUrl = toStorableOriginalUrl(result)
+  const shouldStoreBlob =
+    blobPolicy === 'all' ||
+    (blobPolicy === 'remote-preferred' && !storableOriginalUrl)
+  const blob = shouldStoreBlob ? result.blob : undefined
+
+  if (!blob && !storableOriginalUrl) {
+    return null
+  }
 
   return {
     id: result.id,
@@ -182,8 +286,17 @@ function toStoredResult(result: NormalizedImageResult): StoredImageStudioResult 
     revisedPrompt: result.revisedPrompt,
     filename: result.filename,
     originalUrl: storableOriginalUrl,
-    blob: result.blob,
+    blob,
   }
+}
+
+function toStoredResults(
+  results: NormalizedImageResult[],
+  blobPolicy: HistoryStorageBlobPolicy = 'all'
+): StoredImageStudioResult[] {
+  return results
+    .map((result) => toStoredResult(result, blobPolicy))
+    .filter((result): result is StoredImageStudioResult => !!result)
 }
 
 function normalizeReferenceImageUrls(item: ImageStudioHistoryItem): string[] {
@@ -193,19 +306,129 @@ function normalizeReferenceImageUrls(item: ImageStudioHistoryItem): string[] {
   return item.referenceImageUrl ? [item.referenceImageUrl] : []
 }
 
-export async function saveImageStudioHistoryItem(item: ImageStudioHistoryItem): Promise<void> {
-  const storedResults = item.results
-    .map(toStoredResult)
-    .filter((result): result is StoredImageStudioResult => !!result)
+function parsePixelSize(value?: string): { width: number; height: number } | null {
+  const match = /^\s*(\d+)\s*[x×]\s*(\d+)\s*$/i.exec((value || '').trim())
+  if (!match) {
+    return null
+  }
+  const width = Number(match[1])
+  const height = Number(match[2])
+  return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+    ? { width, height }
+    : null
+}
 
-  if (!storedResults.length) {
-    throw new Error('No image blob is available for local history storage.')
+async function readImageBlobSize(blob?: Blob): Promise<string | undefined> {
+  if (!blob || typeof createImageBitmap !== 'function') {
+    return undefined
+  }
+  try {
+    const bitmap = await createImageBitmap(blob)
+    try {
+      return `${bitmap.width}x${bitmap.height}`
+    } finally {
+      bitmap.close()
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function readImageUrlSize(url?: string): Promise<string | undefined> {
+  const source = (url || '').trim()
+  if (!source || typeof Image === 'undefined') {
+    return Promise.resolve(undefined)
   }
 
-  const referenceImageUrls = normalizeReferenceImageUrls(item)
+  return new Promise((resolve) => {
+    const image = new Image()
+    const timeout = window.setTimeout(() => {
+      cleanup()
+      resolve(undefined)
+    }, 15000)
 
-  const payload: StoredImageStudioHistoryItem = {
-    id: item.id,
+    function cleanup() {
+      window.clearTimeout(timeout)
+      image.onload = null
+      image.onerror = null
+    }
+
+    image.onload = () => {
+      const width = image.naturalWidth || image.width
+      const height = image.naturalHeight || image.height
+      cleanup()
+      resolve(width > 0 && height > 0 ? `${width}x${height}` : undefined)
+    }
+    image.onerror = () => {
+      cleanup()
+      resolve(undefined)
+    }
+    image.src = source
+  })
+}
+
+async function readStoredResultSize(result?: StoredImageStudioResult): Promise<string | undefined> {
+  if (!result) {
+    return undefined
+  }
+
+  const blobSize = await readImageBlobSize(result.blob)
+  if (blobSize) {
+    return blobSize
+  }
+
+  if (result.blob && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+    const url = URL.createObjectURL(result.blob)
+    try {
+      const urlSize = await readImageUrlSize(url)
+      if (urlSize) {
+        return urlSize
+      }
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+  }
+
+  return readImageUrlSize(result.originalUrl)
+}
+
+function isProviderScaledOutput(requestedSize?: string, actualSize?: string): boolean {
+  const requested = parsePixelSize(requestedSize)
+  const actual = parsePixelSize(actualSize)
+  return Boolean(
+    requested &&
+    actual &&
+    actual.width * actual.height < requested.width * requested.height
+  )
+}
+
+function resolveStoredOutputMode(
+  item: Pick<ImageStudioHistoryItem, 'outputMode' | 'requestedSize' | 'actualSize'>
+): ImageStudioHistoryItem['outputMode'] {
+  if (
+    (!item.outputMode || item.outputMode === 'native') &&
+    isProviderScaledOutput(item.requestedSize, item.actualSize)
+  ) {
+    return 'provider-scaled'
+  }
+  return item.outputMode
+}
+
+function buildStoredHistoryPayload(
+  item: ImageStudioHistoryItem,
+  storedResults: StoredImageStudioResult[],
+  actualSize?: string,
+  id = item.id,
+): StoredImageStudioHistoryItem {
+  const referenceImageUrls = normalizeReferenceImageUrls(item)
+  const outputMode = resolveStoredOutputMode({
+    outputMode: item.outputMode,
+    requestedSize: item.requestedSize,
+    actualSize,
+  })
+
+  return {
+    id,
     createdAt: item.createdAt,
     providerMode: item.providerMode,
     profile: item.profile,
@@ -216,7 +439,8 @@ export async function saveImageStudioHistoryItem(item: ImageStudioHistoryItem): 
     count: storedResults.length,
     resolutionPreset: item.resolutionPreset,
     requestedSize: item.requestedSize,
-    outputMode: item.outputMode,
+    actualSize,
+    outputMode,
     quality: item.quality,
     background: item.background,
     format: item.format,
@@ -230,12 +454,181 @@ export async function saveImageStudioHistoryItem(item: ImageStudioHistoryItem): 
     parentTileId: item.parentTileId,
     results: storedResults,
   }
+}
 
+async function putStoredHistoryPayload(payload: StoredImageStudioHistoryItem): Promise<void> {
   await withStore('readwrite', (store) => store.put(payload))
+}
+
+function sortStoredHistoryItems<T extends { createdAt: string }>(items: T[]): T[] {
+  return [...items].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+}
+
+async function trimImageStudioHistory(maxItems = MAX_HISTORY_ITEMS): Promise<void> {
+  const records = await withStore<StoredImageStudioHistoryItem[]>('readonly', (store) => store.getAll())
+  const staleIds = sortStoredHistoryItems(records || [])
+    .slice(maxItems)
+    .map((record) => record.id)
+    .filter(Boolean)
+
+  if (!staleIds.length) {
+    return
+  }
+
+  const db = await openDatabase()
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    const store = tx.objectStore(STORE_NAME)
+    staleIds.forEach((id) => store.delete(id))
+
+    tx.oncomplete = () => {
+      db.close()
+      resolve()
+    }
+    tx.onerror = () => {
+      db.close()
+      reject(tx.error)
+    }
+    tx.onabort = () => {
+      db.close()
+      reject(tx.error)
+    }
+  })
+}
+
+function storedResultsEqual(left: StoredImageStudioResult[], right: StoredImageStudioResult[]): boolean {
+  if (left.length !== right.length) {
+    return false
+  }
+  return left.every((result, index) => (
+    result.id === right[index]?.id &&
+    result.originalUrl === right[index]?.originalUrl &&
+    result.blob === right[index]?.blob
+  ))
+}
+
+function buildSplitHistoryPayloads(
+  item: ImageStudioHistoryItem,
+  storedResults: StoredImageStudioResult[],
+  actualSize?: string,
+): StoredImageStudioHistoryItem[] {
+  return storedResults.map((result, index) => buildStoredHistoryPayload(
+    item,
+    [result],
+    actualSize,
+    index === 0 ? item.id : `${item.id}-part-${index + 1}`,
+  ))
+}
+
+async function saveSplitHistoryPayloads(
+  payloads: StoredImageStudioHistoryItem[],
+  requestedResultCount: number,
+  originalError: unknown,
+): Promise<ImageStudioHistorySaveResult> {
+  let storedResultCount = 0
+
+  for (const payload of payloads) {
+    try {
+      await putStoredHistoryPayload(payload)
+      storedResultCount += payload.results.length
+    } catch {
+      // Keep going; one oversized image should not prevent the rest of the batch from being recoverable.
+    }
+  }
+
+  if (!storedResultCount) {
+    throw originalError instanceof Error
+      ? originalError
+      : new Error('Local history storage failed.')
+  }
+
+  await trimImageStudioHistory()
+
+  return {
+    mode: storedResultCount === requestedResultCount ? 'split' : 'partial-split',
+    requestedResultCount,
+    storedResultCount,
+  }
+}
+
+export async function saveImageStudioHistoryItem(
+  item: ImageStudioHistoryItem
+): Promise<ImageStudioHistorySaveResult> {
+  const preparedItem: ImageStudioHistoryItem = {
+    ...item,
+    results: await prepareResultsForStorage(item.results),
+  }
+  const fullResults = toStoredResults(preparedItem.results, 'all')
+
+  if (!fullResults.length) {
+    throw new Error('No image data or remote image URL is available for local history storage.')
+  }
+
+  const actualSize = preparedItem.actualSize || await readStoredResultSize(fullResults[0])
+  const fullPayload = buildStoredHistoryPayload(preparedItem, fullResults, actualSize)
+  const requestedResultCount = item.results.length
+
+  try {
+    await putStoredHistoryPayload(fullPayload)
+    await trimImageStudioHistory()
+    return {
+      mode: 'full',
+      requestedResultCount,
+      storedResultCount: fullResults.length,
+    }
+  } catch (error) {
+    const remotePreferredResults = toStoredResults(preparedItem.results, 'remote-preferred')
+    if (
+      remotePreferredResults.length &&
+      !storedResultsEqual(fullResults, remotePreferredResults)
+    ) {
+      try {
+        await putStoredHistoryPayload(buildStoredHistoryPayload(preparedItem, remotePreferredResults, actualSize))
+        await trimImageStudioHistory()
+        return {
+          mode: 'remote-preferred',
+          requestedResultCount,
+          storedResultCount: remotePreferredResults.length,
+        }
+      } catch {
+        // Try the next, smaller shape below.
+      }
+    }
+
+    const remoteOnlyResults = toStoredResults(preparedItem.results, 'remote-only')
+    if (
+      remoteOnlyResults.length &&
+      !storedResultsEqual(fullResults, remoteOnlyResults) &&
+      !storedResultsEqual(remotePreferredResults, remoteOnlyResults)
+    ) {
+      try {
+        await putStoredHistoryPayload(buildStoredHistoryPayload(preparedItem, remoteOnlyResults, actualSize))
+        await trimImageStudioHistory()
+        return {
+          mode: 'remote-only',
+          requestedResultCount,
+          storedResultCount: remoteOnlyResults.length,
+        }
+      } catch {
+        // Split blob-heavy batches as a final recovery path.
+      }
+    }
+
+    if (fullResults.length > 1) {
+      return saveSplitHistoryPayloads(
+        buildSplitHistoryPayloads(preparedItem, fullResults, actualSize),
+        requestedResultCount,
+        error,
+      )
+    }
+
+    throw error
+  }
 }
 
 export async function replaceImageStudioHistoryItems(items: ImageStudioHistoryItem[]): Promise<void> {
   const db = await openDatabase()
+  const itemsForStorage = sortStoredHistoryItems(items).slice(0, MAX_HISTORY_ITEMS)
 
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite')
@@ -243,16 +636,20 @@ export async function replaceImageStudioHistoryItems(items: ImageStudioHistoryIt
 
     store.clear()
 
-    items.forEach((item) => {
-      const storedResults = item.results
-        .map(toStoredResult)
-        .filter((result): result is StoredImageStudioResult => !!result)
+    itemsForStorage.forEach((item) => {
+      const storedResults = toStoredResults(item.results)
 
       if (!storedResults.length) {
         return
       }
 
       const referenceImageUrls = normalizeReferenceImageUrls(item)
+      const actualSize = item.actualSize
+      const outputMode = resolveStoredOutputMode({
+        outputMode: item.outputMode,
+        requestedSize: item.requestedSize,
+        actualSize,
+      })
 
       store.put({
         id: item.id,
@@ -266,7 +663,8 @@ export async function replaceImageStudioHistoryItems(items: ImageStudioHistoryIt
         count: storedResults.length,
         resolutionPreset: item.resolutionPreset,
         requestedSize: item.requestedSize,
-        outputMode: item.outputMode,
+        actualSize,
+        outputMode,
         quality: item.quality,
         background: item.background,
         format: item.format,
@@ -300,46 +698,56 @@ export async function replaceImageStudioHistoryItems(items: ImageStudioHistoryIt
 export async function listImageStudioHistoryItems(): Promise<ImageStudioHistoryItem[]> {
   const records = await withStore<StoredImageStudioHistoryItem[]>('readonly', (store) => store.getAll())
 
-  return (records || [])
+  const mapped = await Promise.all(sortStoredHistoryItems(records || [])
     .filter((record) => record.results?.length)
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .map((record) => ({
-      id: record.id,
-      createdAt: record.createdAt,
-      providerMode: record.providerMode,
-      profile: record.profile,
-      currentSiteProfile: record.currentSiteProfile,
-      model: record.model,
-      prompt: record.prompt,
-      aspectRatio: record.aspectRatio,
-      count: record.count,
-      resolutionPreset: record.resolutionPreset,
-      requestedSize: record.requestedSize,
-      outputMode: record.outputMode,
-      quality: record.quality,
-      background: record.background,
-      format: record.format,
-      seed: record.seed,
-      stylePresetId: record.stylePresetId,
-      stylePresetTitle: record.stylePresetTitle,
-      durationMs: record.durationMs,
-      referenceImageUrl: record.referenceImageUrl,
-      referenceImageUrls: record.referenceImageUrls?.length
-        ? record.referenceImageUrls
-        : (record.referenceImageUrl ? [record.referenceImageUrl] : undefined),
-      parentHistoryId: record.parentHistoryId,
-      parentTileId: record.parentTileId,
-      results: record.results.map((result) => ({
-        id: result.id,
-        source: result.source,
-        mimeType: result.mimeType,
-        revisedPrompt: result.revisedPrompt,
-        filename: result.filename,
-        originalUrl: result.originalUrl,
-        blob: result.blob,
-        url: URL.createObjectURL(result.blob),
-      })),
+    .slice(0, MAX_HISTORY_ITEMS)
+    .map(async (record) => {
+      const actualSize = record.actualSize || await readStoredResultSize(record.results[0])
+      return {
+        id: record.id,
+        createdAt: record.createdAt,
+        providerMode: record.providerMode,
+        profile: record.profile,
+        currentSiteProfile: record.currentSiteProfile,
+        model: record.model,
+        prompt: record.prompt,
+        aspectRatio: record.aspectRatio,
+        count: record.count,
+        resolutionPreset: record.resolutionPreset,
+        requestedSize: record.requestedSize,
+        actualSize,
+        outputMode: resolveStoredOutputMode({
+          outputMode: record.outputMode,
+          requestedSize: record.requestedSize,
+          actualSize,
+        }),
+        quality: record.quality,
+        background: record.background,
+        format: record.format,
+        seed: record.seed,
+        stylePresetId: record.stylePresetId,
+        stylePresetTitle: record.stylePresetTitle,
+        durationMs: record.durationMs,
+        referenceImageUrl: record.referenceImageUrl,
+        referenceImageUrls: record.referenceImageUrls?.length
+          ? record.referenceImageUrls
+          : (record.referenceImageUrl ? [record.referenceImageUrl] : undefined),
+        parentHistoryId: record.parentHistoryId,
+        parentTileId: record.parentTileId,
+        results: record.results.map((result) => ({
+          id: result.id,
+          source: result.source,
+          mimeType: result.mimeType,
+          revisedPrompt: result.revisedPrompt,
+          filename: result.filename,
+          originalUrl: result.originalUrl,
+          blob: result.blob,
+          url: result.blob ? URL.createObjectURL(result.blob) : (result.originalUrl || ''),
+        })).filter((result) => !!result.url),
+      } satisfies ImageStudioHistoryItem
     }))
+
+  return mapped
 }
 
 export async function deleteImageStudioHistoryItem(id: string): Promise<void> {

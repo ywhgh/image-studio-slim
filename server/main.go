@@ -54,6 +54,7 @@ const (
 
 	profileOpenAIImageAPI    = "openai-image-api"
 	profileOpenAIResponses   = "openai-responses"
+	profileXAIGrokImage      = "xai-grok-image"
 	profileSub2APICompatible = "sub2api-sora-compatible"
 	profileChatGPT2API       = "chatgpt2api"
 )
@@ -78,10 +79,29 @@ type externalGenerateRequest struct {
 type upstreamModelsRequest struct {
 	BaseURL string `json:"base_url"`
 	APIKey  string `json:"api_key"`
+	Profile string `json:"profile,omitempty"`
 }
 
 type upstreamModelsData struct {
 	Models []string `json:"models"`
+}
+
+type promptHelperMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type promptHelperChatRequest struct {
+	BaseURL     string                `json:"base_url"`
+	APIKey      string                `json:"api_key"`
+	Model       string                `json:"model"`
+	Messages    []promptHelperMessage `json:"messages"`
+	Temperature *float64              `json:"temperature,omitempty"`
+	MaxTokens   int                   `json:"max_tokens,omitempty"`
+}
+
+type promptHelperChatData struct {
+	Content string `json:"content"`
 }
 
 type normalizedResult struct {
@@ -144,6 +164,7 @@ func main() {
 	mux.HandleFunc("/api/v1/image-studio/generate-external", withCORS(withMethod(http.MethodPost, handleGenerateExternal(httpClient, cfg))))
 	mux.HandleFunc("/api/v1/image-studio/download", withCORS(withMethod(http.MethodGet, handleDownload(downloadClient, cfg))))
 	mux.HandleFunc("/api/v1/image-studio/upstream/models", withCORS(withMethod(http.MethodPost, handleProbeUpstreamModels(httpClient, cfg))))
+	mux.HandleFunc("/api/v1/image-studio/prompt-helper/chat", withCORS(withMethod(http.MethodPost, handlePromptHelperChat(httpClient, cfg))))
 	mux.HandleFunc("/api/v1/health", withCORS(handleHealth))
 
 	// Frontend SPA fallback (must be last)
@@ -314,6 +335,7 @@ func handleProbeUpstreamModels(client *http.Client, cfg config) http.HandlerFunc
 
 		baseURL := strings.TrimSpace(req.BaseURL)
 		apiKey := strings.TrimSpace(req.APIKey)
+		profile := strings.ToLower(strings.TrimSpace(req.Profile))
 		if baseURL == "" || apiKey == "" {
 			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "base_url and api_key are required")
 			return
@@ -324,59 +346,239 @@ func handleProbeUpstreamModels(client *http.Client, cfg config) http.HandlerFunc
 			writeError(w, http.StatusBadRequest, "INVALID_BASE_URL", err.Error())
 			return
 		}
-		endpoint, err := joinURL(normalizedBaseURL, "/models")
+		modelsPaths := []string{"/models"}
+		if profile == profileXAIGrokImage {
+			modelsPaths = []string{"/image-generation-models", "/models"}
+		}
+
+		lastStatus := http.StatusBadGateway
+		lastCode := "UPSTREAM_ERROR"
+		lastMsg := "upstream models response did not contain model ids"
+		for index, modelsPath := range modelsPaths {
+			endpoint, err := joinURL(normalizedBaseURL, modelsPath)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "INVALID_BASE_URL", err.Error())
+				return
+			}
+
+			upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, endpoint, nil)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "INVALID_BASE_URL", err.Error())
+				return
+			}
+			upstreamReq.Header.Set("Authorization", "Bearer "+apiKey)
+			upstreamReq.Header.Set("Accept", "application/json")
+
+			startedAt := time.Now()
+			resp, err := client.Do(upstreamReq)
+			if err != nil {
+				lastStatus = http.StatusBadGateway
+				lastCode = "UPSTREAM_REQUEST_FAILED"
+				lastMsg = "failed to reach upstream provider: " + err.Error()
+				log.Printf("upstream models transport_error endpoint=%s duration_ms=%d msg=%s", safeEndpointForLog(endpoint), time.Since(startedAt).Milliseconds(), err.Error())
+				if index < len(modelsPaths)-1 {
+					continue
+				}
+				writeError(w, lastStatus, lastCode, lastMsg)
+				return
+			}
+
+			body, truncated, err := readLimitedResponseBody(resp.Body, 4<<20)
+			_ = resp.Body.Close()
+			if err != nil {
+				lastStatus = http.StatusBadGateway
+				lastCode = "UPSTREAM_READ_FAILED"
+				lastMsg = "failed to read upstream response: " + err.Error()
+				if index < len(modelsPaths)-1 {
+					continue
+				}
+				writeError(w, lastStatus, lastCode, lastMsg)
+				return
+			}
+			if truncated {
+				lastStatus = http.StatusBadGateway
+				lastCode = "UPSTREAM_RESPONSE_TOO_LARGE"
+				lastMsg = "upstream models response is too large"
+				if index < len(modelsPaths)-1 {
+					continue
+				}
+				writeError(w, lastStatus, lastCode, lastMsg)
+				return
+			}
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				lastStatus = http.StatusBadGateway
+				lastCode = "UPSTREAM_ERROR"
+				lastMsg = parseUpstreamErrorMessage(resp.StatusCode, body)
+				log.Printf("upstream models error endpoint=%s status=%d duration_ms=%d msg=%s", safeEndpointForLog(endpoint), resp.StatusCode, time.Since(startedAt).Milliseconds(), compactLogText(lastMsg, 220))
+				if index < len(modelsPaths)-1 && shouldFallbackUpstreamModelProbe(resp.StatusCode, lastMsg) {
+					continue
+				}
+				writeError(w, lastStatus, lastCode, lastMsg)
+				return
+			}
+
+			models, err := extractModelIDs(body)
+			if err != nil {
+				lastStatus = http.StatusBadGateway
+				lastCode = "UPSTREAM_INVALID_RESPONSE"
+				lastMsg = err.Error()
+				if index < len(modelsPaths)-1 {
+					continue
+				}
+				writeError(w, lastStatus, lastCode, lastMsg)
+				return
+			}
+
+			writeJSON(w, http.StatusOK, struct {
+				Code int                `json:"code"`
+				Msg  string             `json:"msg"`
+				Data upstreamModelsData `json:"data"`
+			}{
+				Code: 0,
+				Msg:  "ok",
+				Data: upstreamModelsData{Models: models},
+			})
+			return
+		}
+
+		writeError(w, lastStatus, lastCode, lastMsg)
+	}
+}
+
+func shouldFallbackUpstreamModelProbe(status int, message string) bool {
+	if status == http.StatusNotFound ||
+		status == http.StatusMethodNotAllowed ||
+		status == http.StatusBadRequest ||
+		status == http.StatusUnsupportedMediaType {
+		return true
+	}
+	lower := strings.ToLower(message)
+	return strings.Contains(lower, "not found") ||
+		strings.Contains(lower, "unknown endpoint") ||
+		strings.Contains(lower, "unsupported") ||
+		strings.Contains(lower, "not support")
+}
+
+func handlePromptHelperChat(client *http.Client, cfg config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req promptHelperChatRequest
+		decoder := json.NewDecoder(io.LimitReader(r.Body, 2<<20))
+		if err := decoder.Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_JSON", "invalid json body")
+			return
+		}
+
+		baseURL := strings.TrimSpace(req.BaseURL)
+		apiKey := strings.TrimSpace(req.APIKey)
+		model := strings.TrimSpace(req.Model)
+		if baseURL == "" || apiKey == "" || model == "" || len(req.Messages) == 0 {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "base_url, api_key, model and messages are required")
+			return
+		}
+
+		messages := make([]map[string]string, 0, len(req.Messages))
+		for _, message := range req.Messages {
+			role := strings.TrimSpace(message.Role)
+			content := strings.TrimSpace(message.Content)
+			if role == "" || content == "" {
+				continue
+			}
+			switch role {
+			case "system", "user", "assistant":
+				messages = append(messages, map[string]string{
+					"role":    role,
+					"content": content,
+				})
+			default:
+				writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "unsupported message role")
+				return
+			}
+		}
+		if len(messages) == 0 {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "messages must contain text content")
+			return
+		}
+
+		normalizedBaseURL, err := validateRemoteURL(baseURL, cfg.AllowPrivateUpstream)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_BASE_URL", err.Error())
+			return
+		}
+		endpoint, err := joinURL(normalizedBaseURL, "/chat/completions")
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "INVALID_BASE_URL", err.Error())
 			return
 		}
 
-		upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, endpoint, nil)
+		temperature := 0.85
+		if req.Temperature != nil {
+			temperature = *req.Temperature
+		}
+		maxTokens := req.MaxTokens
+		if maxTokens <= 0 {
+			maxTokens = 600
+		}
+
+		body, err := json.Marshal(map[string]any{
+			"model":       model,
+			"messages":    messages,
+			"temperature": temperature,
+			"max_tokens":  maxTokens,
+			"stream":      false,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "REQUEST_BUILD_FAILED", "failed to build upstream request")
+			return
+		}
+
+		upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "INVALID_BASE_URL", err.Error())
 			return
 		}
 		upstreamReq.Header.Set("Authorization", "Bearer "+apiKey)
+		upstreamReq.Header.Set("Content-Type", "application/json")
 		upstreamReq.Header.Set("Accept", "application/json")
 
 		startedAt := time.Now()
 		resp, err := client.Do(upstreamReq)
 		if err != nil {
-			log.Printf("upstream models transport_error endpoint=%s duration_ms=%d msg=%s", safeEndpointForLog(endpoint), time.Since(startedAt).Milliseconds(), err.Error())
+			log.Printf("prompt helper transport_error endpoint=%s duration_ms=%d msg=%s", safeEndpointForLog(endpoint), time.Since(startedAt).Milliseconds(), err.Error())
 			writeError(w, http.StatusBadGateway, "UPSTREAM_REQUEST_FAILED", "failed to reach upstream provider: "+err.Error())
 			return
 		}
 		defer resp.Body.Close()
 
-		body, truncated, err := readLimitedResponseBody(resp.Body, 4<<20)
+		respBody, truncated, err := readLimitedResponseBody(resp.Body, 4<<20)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "UPSTREAM_READ_FAILED", "failed to read upstream response: "+err.Error())
 			return
 		}
 		if truncated {
-			writeError(w, http.StatusBadGateway, "UPSTREAM_RESPONSE_TOO_LARGE", "upstream models response is too large")
+			writeError(w, http.StatusBadGateway, "UPSTREAM_RESPONSE_TOO_LARGE", "upstream prompt response is too large")
 			return
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			msg := parseUpstreamErrorMessage(resp.StatusCode, body)
-			log.Printf("upstream models error endpoint=%s status=%d duration_ms=%d msg=%s", safeEndpointForLog(endpoint), resp.StatusCode, time.Since(startedAt).Milliseconds(), compactLogText(msg, 220))
+			msg := parseUpstreamErrorMessage(resp.StatusCode, respBody)
+			log.Printf("prompt helper upstream_error endpoint=%s status=%d duration_ms=%d msg=%s", safeEndpointForLog(endpoint), resp.StatusCode, time.Since(startedAt).Milliseconds(), compactLogText(msg, 220))
 			writeError(w, http.StatusBadGateway, "UPSTREAM_ERROR", msg)
 			return
 		}
 
-		models, err := extractModelIDs(body)
+		content, err := extractChatCompletionContent(respBody)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "UPSTREAM_INVALID_RESPONSE", err.Error())
 			return
 		}
 
 		writeJSON(w, http.StatusOK, struct {
-			Code int                `json:"code"`
-			Msg  string             `json:"msg"`
-			Data upstreamModelsData `json:"data"`
+			Code int                  `json:"code"`
+			Msg  string               `json:"msg"`
+			Data promptHelperChatData `json:"data"`
 		}{
 			Code: 0,
 			Msg:  "ok",
-			Data: upstreamModelsData{Models: models},
+			Data: promptHelperChatData{Content: content},
 		})
 	}
 }
@@ -1309,9 +1511,12 @@ func handleDownload(client *http.Client, cfg config) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "DOWNLOAD_REQUEST_FAILED", "failed to build download request")
 			return
 		}
+		req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+		req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; ImageStudioSlim/1.0; +https://github.com/ywhgh/image-studio-slim)")
 
 		resp, err := client.Do(req)
 		if err != nil {
+			log.Printf("image download transport_error source=%s msg=%s", safeEndpointForLog(normalizedURL), err.Error())
 			writeError(w, http.StatusBadGateway, "DOWNLOAD_FAILED", fmt.Sprintf("failed to download image: %v", err))
 			return
 		}
@@ -1523,6 +1728,41 @@ func buildExternalImageAttempts(req externalGenerateRequest, baseURL string) ([]
 	builder := externalAttemptBuilder{seen: make(map[string]struct{})}
 
 	switch req.Profile {
+	case profileXAIGrokImage:
+		if len(req.ImageInputs) == 0 {
+			endpoint, err := joinURL(baseURL, "/images/generations")
+			if err != nil {
+				return nil, err
+			}
+			for _, payload := range buildXAIGrokGenerationPayloads(req, count, size) {
+				if err := builder.addJSON("xai-grok-image-generations", endpoint, req.Format, payload); err != nil {
+					return nil, err
+				}
+			}
+			return builder.attempts, nil
+		}
+
+		editEndpoint, err := joinURL(baseURL, "/images/edits")
+		if err != nil {
+			return nil, err
+		}
+		for _, payload := range buildXAIGrokEditPayloads(req, count, size) {
+			if err := builder.addJSON("xai-grok-image-edits", editEndpoint, req.Format, payload); err != nil {
+				return nil, err
+			}
+		}
+
+		generationEndpoint, err := joinURL(baseURL, "/images/generations")
+		if err != nil {
+			return nil, err
+		}
+		for _, payload := range buildXAIGrokReferenceGenerationPayloads(req, count, size) {
+			if err := builder.addJSON("xai-grok-image-generations-with-reference", generationEndpoint, req.Format, payload); err != nil {
+				return nil, err
+			}
+		}
+		return builder.attempts, nil
+
 	case profileOpenAIImageAPI, profileChatGPT2API:
 		if len(req.ImageInputs) == 0 {
 			endpoint, err := joinURL(baseURL, "/images/generations")
@@ -1612,6 +1852,78 @@ func buildExternalImageAttempts(req externalGenerateRequest, baseURL string) ([]
 	default:
 		return nil, fmt.Errorf("unsupported profile: %s", req.Profile)
 	}
+}
+
+func buildXAIGrokGenerationPayloads(req externalGenerateRequest, count int, size string) []map[string]any {
+	payloads := []map[string]any{buildXAIGrokImagePayload(req, count)}
+
+	compatible := baseOpenAIImagePayload(req, count, size)
+	compatible["response_format"] = "b64_json"
+	payloads = append(payloads, compatible)
+
+	payloads = append(payloads, map[string]any{
+		"model":  req.Model,
+		"prompt": req.Prompt,
+		"n":      count,
+	})
+
+	return payloads
+}
+
+func buildXAIGrokImagePayload(req externalGenerateRequest, count int) map[string]any {
+	payload := map[string]any{
+		"model":           req.Model,
+		"prompt":          req.Prompt,
+		"n":               count,
+		"response_format": "b64_json",
+	}
+
+	if resolution := xaiGrokResolution(req.Size); resolution != "" {
+		payload["resolution"] = resolution
+	}
+	if aspectRatio := xaiGrokAspectRatio(req.AspectRatio); aspectRatio != "" {
+		payload["aspect_ratio"] = aspectRatio
+	}
+
+	if len(req.ImageInputs) == 1 {
+		payload["image"] = map[string]any{"url": req.ImageInputs[0]}
+	} else if len(req.ImageInputs) > 1 {
+		images := make([]map[string]any, 0, len(req.ImageInputs))
+		for _, dataURL := range req.ImageInputs {
+			images = append(images, map[string]any{"url": dataURL})
+		}
+		payload["images"] = images
+	}
+
+	return payload
+}
+
+func buildXAIGrokEditPayloads(req externalGenerateRequest, count int, size string) []map[string]any {
+	payloads := []map[string]any{buildXAIGrokImagePayload(req, count)}
+
+	compatible := baseOpenAIImagePayload(req, count, size)
+	compatible["response_format"] = "b64_json"
+	if len(req.ImageInputs) == 1 {
+		compatible["image"] = req.ImageInputs[0]
+		compatible["image_url"] = req.ImageInputs[0]
+	} else if len(req.ImageInputs) > 1 {
+		compatible["image"] = req.ImageInputs[0]
+		compatible["images"] = req.ImageInputs
+		compatible["image_urls"] = req.ImageInputs
+	}
+	payloads = append(payloads, compatible)
+
+	return payloads
+}
+
+func buildXAIGrokReferenceGenerationPayloads(req externalGenerateRequest, count int, size string) []map[string]any {
+	payload := baseOpenAIImagePayload(req, count, size)
+	payload["response_format"] = "b64_json"
+	payload["image_input"] = req.ImageInputs[0]
+	payload["image_inputs"] = req.ImageInputs
+	payload["input_image"] = req.ImageInputs[0]
+	payload["input_images"] = req.ImageInputs
+	return []map[string]any{payload}
 }
 
 func (b *externalAttemptBuilder) addJSON(name, endpointURL, format string, payload map[string]any) error {
@@ -1938,6 +2250,44 @@ func resolveSize(size, aspectRatio string) string {
 	}
 }
 
+func xaiGrokResolution(size string) string {
+	size = strings.ToLower(strings.TrimSpace(size))
+	if size == "" {
+		return ""
+	}
+	parts := strings.Split(size, "x")
+	if len(parts) != 2 {
+		switch size {
+		case "1k", "2k":
+			return size
+		default:
+			return ""
+		}
+	}
+	width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if widthErr != nil || heightErr != nil {
+		return ""
+	}
+	if width >= 1800 || height >= 1800 {
+		return "2k"
+	}
+	return "1k"
+}
+
+func xaiGrokAspectRatio(aspectRatio string) string {
+	switch strings.TrimSpace(aspectRatio) {
+	case "1:1", "3:4", "4:3", "9:16", "16:9", "2:3", "3:2", "19.5:9", "9:19.5", "20:9", "9:20", "1:2", "2:1":
+		return strings.TrimSpace(aspectRatio)
+	case "21:9":
+		return "20:9"
+	case "9:21":
+		return "9:20"
+	default:
+		return ""
+	}
+}
+
 func decodeDataURL(input string) ([]byte, string, error) {
 	if !strings.HasPrefix(input, "data:") {
 		return nil, "", errors.New("image_input must be a data URL")
@@ -2090,15 +2440,14 @@ func normalizeExternalResults(raw []byte, formatHint string) ([]normalizedResult
 
 		var nested map[string]any
 		if err := json.Unmarshal([]byte(text), &nested); err == nil {
-			if u := getStringField(nested, "url", "image_url", "media_url"); u != "" {
-				add(u, "remote-url", getStringField(nested, "mime_type"), revisedPrompt)
-			}
 			if b64 := getStringField(nested, "result", "b64_json"); b64 != "" {
 				mt := getStringField(nested, "mime_type")
 				if mt == "" {
 					mt = defaultMime
 				}
 				add(buildDataURL(b64, mt), "data-url", mt, revisedPrompt)
+			} else if u := getStringField(nested, "url", "image_url", "media_url"); u != "" {
+				add(u, "remote-url", getStringField(nested, "mime_type"), revisedPrompt)
 			}
 		}
 
@@ -2132,15 +2481,14 @@ func normalizeExternalResults(raw []byte, formatHint string) ([]normalizedResult
 				continue
 			}
 			rp := getStringField(m, "revised_prompt", "revisedPrompt")
-			if u := getStringField(m, "url"); u != "" {
-				add(u, "remote-url", getStringField(m, "mime_type"), rp)
-			}
 			if b64 := getStringField(m, "b64_json"); b64 != "" {
 				mt := getStringField(m, "mime_type")
 				if mt == "" {
 					mt = defaultMime
 				}
 				add(buildDataURL(b64, mt), "data-url", mt, rp)
+			} else if u := getStringField(m, "url"); u != "" {
+				add(u, "remote-url", getStringField(m, "mime_type"), rp)
 			}
 		}
 	}
@@ -2152,15 +2500,14 @@ func normalizeExternalResults(raw []byte, formatHint string) ([]normalizedResult
 				continue
 			}
 			rp := getStringField(m, "revised_prompt", "revisedPrompt")
-			if u := getStringField(m, "url", "image_url"); u != "" {
-				add(u, "remote-url", getStringField(m, "mime_type"), rp)
-			}
 			if b64 := getStringField(m, "result", "b64_json"); b64 != "" {
 				mt := getStringField(m, "mime_type")
 				if mt == "" {
 					mt = defaultMime
 				}
 				add(buildDataURL(b64, mt), "data-url", mt, rp)
+			} else if u := getStringField(m, "url", "image_url"); u != "" {
+				add(u, "remote-url", getStringField(m, "mime_type"), rp)
 			}
 			content, ok := m["content"].([]any)
 			if !ok {
@@ -2171,15 +2518,14 @@ func normalizeExternalResults(raw []byte, formatHint string) ([]normalizedResult
 				if !ok {
 					continue
 				}
-				if u := getStringField(cm, "url", "image_url"); u != "" {
-					add(u, "remote-url", getStringField(cm, "mime_type"), rp)
-				}
 				if b64 := getStringField(cm, "result", "b64_json"); b64 != "" {
 					mt := getStringField(cm, "mime_type")
 					if mt == "" {
 						mt = defaultMime
 					}
 					add(buildDataURL(b64, mt), "data-url", mt, rp)
+				} else if u := getStringField(cm, "url", "image_url"); u != "" {
+					add(u, "remote-url", getStringField(cm, "mime_type"), rp)
 				}
 			}
 		}
@@ -2208,35 +2554,32 @@ func normalizeExternalResults(raw []byte, formatHint string) ([]normalizedResult
 					if text := getStringField(cm, "text", "content"); text != "" {
 						addTextContent(text, rp)
 					}
-					if u := getStringField(cm, "url", "image_url"); u != "" {
-						add(u, "remote-url", getStringField(cm, "mime_type"), rp)
-					}
-					if imageURL, ok := cm["image_url"].(map[string]any); ok {
-						if u := getStringField(imageURL, "url"); u != "" {
-							add(u, "remote-url", getStringField(cm, "mime_type"), rp)
-						}
-					}
 					if b64 := getStringField(cm, "result", "b64_json"); b64 != "" {
 						mt := getStringField(cm, "mime_type")
 						if mt == "" {
 							mt = defaultMime
 						}
 						add(buildDataURL(b64, mt), "data-url", mt, rp)
+					} else if u := getStringField(cm, "url", "image_url"); u != "" {
+						add(u, "remote-url", getStringField(cm, "mime_type"), rp)
+					} else if imageURL, ok := cm["image_url"].(map[string]any); ok {
+						if u := getStringField(imageURL, "url"); u != "" {
+							add(u, "remote-url", getStringField(cm, "mime_type"), rp)
+						}
 					}
 				}
 			}
 		}
 	}
 
-	if u := getStringField(payload, "url"); u != "" {
-		add(u, "remote-url", getStringField(payload, "mime_type"), "")
-	}
 	if b64 := getStringField(payload, "result", "b64_json"); b64 != "" {
 		mt := getStringField(payload, "mime_type")
 		if mt == "" {
 			mt = defaultMime
 		}
 		add(buildDataURL(b64, mt), "data-url", mt, "")
+	} else if u := getStringField(payload, "url"); u != "" {
+		add(u, "remote-url", getStringField(payload, "mime_type"), "")
 	}
 
 	if len(results) == 0 {
@@ -2322,6 +2665,76 @@ func extractModelIDs(raw []byte) ([]string, error) {
 		return nil, errors.New("upstream models response did not contain model ids")
 	}
 	return models, nil
+}
+
+func extractTextContentValue(value any) string {
+	switch item := value.(type) {
+	case string:
+		return strings.TrimSpace(item)
+	case []any:
+		parts := make([]string, 0, len(item))
+		for _, child := range item {
+			if text := extractTextContentValue(child); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.TrimSpace(strings.Join(parts, "\n"))
+	case map[string]any:
+		if text := getStringField(item, "text", "content", "output_text"); text != "" {
+			return text
+		}
+		if nested, ok := item["content"]; ok {
+			return extractTextContentValue(nested)
+		}
+	}
+	return ""
+}
+
+func extractChatCompletionContent(raw []byte) (string, error) {
+	var payload any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", fmt.Errorf("failed to parse prompt helper response: %w", err)
+	}
+
+	root, ok := payload.(map[string]any)
+	if !ok {
+		return "", errors.New("prompt helper response is not a JSON object")
+	}
+
+	if content := getStringField(root, "output_text", "text", "content"); content != "" {
+		return content, nil
+	}
+
+	if choices, ok := root["choices"].([]any); ok {
+		for _, choiceValue := range choices {
+			choice, ok := choiceValue.(map[string]any)
+			if !ok {
+				continue
+			}
+			if message, ok := choice["message"].(map[string]any); ok {
+				if content := extractTextContentValue(message["content"]); content != "" {
+					return content, nil
+				}
+			}
+			if content := extractTextContentValue(choice["text"]); content != "" {
+				return content, nil
+			}
+		}
+	}
+
+	if output, ok := root["output"].([]any); ok {
+		for _, outputValue := range output {
+			outputItem, ok := outputValue.(map[string]any)
+			if !ok {
+				continue
+			}
+			if content := extractTextContentValue(outputItem["content"]); content != "" {
+				return content, nil
+			}
+		}
+	}
+
+	return "", errors.New("prompt helper response did not contain text content")
 }
 
 func parseUpstreamErrorMessage(status int, raw []byte) string {

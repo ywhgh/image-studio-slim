@@ -4436,6 +4436,7 @@ export default {
       external: '默认推荐中转模式；只有在上游明确支持 CORS 时，再切换为浏览器直连。',
       aspectRatio: '先确定画幅，再搭配合适的分辨率预设，桌面端和移动端都会按当前比例自适应展示。',
       resolution: '标准档兼容性最好。2K/4K 会优先请求原生大尺寸；如果上游拒绝尺寸，会自动用兼容尺寸生成后本地放大。',
+      resolutionNoLocalUpscale: '本地放大已关闭。2K/4K 只请求上游原生尺寸；如果上游不支持该尺寸，会直接显示失败，不会改用小图放大。',
       resolutionSub2api: 'Sub2API 模式当前仍使用内置 Sora 图像尺寸，4K 预设会在外部兼容模式下生效。',
       imageCount: 'Responses 协议最多生成 1 张图，其余模式最多可生成 3 张。',
       referenceImage: '上传文件只保留在当前会话和浏览器本地工作区中，不会持久化到服务器。'
@@ -4595,6 +4596,10 @@ export default {
       viewAll: '全部风格',
       customRatio: '自定义',
       defaultLabel: '默认',
+      localUpscaleOn: '允许本地放大',
+      localUpscaleOff: '禁止本地放大',
+      localUpscaleHintOn: '外部中转的原生大尺寸失败时，会尝试标准尺寸并在浏览器本地放大。',
+      localUpscaleHintOff: '外部中转只保留上游返回的原图，方便判断是否真正原生 4K。',
       seedTitle: '随机种子',
       seedHint: '固定种子可复现接近结果',
       seedPlaceholder: '可选，用于复现',
@@ -4623,6 +4628,9 @@ export default {
       autoCleanPlaceholders: '去占位符',
       autoCleanPlaceholdersOn: '已开启：生成前会把模板占位符替换为纯文本',
       autoCleanPlaceholdersOff: '已关闭：不会自动改写编辑框里的模板占位符',
+      replacementEditor: '替换项',
+      replacementEditorWithCount: '当前提示词有 {count} 个模板替换项',
+      replacementEditorSmart: '没有模板占位符时，可用提示词模型智能识别可替换片段',
       super4k: '超4K',
       super4kOn: '已开启：最终输出 {size}，上游优先使用4K原生尺寸，随后本地超采样。',
       super4kOff: '已关闭：点击开启超4K输出。',
@@ -4681,6 +4689,33 @@ export default {
       uploadTooLarge: '文件太大，请上传 256KB 以内的提示词文件。',
       uploadParseFailed: '没有从文件中解析到可用提示词。',
       uploadReadFailed: '读取文件失败，请重新上传。'
+    },
+    promptReplacements: {
+      title: '提示词替换项',
+      templateSubtitle: '已识别模板里的可替换槽位，修改后会替换回当前提示词。',
+      smartSubtitle: '没有明确模板槽位时，可以用提示词模型识别主体、场景、风格等可替换片段。',
+      templateMode: '模板槽位',
+      smartMode: '智能识别',
+      smartAnalyze: '智能识别替换项',
+      analyzing: '识别中...',
+      templateSlot: '模板',
+      smartSlot: '智能',
+      fullPrompt: '完整提示词',
+      hoverHint: '移动到左侧高亮区域，右侧会切换到对应编辑项。',
+      currentText: '当前内容',
+      replacementText: '替换为',
+      resetCurrent: '恢复原文',
+      locate: '定位原文',
+      contextTitle: '原文定位',
+      slot: '替换项',
+      emptyTitle: '还没有可替换项',
+      emptyText: '如果提示词没有 {argument} 槽位，可以点击上方按钮让提示词模型识别。',
+      smartParseFailed: '提示词模型没有返回可解析的 JSON。',
+      noSmartItems: '没有识别到可安全替换的片段，请调整提示词后重试。',
+      noChanges: '没有可应用的替换。',
+      applied: '已应用 {count} 个替换项。',
+      cancel: '取消',
+      apply: '应用替换'
     },
     previewCanvas: {
       splitCurrent: '本次',
@@ -4823,8 +4858,8 @@ export default {
     },
     providerModes: {
       sub2api: {
-        label: '当前站点 API Key',
-        description: '直接使用当前项目 API Key，无需登录。'
+        label: '其他站点',
+        description: '使用 Sub2API、chatgpt2api、NewAPI 等兼容站点的 API Key。'
       },
       externalRelay: {
         label: '外部中转',
@@ -4842,11 +4877,13 @@ export default {
     profiles: {
       openaiImageApi: 'OpenAI 图片接口（/images/generations）',
       openaiResponses: 'OpenAI Responses（/responses）',
+      xaiGrokImage: 'Grok 生图（xAI /images）',
       sub2apiCompatible: 'Sora 聊天兼容（/chat/completions）'
     },
     profileDescriptions: {
       openaiImageApi: '适合 gpt-image-1、gpt-image-1.5、gpt-image-2 这类图片模型，也是大多数 OpenAI 兼容中转的正确选择。',
       openaiResponses: '适合明确支持 /v1/responses + image_generation 工具的上游；通常一次只生成一张。',
+      xaiGrokImage: '使用 xAI Grok Imagine 图片接口，Base URL 建议填写 https://api.x.ai/v1；模型探测会请求 /image-generation-models。',
       sub2apiCompatible: '只适合旧版 Sora 聊天兼容后端，会请求 /chat/completions；如果上游返回 gpt-image 模型，请不要选这个。'
     },
     currentSiteProfiles: {
@@ -4884,6 +4921,7 @@ export default {
       promptCompatibilityApplied: '已使用上游兼容版提示词生成，原提示词仍保留在历史中。',
       generatedCount: '已生成 {count} 张图片。',
       batchGeneratedPartial: '已生成 {done}/{total} 张，其中 {failed} 张失败。',
+      historySavedPartial: '多图历史已尽量保存：已落库 {done}/{total} 张，其余仍在当前工作区，请先下载。',
       historySaveFailed: '图片已生成，但本地历史保存失败。',
       historySaveFailedMessage: '当前图片还在工作区里，请先下载保存；刷新或关闭页面后可能不会保留。',
       localStorageMayBeEvicted: '浏览器没有授予持久化存储权限，本地历史仍可用，但在清理站点数据或空间紧张时可能被移除。',
@@ -4946,6 +4984,13 @@ export default {
       helperModel: '模型',
       helperModelPlaceholder: '例如 gpt-4o-mini',
       helperModelHint: '该模型会用于"优化提示词"、"随机灵感"和"翻译提示词"。',
+      helperModelDetecting: '正在从上游探测提示词模型...',
+      helperModelDetected: '已探测到 {count} 个可用提示词模型',
+      helperModelRefresh: '探测提示词模型',
+      helperModelProbeFailed: '提示词模型探测失败',
+      helperModelProbeTimeout: '提示词模型探测超时',
+      helperModelProbeNoModels: '连接可用，但没有返回模型列表',
+      helperModelNotDetected: '当前模型未出现在上游模型列表中；可以继续手动使用，若失败请从列表中选择。',
       helperQualityMissing: '建议选择强文本模型；模型越擅长写提示词，优化和灵感质量越稳定。',
       helperQualityImageModel: '当前像生图模型，更建议换成文字/对话模型，否则优化和灵感质量可能不稳定。',
       helperQualityStrong: '当前模型适合作提示词助手；更容易给出具体、可画面化的优化结果。',

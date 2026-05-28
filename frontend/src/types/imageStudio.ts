@@ -3,6 +3,7 @@ export type ImageStudioProviderMode = 'sub2api' | 'external-relay' | 'external-b
 export type ImageStudioProtocolProfile =
   | 'openai-image-api'
   | 'openai-responses'
+  | 'xai-grok-image'
   | 'sub2api-sora-compatible'
   | 'chatgpt2api'
 
@@ -31,7 +32,8 @@ export interface ImageStudioHistoryItem {
   count: number
   resolutionPreset?: ImageStudioResolutionPreset
   requestedSize?: string
-  outputMode?: 'native' | 'upscaled' | 'super-4k'
+  actualSize?: string
+  outputMode?: 'native' | 'upscaled' | 'super-4k' | 'provider-scaled'
   quality?: string
   background?: string
   format?: string
@@ -73,6 +75,7 @@ export interface ImageStudioPreferences {
   background: string
   format: string
   externalBaseUrl: string
+  externalRelayLocalUpscale: boolean
 }
 
 export interface Sub2ApiImageStudioRequest {

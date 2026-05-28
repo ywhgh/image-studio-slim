@@ -21,23 +21,24 @@ services:
       UPSTREAM_TIMEOUT: 240s
       DOWNLOAD_TIMEOUT: 60s
       # Background image generation queue. Three jobs run in parallel; extra
-      # requests wait in memory until one finishes.
-      IMAGE_JOB_CONCURRENCY: 5
+      # requests wait in memory until one finishes. Keep this modest because
+      # large upstream image responses can be memory-heavy while being relayed.
+      IMAGE_JOB_CONCURRENCY: 3
       IMAGE_JOB_QUEUE_SIZE: 100
       IMAGE_JOB_RETENTION: 2h
       # Set to "true" only when your upstream is on the same private LAN as
       # the server. Default rejects loopback / RFC1918 / link-local hosts.
       ALLOW_PRIVATE_UPSTREAM: "false"
       TZ: Asia/Shanghai
-    # Keep the slim binary boxed in: 4-core/4G servers do not have headroom
-    # to spare if a runaway request leaks memory.
+    # Keep the slim binary boxed in while leaving enough room for large image
+    # relay responses and multi-image jobs.
     deploy:
       resources:
         limits:
           cpus: "2.0"
-          memory: 512M
+          memory: 1G
         reservations:
-          memory: 64M
+          memory: 128M
     logging:
       driver: json-file
       options:
@@ -49,4 +50,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 5s
-

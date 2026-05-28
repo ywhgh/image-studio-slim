@@ -116,13 +116,13 @@
 
                 <div class="studio-appearance-section">
                   <div class="studio-appearance-row">
-                    <p class="studio-appearance-label">{{ t('imageStudio.appearance.radius') }}</p>
+                  <p class="studio-appearance-label">{{ t('imageStudio.appearance.radius') }}</p>
                     <span class="studio-appearance-value">{{ studioAppearance.radiusScale }}px</span>
                   </div>
                   <input
                     v-model.number="studioAppearance.radiusScale"
                     type="range"
-                    min="10"
+                    min="0"
                     max="24"
                     class="studio-range"
                   />
@@ -226,6 +226,16 @@
                   </span>
                   <span>{{ locale === 'zh' ? 'GitHub 项目地址' : 'GitHub Project' }}</span>
                 </button>
+                <button
+                  type="button"
+                  class="studio-avatar-menu-item"
+                  @click.stop="openWorkspacePanelFromAvatar"
+                >
+                  <span class="studio-avatar-menu-icon">
+                    <Icon name="database" size="sm" />
+                  </span>
+                  <span>{{ locale === 'zh' ? '工作区管理' : 'Workspace' }}</span>
+                </button>
               </div>
             </transition>
 
@@ -241,6 +251,38 @@
                 <ul class="studio-release-list">
                   <li v-for="item in currentRelease.items" :key="item">{{ item }}</li>
                 </ul>
+              </div>
+            </transition>
+
+            <transition name="studio-popover">
+              <div v-if="workspacePanelOpen" class="studio-workspace-panel">
+                <div class="studio-workspace-panel-head">
+                  <div>
+                    <p>{{ locale === 'zh' ? '工作区管理' : 'Workspace' }}</p>
+                    <span>{{ locale === 'zh' ? '本地身份，后续可用于服务器同步。' : 'Local identity for future server sync.' }}</span>
+                  </div>
+                  <button type="button" class="studio-popover-close" @click="workspacePanelOpen = false">
+                    <Icon name="x" size="xs" />
+                  </button>
+                </div>
+                <div class="studio-workspace-field">
+                  <span>Workspace ID</span>
+                  <code>{{ workspaceIdentity.id }}</code>
+                </div>
+                <div class="studio-workspace-field">
+                  <span>Token</span>
+                  <code>{{ workspaceTokenLabel }}</code>
+                </div>
+                <div class="studio-workspace-actions">
+                  <button type="button" @click="copyWorkspaceId">
+                    <Icon name="copy" size="xs" />
+                    <span>{{ locale === 'zh' ? '复制 ID' : 'Copy ID' }}</span>
+                  </button>
+                  <button type="button" @click="exportWorkspaceIdentity">
+                    <Icon name="download" size="xs" />
+                    <span>{{ locale === 'zh' ? '导出身份' : 'Export' }}</span>
+                  </button>
+                </div>
               </div>
             </transition>
           </div>
@@ -310,7 +352,7 @@
                   <span class="studio-popover-trigger-meta">{{ connectionTriggerMeta }}</span>
                 </button>
                 <transition name="studio-popover">
-                  <div v-if="connectionPanelOpen" class="studio-popover-panel">
+                  <div v-if="connectionPanelOpen" class="studio-popover-panel is-upward">
                     <div class="studio-popover-head">
                       <div>
                         <p class="studio-popover-title">{{ t('imageStudio.popovers.connectionTitle') }}</p>
@@ -455,6 +497,60 @@
                         <span>{{ testConnectionLabel }}</span>
                       </button>
                     </template>
+
+                    <div class="studio-api-presets">
+                      <div class="studio-api-presets-head">
+                        <div>
+                          <span>{{ locale === 'zh' ? 'API 渠道库' : 'API Channel Library' }}</span>
+                          <small>{{ locale === 'zh'
+                            ? '保存多个 Base URL + Key，点击应用切换生图渠道。'
+                            : 'Save multiple Base URLs + keys, then apply to switch generation channels.' }}</small>
+                        </div>
+                      </div>
+                      <div class="studio-api-preset-save-row">
+                        <input
+                          v-model.trim="apiPresetDraftName"
+                          type="text"
+                          class="input"
+                          :placeholder="locale === 'zh'
+                            ? `渠道名称，例如 ${apiPresetSuggestedName || '备用 API'}`
+                            : `Channel name, e.g. ${apiPresetSuggestedName || 'Backup API'}`"
+                        />
+                        <button type="button" class="studio-api-preset-save" @click="saveCurrentApiPreset">
+                          <Icon name="plus" size="xs" />
+                          <span>{{ locale === 'zh' ? '保存为渠道' : 'Save Channel' }}</span>
+                        </button>
+                      </div>
+                      <div v-if="apiPresets.length" class="studio-api-preset-list">
+                        <div
+                          v-for="preset in apiPresets"
+                          :key="preset.id"
+                          class="studio-api-preset-item"
+                          :class="{ active: isApiPresetActive(preset) }"
+                        >
+                          <div class="studio-api-preset-info">
+                            <strong>{{ preset.name }}</strong>
+                            <small>{{ apiPresetSummary(preset) }}</small>
+                          </div>
+                          <button type="button" class="studio-api-preset-apply" @click="applyApiPreset(preset)">
+                            {{ isApiPresetActive(preset)
+                              ? (locale === 'zh' ? '当前' : 'Active')
+                              : (locale === 'zh' ? '应用' : 'Apply') }}
+                          </button>
+                          <button
+                            type="button"
+                            class="studio-api-preset-delete"
+                            :title="locale === 'zh' ? '删除预设' : 'Delete preset'"
+                            @click.stop="removeApiPreset(preset)"
+                          >
+                            <Icon name="trash" size="xs" />
+                          </button>
+                        </div>
+                      </div>
+                      <p v-else class="studio-helper">
+                        {{ locale === 'zh' ? '可以预存多个 API 地址、Key、模型和通道模式，后面一键切换生图渠道。' : 'Save multiple API URLs, keys, models, and channel modes, then switch generation channels with one click.' }}
+                      </p>
+                    </div>
                   </div>
                 </transition>
               </div>
@@ -474,7 +570,7 @@
                   <span class="studio-popover-trigger-label">{{ t('imageStudio.popovers.advancedTitle') }}</span>
                 </button>
                 <transition name="studio-popover">
-                  <div v-if="advancedPanelOpen" class="studio-popover-panel is-wide">
+                  <div v-if="advancedPanelOpen" class="studio-popover-panel is-wide is-upward">
                     <div class="studio-popover-head">
                       <div>
                         <p class="studio-popover-title">{{ t('imageStudio.popovers.advancedTitle') }}</p>
@@ -501,6 +597,26 @@
                             <span class="studio-resolution-name">{{ option.label }}</span>
                             <span class="studio-resolution-size">{{ option.size || t('imageStudio.settings.defaultLabel') }}</span>
                           </button>
+                        </div>
+                        <div
+                          v-if="preferences.providerMode === 'external-relay'"
+                          class="studio-local-upscale-control"
+                        >
+                          <button
+                            type="button"
+                            class="studio-local-upscale-toggle"
+                            :class="{ active: preferences.externalRelayLocalUpscale }"
+                            :aria-pressed="preferences.externalRelayLocalUpscale"
+                            @click="preferences.externalRelayLocalUpscale = !preferences.externalRelayLocalUpscale"
+                          >
+                            <Icon :name="preferences.externalRelayLocalUpscale ? 'check' : 'x'" size="sm" />
+                            <span>{{ preferences.externalRelayLocalUpscale
+                              ? t('imageStudio.settings.localUpscaleOn')
+                              : t('imageStudio.settings.localUpscaleOff') }}</span>
+                          </button>
+                          <p class="studio-helper">{{ preferences.externalRelayLocalUpscale
+                            ? t('imageStudio.settings.localUpscaleHintOn')
+                            : t('imageStudio.settings.localUpscaleHintOff') }}</p>
                         </div>
                         <p class="studio-helper">{{ resolutionHint }}</p>
                       </div>
@@ -627,6 +743,19 @@
                     >
                       <Icon :name="autoCleanPlaceholders ? 'check' : 'x'" size="sm" />
                       <span>{{ t('imageStudio.promptPanel.autoCleanPlaceholders') }}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      class="studio-chip"
+                      :class="{ active: promptReplacementModalOpen || promptTemplateArgumentCount > 0 }"
+                      :disabled="!prompt.trim() || promptHelperBusy === 'template'"
+                      :title="promptReplacementButtonTitle"
+                      @click="openPromptReplacementModal"
+                    >
+                      <Icon :name="promptHelperBusy === 'template' ? 'sync' : 'edit'" size="sm" />
+                      <span>{{ t('imageStudio.promptPanel.replacementEditor') }}</span>
+                      <small v-if="promptTemplateArgumentCount">{{ promptTemplateArgumentCount }}</small>
                     </button>
 
                     <button
@@ -1031,13 +1160,13 @@
                   />
                   <div v-else class="studio-prompt-template-empty">
                     <Icon name="grid" size="md" />
-                    <span>{{ selectedPromptTemplatePrompt }}</span>
+                    <span>{{ selectedPromptTemplateDescription }}</span>
                   </div>
                   <span v-if="selectedPromptTemplateMetaText" class="studio-prompt-template-badge">
                     {{ selectedPromptTemplateMetaText }}
                   </span>
                   <span class="studio-prompt-template-caption">
-                    {{ selectedPromptTemplatePrompt }}
+                    {{ selectedPromptTemplateDescription }}
                   </span>
                 </button>
 
@@ -1474,6 +1603,7 @@
               data-testid="studio-workbench-surface"
               class="studio-workbench-surface"
               :class="{ 'is-selecting': workbenchSelectionActive }"
+              :style="workbenchSurfaceStyle"
               @mousedown="handleWorkbenchSurfaceMouseDown"
             >
               <div v-if="!workspaceTiles.length" class="studio-workbench-empty">
@@ -1533,7 +1663,7 @@
                     <button
                       type="button"
                       class="studio-workbench-icon"
-                      :title="t('imageStudio.previewCanvas.expandPreview')"
+                      :aria-label="t('imageStudio.previewCanvas.expandPreview')"
                       @click.stop="openTileLightbox(tile.id, 'fit')"
                     >
                       <Icon name="eye" size="xs" />
@@ -1541,7 +1671,7 @@
                     <button
                       type="button"
                       class="studio-workbench-icon"
-                      :title="t('imageStudio.workbench.toggleSelection')"
+                      :aria-label="t('imageStudio.workbench.toggleSelection')"
                       @click.stop="toggleTileSelection(tile.id)"
                     >
                       <Icon :name="selectedTileIds.includes(tile.id) ? 'check' : 'plus'" size="xs" />
@@ -1564,7 +1694,21 @@
           <section class="studio-panel studio-side-panel studio-history-panel">
             <div class="studio-history-header">
               <div class="studio-history-title-row">
-                <p class="studio-panel-title">{{ t('imageStudio.sidebar.historyTitle') }}</p>
+                <div class="studio-history-title-wrap">
+                  <p
+                    class="studio-panel-title studio-history-title"
+                    tabindex="0"
+                    :title="t('imageStudio.sidebar.historySubtitle')"
+                  >
+                    {{ t('imageStudio.sidebar.historyTitle') }}
+                  </p>
+                </div>
+                <p v-if="historySummary.total" class="studio-history-stats">
+                  <span class="is-total">{{ locale === 'zh' ? `共${historySummary.total}条` : `${historySummary.total}` }}</span>
+                  <span class="is-native">{{ locale === 'zh' ? `原生${historySummary.native}` : `N${historySummary.native}` }}</span>
+                  <span class="is-upscaled">{{ locale === 'zh' ? `放大${historySummary.upscaled}` : `U${historySummary.upscaled}` }}</span>
+                  <span class="is-degraded">{{ locale === 'zh' ? `降级${historySummary.degraded}` : `D${historySummary.degraded}` }}</span>
+                </p>
                 <button
                   type="button"
                   class="studio-history-clear"
@@ -1574,14 +1718,13 @@
                   {{ t('imageStudio.promptPanel.clear') }}
                 </button>
               </div>
-              <p class="studio-helper">{{ t('imageStudio.sidebar.historySubtitle') }}</p>
             </div>
 
             <div v-if="!historyItems.length" class="studio-side-empty">
               {{ t('imageStudio.emptyStates.history') }}
             </div>
 
-            <div v-else class="studio-history-list">
+            <div v-else ref="historyListRef" class="studio-history-list" :style="historyListStyle">
               <HistoryCard
                 v-for="item in historyItems"
                 :key="item.id"
@@ -1608,6 +1751,8 @@
                 :tooltip-accent="accentPalette[studioAppearance.accentTone].color"
                 :tooltip-accent-deep="accentPalette[studioAppearance.accentTone].deep"
                 :tooltip-accent-rgb="accentPalette[studioAppearance.accentTone].rgb"
+                :tooltip-radius="studioAppearance.radiusScale"
+                :night-mode="studioAppearance.themeMode === 'night'"
                 @select="selectHistoryRecord(item.id)"
                 @restore="restoreHistoryRecord(item.id)"
                 @delete="removeHistoryRecord(item.id)"
@@ -1671,18 +1816,31 @@
                 </div>
 
                 <div class="studio-field-group">
-                  <label class="studio-field-label">{{ t('imageStudio.sidebar.helperModel') }}</label>
-                  <input
-                    v-model.trim="promptHelperConfig.model"
-                    type="text"
-                    class="input font-mono text-sm"
-                    list="prompt-helper-models"
-                    :placeholder="t('imageStudio.sidebar.helperModelPlaceholder')"
-                  />
+                  <label class="studio-field-label">
+                    {{ t('imageStudio.sidebar.helperModel') }}
+                    <span class="studio-inline-tip">{{ promptHelperProbeHint }}</span>
+                  </label>
+                  <div class="studio-model-row">
+                    <input
+                      v-model.trim="promptHelperConfig.model"
+                      type="text"
+                      class="input font-mono text-sm"
+                      list="prompt-helper-models"
+                      :placeholder="t('imageStudio.sidebar.helperModelPlaceholder')"
+                    />
+                    <button
+                      type="button"
+                      class="studio-icon-button inset tone-violet"
+                      :disabled="!promptHelperConfig.baseUrl.trim() || !promptHelperConfig.apiKey.trim() || detectingPromptHelperModels"
+                      :title="t('imageStudio.sidebar.helperModelRefresh')"
+                      @click="fetchPromptHelperModels(false)"
+                    >
+                      <Icon :name="detectingPromptHelperModels ? 'sync' : 'refresh'" size="sm" />
+                    </button>
+                  </div>
                   <datalist id="prompt-helper-models">
                     <option v-for="m in promptHelperModelHints" :key="m" :value="m" />
                   </datalist>
-                  <p class="studio-helper">{{ t('imageStudio.sidebar.helperModelHint') }}</p>
                   <p
                     class="studio-helper studio-helper-quality"
                     :class="{ 'is-warning': promptHelperQualityWarning }"
@@ -1894,6 +2052,8 @@
       <div
         v-if="referencePreviewOpen && referencePreviewSrc"
         class="studio-lightbox studio-reference-preview"
+        :class="{ 'theme-night': studioAppearance.themeMode === 'night' }"
+        :style="studioAppearanceStyle"
         @click.self="closeReferencePreview"
       >
         <div class="studio-reference-preview-panel">
@@ -1938,6 +2098,151 @@
               :alt="t('imageStudio.referenceImages.previewAlt')"
               class="studio-reference-preview-image"
             />
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="promptReplacementModalOpen"
+        class="studio-prompt-modal-backdrop"
+        :style="studioModalThemeStyle"
+        role="dialog"
+        aria-modal="true"
+        @click.self="closePromptReplacementModal"
+      >
+        <div class="studio-prompt-modal-panel is-replacements">
+          <div class="studio-prompt-modal-head">
+            <div>
+              <p class="studio-prompt-modal-title">{{ t('imageStudio.promptReplacements.title') }}</p>
+              <p class="studio-prompt-modal-text">{{ promptReplacementSubtitle }}</p>
+            </div>
+            <button type="button" class="studio-popover-close" @click="closePromptReplacementModal">
+              <Icon name="x" size="xs" />
+            </button>
+          </div>
+
+          <div class="studio-replacement-body">
+            <div class="studio-replacement-toolbar">
+              <div class="studio-replacement-mode">
+                <Icon :name="promptReplacementMode === 'template' ? 'edit' : 'sparkles'" size="sm" />
+                <span>{{ promptReplacementModeLabel }}</span>
+                <strong>{{ promptReplacementItems.length }}</strong>
+              </div>
+              <button
+                type="button"
+                class="studio-replacement-smart-button"
+                :disabled="promptHelperBusy === 'template'"
+                @click="analyzePromptReplacementItems"
+              >
+                <Icon :name="promptHelperBusy === 'template' ? 'sync' : 'sparkles'" size="sm" />
+                <span>{{ promptHelperBusy === 'template'
+                  ? t('imageStudio.promptReplacements.analyzing')
+                  : t('imageStudio.promptReplacements.smartAnalyze') }}</span>
+              </button>
+            </div>
+
+            <div v-if="promptReplacementError" class="studio-replacement-error">
+              {{ promptReplacementError }}
+            </div>
+
+            <div v-if="promptReplacementItems.length" class="studio-replacement-layout">
+              <section class="studio-replacement-preview-panel">
+                <div class="studio-replacement-panel-head">
+                  <div>
+                    <p>{{ t('imageStudio.promptReplacements.fullPrompt') }}</p>
+                    <span>{{ t('imageStudio.promptReplacements.hoverHint') }}</span>
+                  </div>
+                  <strong>{{ promptReplacementItems.length }}</strong>
+                </div>
+                <div class="studio-replacement-prompt-view">
+                  <template v-for="segment in promptReplacementSegments" :key="segment.key">
+                    <button
+                      v-if="segment.item"
+                      type="button"
+                      class="studio-replacement-highlight"
+                      :class="{ active: selectedPromptReplacementItemId === segment.item.id }"
+                      @click="selectPromptReplacementItem(segment.item.id)"
+                      @focus="selectPromptReplacementItem(segment.item.id)"
+                      @mouseenter="selectPromptReplacementItem(segment.item.id)"
+                    >
+                      {{ segment.text }}
+                    </button>
+                    <span v-else>{{ segment.text }}</span>
+                  </template>
+                </div>
+              </section>
+
+              <aside v-if="selectedPromptReplacementItem" class="studio-replacement-editor-panel">
+                <div class="studio-replacement-panel-head">
+                  <div>
+                    <p>{{ selectedPromptReplacementItem.label }}</p>
+                    <span>
+                      {{ selectedPromptReplacementPositionLabel }}
+                      ·
+                      {{ selectedPromptReplacementItem.kind === 'argument'
+                        ? t('imageStudio.promptReplacements.templateSlot')
+                        : t('imageStudio.promptReplacements.smartSlot') }}
+                    </span>
+                  </div>
+                  <Icon :name="selectedPromptReplacementItem.kind === 'argument' ? 'edit' : 'sparkles'" size="sm" />
+                </div>
+
+                <label class="studio-replacement-editor-field">
+                  <span>{{ t('imageStudio.promptReplacements.currentText') }}</span>
+                  <code>{{ selectedPromptReplacementItem.source }}</code>
+                </label>
+
+                <label class="studio-replacement-editor-field">
+                  <span>{{ t('imageStudio.promptReplacements.replacementText') }}</span>
+                  <textarea
+                    v-model="selectedPromptReplacementItem.replacement"
+                    class="input studio-replacement-editor-input"
+                    :placeholder="selectedPromptReplacementItem.source"
+                  ></textarea>
+                </label>
+
+                <div class="studio-replacement-editor-actions">
+                  <button type="button" @click="resetSelectedPromptReplacement">
+                    <Icon name="refresh" size="xs" />
+                    <span>{{ t('imageStudio.promptReplacements.resetCurrent') }}</span>
+                  </button>
+                </div>
+
+                <div class="studio-replacement-context">
+                  <div class="studio-replacement-context-head">
+                    <Icon name="search" size="sm" />
+                    <span>{{ t('imageStudio.promptReplacements.contextTitle') }}</span>
+                  </div>
+                  <p>
+                    <span>{{ promptReplacementPreview.before }}</span>
+                    <mark>{{ promptReplacementPreview.hit }}</mark>
+                    <span>{{ promptReplacementPreview.after }}</span>
+                  </p>
+                </div>
+              </aside>
+            </div>
+
+            <div v-else class="studio-replacement-empty">
+              <Icon name="sparkles" size="lg" />
+              <p>{{ t('imageStudio.promptReplacements.emptyTitle') }}</p>
+              <span>{{ t('imageStudio.promptReplacements.emptyText') }}</span>
+            </div>
+          </div>
+
+          <div class="studio-prompt-modal-actions is-upload-actions">
+            <button type="button" class="studio-prompt-upload-cancel" @click="closePromptReplacementModal">
+              {{ t('imageStudio.promptReplacements.cancel') }}
+            </button>
+            <button
+              type="button"
+              class="studio-prompt-upload-save"
+              :disabled="!promptReplacementItems.length"
+              @click="applyPromptReplacements"
+            >
+              {{ t('imageStudio.promptReplacements.apply') }}
+            </button>
           </div>
         </div>
       </div>
@@ -2236,11 +2541,7 @@
                   ? (locale === 'zh' ? '编辑提示词' : 'Edit Prompt')
                   : t('imageStudio.promptWorkspace.uploadPrompt') }}
               </p>
-              <p class="studio-prompt-modal-text">
-                {{ promptLibraryDraftMode === 'edit'
-                  ? (locale === 'zh' ? '修改你上传的预览图、标题、描述、提示词和分类。' : 'Update the preview image, title, description, prompt, and category you uploaded.')
-                  : (locale === 'zh' ? '本地保存预览图、标题、描述、提示词和分类。' : 'Save the preview image, title, description, prompt, and category locally.') }}
-              </p>
+              <p class="studio-prompt-modal-text">{{ promptLibraryUploadSubtitle }}</p>
             </div>
             <button type="button" class="studio-popover-close" @click="closePromptUploadModal">
               <Icon name="x" size="xs" />
@@ -2310,10 +2611,13 @@
             <button type="button" class="studio-prompt-upload-cancel" @click="closePromptUploadModal">
               {{ t('imageStudio.promptWorkspace.cancel') }}
             </button>
-            <button type="button" class="studio-prompt-upload-save" @click="savePromptLibraryDraft">
-              {{ promptLibraryDraftMode === 'edit'
-                ? (locale === 'zh' ? '保存修改' : 'Save Changes')
-                : t('imageStudio.promptWorkspace.saveLocalPrompt') }}
+            <button
+              type="button"
+              class="studio-prompt-upload-save"
+              :disabled="promptLibraryDraftSaving"
+              @click="savePromptLibraryDraft"
+            >
+              {{ promptLibrarySaveButtonLabel }}
             </button>
           </div>
         </div>
@@ -2387,6 +2691,8 @@
       <div
         v-if="promptLibraryDetailsLightboxOpen && promptLibraryDetailsItem?.imageUrl"
         class="studio-prompt-full-preview-backdrop"
+        :class="{ 'theme-night': studioAppearance.themeMode === 'night' }"
+        :style="studioAppearanceStyle"
         role="dialog"
         aria-modal="true"
         @click.self="closePromptLibraryDetailsLightbox"
@@ -2428,6 +2734,7 @@ import HistoryCard from '@/components/image-studio/HistoryCard.vue'
 import Icon from '@/components/icons/Icon.vue'
 import {
   BrowserDirectGenerationError,
+  callImageStudioPromptHelper,
   downloadRemoteImage,
   fetchChatgpt2ApiImageQuota,
   fetchImageStudioUsage,
@@ -2436,10 +2743,40 @@ import {
   probeImageStudioUpstreamModels,
   resolveImageStudioSize,
 } from '@/api/imageStudio'
-import type { ImageStudioBatchProgress, ImageStudioGenerationOptions } from '@/api/imageStudio'
+import type { ImageStudioBatchProgress, ImageStudioGenerationOptions, PromptHelperChatMessage } from '@/api/imageStudio'
 import { useImageStudioAppearance } from '@/composables/useImageStudioAppearance'
 import { useImageStudioPreferences } from '@/composables/useImageStudioPreferences'
 import { calculateGptImagePlaygroundSize } from '@/utils/gptImagePlaygroundSize'
+import {
+  buildPromptReplacementSegments,
+  normalizeSmartReplacementItems,
+  parsePromptArgumentItems,
+  resolvePromptReplacementTarget,
+  resolvePromptTemplateArguments,
+  type PromptReplacementItem,
+  type PromptReplacementSegment,
+} from '@/utils/promptTemplate'
+import {
+  accentPalette,
+  createAccentOptions,
+  createBackgroundOptions,
+  createCompatibilityProfiles,
+  createCurrentRelease,
+  createCurrentSiteProfileOptions,
+  createFormatOptions,
+  createProviderModes,
+  createQualityOptions,
+  createTextureOptions,
+  createThemeModeOptions,
+  createTooltipStyleOptions,
+  createTranslateLanguages,
+  getInspirationPrompts,
+  getPromptChips,
+  getStylePresets,
+  getTranslateLanguageName,
+  type StylePresetOption,
+  type TranslateLang,
+} from '@/utils/imageStudioWorkspaceOptions'
 import {
   clearImageStudioHistory,
   deleteImageStudioHistoryItem,
@@ -2451,11 +2788,22 @@ import {
 } from '@/services/imageStudioHistory'
 import {
   deleteImageStudioPromptLibraryItem,
+  isImageStudioPromptLibraryRemoteEnabled,
   listImageStudioPromptLibraryItems,
   revokeImageStudioPromptLibraryItems,
   saveImageStudioPromptLibraryItem,
   updateImageStudioPromptLibraryItem,
 } from '@/services/imageStudioPromptLibrary'
+import {
+  deleteImageStudioApiPreset,
+  listImageStudioApiPresets,
+  maskImageStudioApiKey,
+  saveImageStudioApiPreset,
+  type ImageStudioApiPreset,
+} from '@/services/imageStudioApiPresets'
+import {
+  getImageStudioWorkspaceIdentity,
+} from '@/services/imageStudioWorkspace'
 import { useAppStore } from '@/stores'
 import type {
   ExternalImageStudioRequest,
@@ -2478,21 +2826,14 @@ const LIGHTBOX_ZOOM_MIN = 1
 const LIGHTBOX_ZOOM_MAX = 4
 const LIGHTBOX_ZOOM_STEP = 0.35
 const PROMPT_LIBRARY_IMAGE_MAX_BYTES = 20 * 1024 * 1024
-const IMAGE_STUDIO_RELEASE_VERSION = 'v1.3.1'
 const GITHUB_PROJECT_URL = 'https://github.com/ywhgh/image-studio-slim'
+const IMAGE_STUDIO_DEBUG = false
 
 interface WorkspaceSyncOptions {
   prioritizedTileIds?: string[]
   selectedTileIds?: string[]
   previewTileId?: string | null
   activeHistoryId?: string | null
-}
-
-interface StylePresetOption {
-  id: string
-  title: string
-  subtitle: string
-  promptHint: string
 }
 
 interface PromptLibraryOption {
@@ -2532,14 +2873,6 @@ interface PromptDetailParticle {
   text: string
 }
 
-interface ImageStudioReleaseNotes {
-  version: string
-  title: string
-  subtitle: string
-  date: string
-  items: string[]
-}
-
 const props = withDefaults(defineProps<{
   embedded?: boolean
 }>(), {
@@ -2549,6 +2882,7 @@ const props = withDefaults(defineProps<{
 const { t, locale } = useI18n()
 const appStore = useAppStore()
 const preferences = useImageStudioPreferences()
+const workspaceIdentity = getImageStudioWorkspaceIdentity()
 const {
   appearance: studioAppearance,
   resetAppearance: resetStudioAppearance,
@@ -2556,8 +2890,12 @@ const {
 
 const sub2apiApiKey = ref('')
 const externalApiKey = ref('')
+const apiPresets = ref<ImageStudioApiPreset[]>([])
+const apiPresetDraftName = ref('')
 const prompt = ref('')
 const studioShellRef = ref<HTMLElement | null>(null)
+const historyListRef = ref<HTMLElement | null>(null)
+const historyListMaxHeight = ref('')
 const promptTextareaRef = ref<HTMLTextAreaElement | null>(null)
 const studioTitleTooltipRef = ref<HTMLElement | null>(null)
 const studioTitleTooltipVisible = ref(false)
@@ -2571,6 +2909,10 @@ const studioTitleTooltipStyle = ref<Record<string, string>>({
 })
 const studioTitleTooltipTarget = ref<HTMLElement | null>(null)
 let studioTitleTooltipOpenTimer = 0
+let historyListResizeObserver: ResizeObserver | null = null
+let workbenchResizeObserver: ResizeObserver | null = null
+const HISTORY_VISIBLE_CARD_LIMIT = 3
+const WORKBENCH_VISIBLE_ROW_LIMIT = 3
 const negativePrompt = ref('')
 const promptLibraryOpen = ref(false)
 const promptLibrarySearch = ref('')
@@ -2591,6 +2933,7 @@ const promptLibraryDraftImageFile = ref<File | null>(null)
 const promptLibraryDraftImageUrl = ref('')
 const promptLibraryDraftRemoveImage = ref(false)
 const promptLibraryDraftError = ref('')
+const promptLibraryDraftSaving = ref(false)
 const promptLibraryDetailsItem = ref<PromptLibraryOption | null>(null)
 const selectedPromptLibraryOption = ref<PromptLibraryOption | null>(null)
 const promptLibraryDetailsLightboxOpen = ref(false)
@@ -2602,6 +2945,12 @@ const compatibilityPreviewOriginal = ref('')
 const compatibilityPreviewPrompt = ref('')
 const confirmedCompatibilityPrompt = ref('')
 const autoCleanPlaceholders = ref(false)
+const promptReplacementModalOpen = ref(false)
+const promptReplacementMode = ref<'template' | 'smart'>('template')
+const promptReplacementBaseText = ref('')
+const promptReplacementItems = ref<PromptReplacementItem[]>([])
+const selectedPromptReplacementItemId = ref('')
+const promptReplacementError = ref('')
 const super4kEnabled = ref(false)
 const referenceImages = ref<string[]>([])
 const REFERENCE_IMAGE_MAX_COUNT = 6
@@ -2609,6 +2958,7 @@ const REFERENCE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 const referenceImageError = ref('')
 const referencePreviewIndex = ref<number | null>(null)
 const savedPromptLibraryItems = ref<ImageStudioPromptLibraryItem[]>([])
+const promptLibraryUsesRemoteStorage = isImageStudioPromptLibraryRemoteEnabled()
 let promptLibraryDetailsPreviewTimer: number | null = null
 let promptLibraryLongPressTimer: number | null = null
 let promptDetailsParticleId = 0
@@ -2801,6 +3151,7 @@ const compareViewMode = ref<'side-by-side' | 'slider'>('side-by-side')
 const selectedStylePresetId = ref('default')
 const avatarMenuOpen = ref(false)
 const releasePanelOpen = ref(false)
+const workspacePanelOpen = ref(false)
 const releasePanelRef = ref<HTMLElement | null>(null)
 const appearancePanelOpen = ref(false)
 const appearancePanelRef = ref<HTMLElement | null>(null)
@@ -2818,60 +3169,23 @@ const seedPanelOpen = ref(false)
 const seedPanelRef = ref<HTMLElement | null>(null)
 const promptLibraryCategoryMenuRef = ref<HTMLElement | null>(null)
 
-type TranslateLang = 'en' | 'ja' | 'de' | 'zh' | 'ru'
 const translateLang = ref<TranslateLang>('en')
 const translating = ref(false)
-const translateLanguages = computed<{ value: TranslateLang; label: string }[]>(() => [
-  { value: 'en', label: t('imageStudio.translate.languages.en') },
-  { value: 'ja', label: t('imageStudio.translate.languages.ja') },
-  { value: 'de', label: t('imageStudio.translate.languages.de') },
-  { value: 'zh', label: t('imageStudio.translate.languages.zh') },
-  { value: 'ru', label: t('imageStudio.translate.languages.ru') },
-])
-
-const currentRelease = computed<ImageStudioReleaseNotes>(() => {
-  if (locale.value === 'zh') {
-    return {
-      version: IMAGE_STUDIO_RELEASE_VERSION,
-      title: `${IMAGE_STUDIO_RELEASE_VERSION} 更新内容`,
-      subtitle: '图片工作流稳定性与提示词库增强',
-      date: '2026-05-23',
-      items: [
-        '新增 Cloudflare R2 提示词库 Worker，支持安全保存提示词、分类和预览图。',
-        '长按自定义提示词可编辑标题、分类、描述、提示词和预览图，内置模板保持只读。',
-        '恢复 4K 预设为按画幅长边 3840 生成，并保留超 4K 开关。',
-        '优化图生图提示词约束，减少参考图主体、姿态和构图跑偏。',
-        '增强历史记录保存兜底，浏览器持久化失败时仍保留本次完成图片。',
-        '优化 Sub2API / 外部中转探测、错误提示和生图请求兼容性。',
-      ],
-    }
-  }
-  return {
-    version: IMAGE_STUDIO_RELEASE_VERSION,
-    title: `${IMAGE_STUDIO_RELEASE_VERSION} Release Notes`,
-    subtitle: 'Image workflow stability and prompt library improvements',
-    date: '2026-05-23',
-    items: [
-      'Added a Cloudflare R2 prompt-library Worker for safe prompt, category, and preview-image storage.',
-      'Long-press custom prompts to edit title, category, description, prompt text, and preview image while built-in templates stay read-only.',
-      'Restored 4K presets to use a 3840 long edge by aspect ratio, with the over-4K switch preserved.',
-      'Tightened image-to-image prompt locking to better preserve subject, pose, and composition from references.',
-      'Improved history fallback so completed images stay in the current session when browser persistence fails.',
-      'Improved Sub2API / external relay probing, error messages, and image request compatibility.',
-    ],
-  }
-})
+const translateLanguages = computed(() => createTranslateLanguages(t))
+const currentRelease = computed(() => createCurrentRelease(locale.value))
 
 function toggleAvatarMenu() {
   avatarMenuOpen.value = !avatarMenuOpen.value
   if (avatarMenuOpen.value) {
     releasePanelOpen.value = false
+    workspacePanelOpen.value = false
   }
 }
 
 function openReleasePanelFromAvatar() {
   avatarMenuOpen.value = false
   releasePanelOpen.value = true
+  workspacePanelOpen.value = false
 }
 
 function openGitHubProject() {
@@ -2879,14 +3193,43 @@ function openGitHubProject() {
   window.open(GITHUB_PROJECT_URL, '_blank', 'noopener,noreferrer')
 }
 
-function translateLanguageName(code: TranslateLang): string {
-  switch (code) {
-    case 'en': return 'English'
-    case 'ja': return 'Japanese'
-    case 'de': return 'German'
-    case 'zh': return 'Simplified Chinese'
-    case 'ru': return 'Russian'
+function openWorkspacePanelFromAvatar() {
+  avatarMenuOpen.value = false
+  releasePanelOpen.value = false
+  workspacePanelOpen.value = true
+}
+
+const workspaceTokenLabel = computed(() => {
+  const token = workspaceIdentity.token
+  if (token.length <= 14) {
+    return token ? '********' : ''
   }
+  return `${token.slice(0, 6)}...${token.slice(-6)}`
+})
+
+async function copyWorkspaceId() {
+  try {
+    await navigator.clipboard.writeText(workspaceIdentity.id)
+    appStore.showSuccess(locale.value === 'zh' ? '工作区 ID 已复制。' : 'Workspace ID copied.')
+  } catch {
+    appStore.showError(locale.value === 'zh' ? '复制工作区 ID 失败。' : 'Failed to copy workspace ID.')
+  }
+}
+
+function exportWorkspaceIdentity() {
+  const payload = {
+    workspaceId: workspaceIdentity.id,
+    workspaceToken: workspaceIdentity.token,
+    exportedAt: new Date().toISOString(),
+    note: 'Keep this file private. The token is used to restore or sync this workspace later.',
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  triggerBlobDownload(blob, `image-studio-workspace-${workspaceIdentity.id}.json`)
+  appStore.showSuccess(locale.value === 'zh' ? '工作区身份已导出。' : 'Workspace identity exported.')
+}
+
+function translateLanguageName(code: TranslateLang): string {
+  return getTranslateLanguageName(code)
 }
 
 async function translatePromptAction() {
@@ -3013,6 +3356,14 @@ const promptHelperQualityHint = computed(() => {
   if (!promptHelperConfigured.value) {
     return t('imageStudio.sidebar.helperQualityMissing')
   }
+  if (
+    promptHelperModelProbeState.value.kind === 'ok' &&
+    detectedPromptHelperModels.value.length > 0 &&
+    promptHelperConfig.model.trim() &&
+    !detectedPromptHelperModels.value.includes(promptHelperConfig.model.trim())
+  ) {
+    return t('imageStudio.sidebar.helperModelNotDetected')
+  }
   if (promptHelperUsesImageModel.value) {
     return t('imageStudio.sidebar.helperQualityImageModel')
   }
@@ -3022,100 +3373,60 @@ const promptHelperQualityHint = computed(() => {
   return t('imageStudio.sidebar.helperQualityGeneric')
 })
 
-const promptHelperModelHints = PROMPT_HELPER_MODEL_HINTS
+const promptHelperModelHints = computed(() => Array.from(new Set([
+  ...detectedPromptHelperModels.value,
+  ...PROMPT_HELPER_MODEL_HINTS,
+])))
+
+const promptHelperProbeHint = computed(() => {
+  if (detectingPromptHelperModels.value || promptHelperModelProbeState.value.kind === 'busy') {
+    return t('imageStudio.sidebar.helperModelDetecting')
+  }
+  if (promptHelperModelProbeState.value.kind === 'ok') {
+    const count = promptHelperModelProbeState.value.count || detectedPromptHelperModels.value.length
+    return count > 0
+      ? t('imageStudio.sidebar.helperModelDetected', { count })
+      : t('imageStudio.sidebar.helperModelProbeNoModels')
+  }
+  if (promptHelperModelProbeState.value.kind === 'fail') {
+    return promptHelperModelProbeState.value.message || t('imageStudio.sidebar.helperModelProbeFailed')
+  }
+  return t('imageStudio.sidebar.helperModelHint')
+})
 
 function resetPromptHelperConfig() {
   promptHelperConfig.baseUrl = ''
   promptHelperConfig.apiKey = ''
   promptHelperConfig.model = ''
+  detectedPromptHelperModels.value = []
+  promptHelperModelProbeState.value = { kind: 'idle' }
 }
 
-const promptHelperBusy = ref<'optimize' | 'inspire' | 'compatibility' | null>(null)
+const promptHelperBusy = ref<'optimize' | 'inspire' | 'compatibility' | 'template' | null>(null)
 
-interface OpenAIChatMessage {
-  role: 'system' | 'user' | 'assistant'
-  content: string
-}
-
-async function callPromptHelper(messages: OpenAIChatMessage[], signal?: AbortSignal): Promise<string> {
+async function callPromptHelper(messages: PromptHelperChatMessage[], signal?: AbortSignal): Promise<string> {
   const baseUrl = promptHelperConfig.baseUrl.trim().replace(/\/+$/, '')
   const apiKey = promptHelperConfig.apiKey.trim()
   const model = promptHelperConfig.model.trim()
   if (!baseUrl || !apiKey || !model) {
     throw new Error(t('imageStudio.sidebar.helperMissing'))
   }
-  const endpoint = `${baseUrl}/chat/completions`
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-      'Accept': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: 0.85,
-      max_tokens: 600,
-      stream: false,
-    }),
-    signal,
-  })
-  if (!response.ok) {
-    let detail = `HTTP ${response.status}`
-    try {
-      const errBody = await response.json()
-      detail = (errBody && (errBody.error?.message || errBody.message)) || detail
-    } catch {
-      /* ignore parse */
-    }
-    throw new Error(detail)
-  }
-  const payload = await response.json()
-  const content = payload?.choices?.[0]?.message?.content
-  if (typeof content !== 'string' || !content.trim()) {
+  const content = await callImageStudioPromptHelper({
+    baseUrl,
+    apiKey,
+    model,
+    messages,
+    temperature: 0.85,
+    maxTokens: 600,
+  }, signal)
+  if (!content) {
     throw new Error(t('imageStudio.toasts.helperEmpty'))
   }
-  return content.trim()
+  return content
 }
 
-function sanitizePromptHelperOutput(value: string): string {
-  const trimmed = value.trim()
-  return trimmed
-    .replace(/^```(?:text|txt)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .replace(/^["'“”]+|["'“”]+$/g, '')
-    .trim()
-}
-
-async function rewritePromptForCompatibility(
-  resolvedPromptText: string,
-  localCompatiblePrompt: string,
-  signal?: AbortSignal
-): Promise<string> {
-  const localeHint = locale.value === 'zh' ? '中文' : 'English'
-  const systemPrompt = `You are a senior text-to-image prompt editor. Rewrite the user's prompt in ${localeHint}. Keep the original visual setup, but translate risky wording into neutral professional photography or fashion language. Preserve subject, clothes, pose, composition, lighting, environment, and style as much as possible. If the prompt includes a person, make the subject an explicit adult. Keep the final output to one single prompt only, no bullets, no quotes, no markdown, no explanations.`
-  const userMessage = [
-    'Original prompt:',
-    resolvedPromptText,
-    '',
-    'Preferred safe rewrite:',
-    localCompatiblePrompt || '(none)',
-    '',
-    'Rules:',
-    '- Keep the same visual scene and composition as much as possible.',
-    '- Rephrase sensitive wording into neutral photography or fashion wording.',
-    '- Do not remove the outfit, background, pose, or mood unless needed for safety.',
-    '- Output only the final prompt text.',
-  ].join('\n')
-  const result = await callPromptHelper([
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userMessage },
-  ], signal)
-  const cleaned = sanitizePromptHelperOutput(result)
-  return cleaned || localCompatiblePrompt || resolvedPromptText
-}
 const workbenchSurfaceRef = ref<HTMLElement | null>(null)
+const workbenchSurfaceMaxHeight = ref('')
 const lightboxStageRef = ref<HTMLElement | null>(null)
 const lightboxFrameRef = ref<HTMLElement | null>(null)
 const lightboxImageRef = ref<HTMLImageElement | null>(null)
@@ -3138,155 +3449,40 @@ const chatgpt2ApiQuotaLoading = ref(false)
 const chatgpt2ApiQuotaError = ref('')
 const workbenchTileElements = new Map<string, HTMLElement>()
 
-const providerModes = computed(() => [
-  {
-    value: 'sub2api' as const,
-    label: t('imageStudio.providerModes.sub2api.label'),
-    description: t('imageStudio.providerModes.sub2api.description'),
-  },
-  {
-    value: 'external-relay' as const,
-    label: t('imageStudio.providerModes.externalRelay.label'),
-    description: t('imageStudio.providerModes.externalRelay.description'),
-  },
-  {
-    value: 'external-browser' as const,
-    label: t('imageStudio.providerModes.externalBrowser.label'),
-    description: t('imageStudio.providerModes.externalBrowser.description'),
-  },
-  {
-    value: 'gpt-image-playground' as const,
-    label: t('imageStudio.providerModes.gptImagePlayground.label'),
-    description: t('imageStudio.providerModes.gptImagePlayground.description'),
-  },
-])
-
-const accentPalette = {
-  blue: {
-    color: '#2563eb',
-    deep: '#1d4ed8',
-    rgb: '37, 99, 235',
-    soft: 'rgba(37, 99, 235, 0.12)',
-    ring: 'rgba(37, 99, 235, 0.32)',
-    shadow: 'rgba(37, 99, 235, 0.18)',
-    preview: 'linear-gradient(135deg, #60a5fa 0%, #2563eb 100%)',
-  },
-  emerald: {
-    color: '#059669',
-    deep: '#047857',
-    rgb: '5, 150, 105',
-    soft: 'rgba(5, 150, 105, 0.14)',
-    ring: 'rgba(5, 150, 105, 0.32)',
-    shadow: 'rgba(5, 150, 105, 0.18)',
-    preview: 'linear-gradient(135deg, #34d399 0%, #059669 100%)',
-  },
-  amber: {
-    color: '#d97706',
-    deep: '#b45309',
-    rgb: '217, 119, 6',
-    soft: 'rgba(217, 119, 6, 0.14)',
-    ring: 'rgba(217, 119, 6, 0.32)',
-    shadow: 'rgba(217, 119, 6, 0.18)',
-    preview: 'linear-gradient(135deg, #fbbf24 0%, #d97706 100%)',
-  },
-  rose: {
-    color: '#e11d48',
-    deep: '#be123c',
-    rgb: '225, 29, 72',
-    soft: 'rgba(225, 29, 72, 0.14)',
-    ring: 'rgba(225, 29, 72, 0.32)',
-    shadow: 'rgba(225, 29, 72, 0.18)',
-    preview: 'linear-gradient(135deg, #fb7185 0%, #e11d48 100%)',
-  },
-} as const
-
-const themeModeOptions = computed(() => [
-  { value: 'day' as const, label: t('imageStudio.appearance.themeModes.day'), icon: 'sun' as const },
-  { value: 'night' as const, label: t('imageStudio.appearance.themeModes.night'), icon: 'moon' as const },
-])
-
-const accentOptions = computed(() => [
-  { value: 'blue' as const, label: t('imageStudio.appearance.accents.blue'), preview: accentPalette.blue.preview },
-  { value: 'emerald' as const, label: t('imageStudio.appearance.accents.emerald'), preview: accentPalette.emerald.preview },
-  { value: 'amber' as const, label: t('imageStudio.appearance.accents.amber'), preview: accentPalette.amber.preview },
-  { value: 'rose' as const, label: t('imageStudio.appearance.accents.rose'), preview: accentPalette.rose.preview },
-])
-
-const textureOptions = computed(() => [
-  {
-    value: 'soft' as const,
-    label: t('imageStudio.appearance.textures.soft'),
-    description: t('imageStudio.appearance.textureDescriptions.soft'),
-  },
-  {
-    value: 'glass' as const,
-    label: t('imageStudio.appearance.textures.glass'),
-    description: t('imageStudio.appearance.textureDescriptions.glass'),
-  },
-  {
-    value: 'solid' as const,
-    label: t('imageStudio.appearance.textures.solid'),
-    description: t('imageStudio.appearance.textureDescriptions.solid'),
-  },
-])
+const providerModes = computed(() => createProviderModes(t))
+const themeModeOptions = computed(() => createThemeModeOptions(t))
+const accentOptions = computed(() => createAccentOptions(t))
+const textureOptions = computed(() => createTextureOptions(t))
 
 const tooltipStyleSectionLabel = computed(() => (
   locale.value === 'zh' ? '文字提示' : 'Text tooltip'
 ))
 
-const tooltipStyleOptions = computed(() => (
-  locale.value === 'zh'
-    ? [
-        {
-          value: 'outline' as const,
-          label: '描边主题色',
-          description: '跟随当前主题色的描边提示，适合信息密集区。',
-        },
-        {
-          value: 'plain' as const,
-          label: '简约黑字',
-          description: '白底黑字，无描边，视觉最轻。',
-        },
-        {
-          value: 'soft' as const,
-          label: '柔光主题色',
-          description: '跟随当前主题色的柔光卡片，长文本可读性更强。',
-        },
-      ]
-    : [
-        {
-          value: 'outline' as const,
-          label: 'Theme outline',
-          description: 'A bordered tooltip that follows the current theme color.',
-        },
-        {
-          value: 'plain' as const,
-          label: 'Plain text',
-          description: 'White surface with black text and no border.',
-        },
-        {
-          value: 'soft' as const,
-          label: 'Theme glow',
-          description: 'A theme-colored soft card for long readable text.',
-        },
-      ]
-))
+const tooltipStyleOptions = computed(() => createTooltipStyleOptions(locale.value))
 
 const studioTitleTooltipResolvedStyle = computed(() => {
   const accent = accentPalette[studioAppearance.accentTone]
+  const radius = Math.min(24, Math.max(0, studioAppearance.radiusScale))
+  const tooltipRadius = radius === 0 ? 0 : Math.max(10, radius - 1)
+  const outlineText = studioAppearance.accentTone === 'blue'
+    ? `color-mix(in srgb, #1e293b 72%, ${accent.deep} 28%)`
+    : accent.deep
   return {
     ...studioTitleTooltipStyle.value,
     '--tooltip-accent': accent.color,
     '--tooltip-accent-deep': accent.deep,
     '--tooltip-accent-rgb': accent.rgb,
     '--tooltip-accent-soft': accent.soft,
+    '--tooltip-outline-text': outlineText,
+    '--studio-radius-control': `${tooltipRadius}px`,
   }
 })
 
 
 const studioAppearanceStyle = computed(() => {
   const accent = accentPalette[studioAppearance.accentTone]
-  const radius = Math.min(24, Math.max(10, studioAppearance.radiusScale))
+  const radius = Math.min(24, Math.max(0, studioAppearance.radiusScale))
+  const radiusOrZero = (value: number) => radius === 0 ? 0 : value
 
   return {
     '--studio-accent': accent.color,
@@ -3297,17 +3493,19 @@ const studioAppearanceStyle = computed(() => {
     '--theme-color': accent.color,
     '--theme-color-rgb': accent.rgb,
     '--theme-text-on-primary': '#ffffff',
-    '--studio-radius-window': `${radius + 8}px`,
-    '--studio-radius-panel': `${radius + 2}px`,
-    '--studio-radius-control': `${Math.max(10, radius - 1)}px`,
-    '--studio-radius-soft': `${Math.max(8, radius - 5)}px`,
-    '--studio-radius-image': `${radius + 4}px`,
+    '--studio-radius-window': `${radiusOrZero(radius + 8)}px`,
+    '--studio-radius-panel': `${radiusOrZero(radius + 2)}px`,
+    '--studio-radius-control': `${radiusOrZero(Math.max(10, radius - 1))}px`,
+    '--studio-radius-soft': `${radiusOrZero(Math.max(8, radius - 5))}px`,
+    '--studio-radius-image': `${radiusOrZero(radius + 4)}px`,
   } as Record<string, string>
 })
 
 const studioModalThemeStyle = computed(() => {
   const accent = accentPalette[studioAppearance.accentTone]
   const isNight = studioAppearance.themeMode === 'night'
+  const radius = Math.min(24, Math.max(0, studioAppearance.radiusScale))
+  const radiusOrZero = (value: number) => radius === 0 ? 0 : value
 
   return {
     '--studio-accent': accent.color,
@@ -3318,34 +3516,71 @@ const studioModalThemeStyle = computed(() => {
     '--theme-color': accent.color,
     '--theme-color-rgb': accent.rgb,
     '--theme-text-on-primary': '#ffffff',
-    '--studio-card-background': isNight ? 'rgba(30, 32, 40, 0.66)' : 'rgba(255, 255, 255, 0.66)',
-    '--studio-soft-background': isNight ? 'rgba(20, 22, 29, 0.58)' : 'rgba(248, 250, 252, 0.58)',
+    '--studio-card-background': isNight ? 'rgba(24, 26, 34, 0.94)' : 'rgba(255, 255, 255, 0.66)',
+    '--studio-soft-background': isNight ? 'rgba(17, 19, 27, 0.90)' : 'rgba(248, 250, 252, 0.58)',
     '--studio-text': isNight ? '#e5eefc' : '#111827',
     '--studio-muted': isNight ? '#a9b5c7' : '#64748b',
     '--studio-border': isNight ? 'rgba(255, 255, 255, 0.10)' : 'rgba(31, 41, 55, 0.08)',
-    '--modal-glass-bg': isNight ? 'rgba(30, 30, 34, 0.66)' : 'rgba(255, 255, 255, 0.68)',
-    '--modal-glass-head': isNight ? 'rgba(32, 34, 42, 0.52)' : 'rgba(255, 255, 255, 0.54)',
-    '--modal-glass-veil': isNight ? 'rgba(7, 10, 18, 0.52)' : 'rgba(247, 249, 252, 0.54)',
+    '--studio-radius-window': `${radiusOrZero(radius + 8)}px`,
+    '--studio-radius-panel': `${radiusOrZero(radius + 2)}px`,
+    '--studio-radius-control': `${radiusOrZero(Math.max(10, radius - 1))}px`,
+    '--studio-radius-soft': `${radiusOrZero(Math.max(8, radius - 5))}px`,
+    '--studio-radius-image': `${radiusOrZero(radius + 4)}px`,
+    '--modal-glass-bg': isNight ? 'rgba(24, 26, 34, 0.94)' : 'rgba(255, 255, 255, 0.68)',
+    '--modal-glass-head': isNight ? 'rgba(24, 26, 34, 0.90)' : 'rgba(255, 255, 255, 0.54)',
+    '--modal-glass-veil': isNight ? 'rgba(7, 10, 18, 0.72)' : 'rgba(247, 249, 252, 0.54)',
   } as Record<string, string>
 })
 
-const compatibilityProfiles = computed(() => [
-  {
-    value: 'openai-image-api' as const,
-    label: t('imageStudio.profiles.openaiImageApi'),
-    description: t('imageStudio.profileDescriptions.openaiImageApi'),
-  },
-  {
-    value: 'openai-responses' as const,
-    label: t('imageStudio.profiles.openaiResponses'),
-    description: t('imageStudio.profileDescriptions.openaiResponses'),
-  },
-  {
-    value: 'sub2api-sora-compatible' as const,
-    label: t('imageStudio.profiles.sub2apiCompatible'),
-    description: t('imageStudio.profileDescriptions.sub2apiCompatible'),
-  },
-])
+const GLOBAL_STUDIO_APPEARANCE_VARS = [
+  '--studio-accent',
+  '--studio-accent-deep',
+  '--studio-accent-soft',
+  '--studio-border-strong',
+  '--studio-accent-shadow',
+  '--theme-color',
+  '--theme-color-rgb',
+  '--theme-text-on-primary',
+  '--studio-radius-window',
+  '--studio-radius-panel',
+  '--studio-radius-control',
+  '--studio-radius-soft',
+  '--studio-radius-image',
+] as const
+
+function syncDocumentStudioAppearance(): void {
+  if (typeof document === 'undefined') return
+
+  const root = document.documentElement
+  root.dataset.studioTheme = studioAppearance.themeMode
+  Object.entries(studioAppearanceStyle.value).forEach(([key, value]) => {
+    root.style.setProperty(key, value)
+  })
+
+  window.dispatchEvent(new CustomEvent('image-studio-appearance-changed', {
+    detail: {
+      themeMode: studioAppearance.themeMode,
+      radiusScale: studioAppearance.radiusScale,
+      style: studioAppearanceStyle.value,
+    },
+  }))
+}
+
+function clearDocumentStudioAppearance(): void {
+  if (typeof document === 'undefined') return
+
+  const root = document.documentElement
+  delete root.dataset.studioTheme
+  GLOBAL_STUDIO_APPEARANCE_VARS.forEach((key) => {
+    root.style.removeProperty(key)
+  })
+}
+
+const stopDocumentStudioAppearanceSync = typeof window !== 'undefined'
+  ? watch(studioAppearance, syncDocumentStudioAppearance, { deep: true, immediate: true })
+  : undefined
+
+const compatibilityProfiles = computed(() => createCompatibilityProfiles(t))
 
 const selectedCompatibilityProfileDescription = computed(() => (
   compatibilityProfiles.value.find((option) => option.value === preferences.profile)?.description
@@ -3373,18 +3608,11 @@ function switchExternalProfileToOpenAIImageApi() {
   preferences.profile = 'openai-image-api'
 }
 
-const currentSiteProfileOptions = computed(() => [
-  {
-    value: 'sub2api-sora-compatible' as const,
-    label: t('imageStudio.currentSiteProfiles.sub2apiCompatible.label'),
-    description: t('imageStudio.currentSiteProfiles.sub2apiCompatible.description'),
-  },
-  {
-    value: 'chatgpt2api' as const,
-    label: t('imageStudio.currentSiteProfiles.chatgpt2api.label'),
-    description: t('imageStudio.currentSiteProfiles.chatgpt2api.description'),
-  },
-])
+function activeImageProbeProfile(): ImageStudioProtocolProfile {
+  return isCurrentSiteChatgpt2Api.value ? 'chatgpt2api' : preferences.profile
+}
+
+const currentSiteProfileOptions = computed(() => createCurrentSiteProfileOptions(t))
 
 const isCurrentSiteChatgpt2Api = computed(() => (
   preferences.providerMode === 'sub2api' && preferences.currentSiteProfile === 'chatgpt2api'
@@ -3546,7 +3774,11 @@ function resolveSuperFourKSize(aspectRatio: string): string {
 }
 
 const native4kSize = computed(() => resolveWorkspaceImageSize('4k'))
-const super4kAvailable = computed(() => !isGptImagePlaygroundMode.value && !!resolveSuperFourKSize(preferences.aspectRatio))
+const localUpscaleAllowed = computed(() => (
+  !isGptImagePlaygroundMode.value &&
+  (preferences.providerMode !== 'external-relay' || preferences.externalRelayLocalUpscale)
+))
+const super4kAvailable = computed(() => localUpscaleAllowed.value && !!resolveSuperFourKSize(preferences.aspectRatio))
 const super4kTargetSize = computed(() => (
   super4kEnabled.value && super4kAvailable.value ? resolveSuperFourKSize(preferences.aspectRatio) : ''
 ))
@@ -3593,78 +3825,21 @@ const resolutionOptions = computed(() => {
   ]
 })
 
-const qualityOptions = computed(() => [
-  { value: 'high', label: t('imageStudio.qualities.high'), icon: 'sparkles' as const },
-  { value: 'medium', label: t('imageStudio.qualities.medium'), icon: 'bolt' as const },
-  { value: 'low', label: t('imageStudio.qualities.low'), icon: 'cloud' as const },
-])
+const qualityOptions = computed(() => createQualityOptions(t))
 
 const activeQualityLabel = computed(() => (
   qualityOptions.value.find((option) => option.value === preferences.quality)?.label
     || t('imageStudio.fields.quality')
 ))
 
-const backgroundOptions = computed(() => [
-  { value: 'auto', label: t('imageStudio.backgrounds.auto') },
-  { value: 'transparent', label: t('imageStudio.backgrounds.transparent') },
-  { value: 'opaque', label: t('imageStudio.backgrounds.opaque') },
-])
-
-const formatOptions = computed(() => [
-  { value: 'png', label: t('imageStudio.formats.png') },
-  { value: 'jpeg', label: t('imageStudio.formats.jpeg') },
-  { value: 'webp', label: t('imageStudio.formats.webp') },
-])
+const backgroundOptions = computed(() => createBackgroundOptions(t))
+const formatOptions = computed(() => createFormatOptions(t))
 
 const quickCountOptions = [1, 2, 3, 4, 5]
 
-const promptChips = computed(() => (
-  locale.value === 'zh'
-    ? ['清晨', '湖泊', '雪山', '倒影', '木栈道', '薄雾', '超写实']
-    : ['Dawn', 'Lake', 'Snow Peak', 'Reflection', 'Boardwalk', 'Mist', 'Photoreal']
-))
-
-const inspirationPrompts = computed(() => (
-  locale.value === 'zh'
-    ? [
-        '清晨的湖边，远处雪山在朝阳下泛着金色，湖水清澈如镜，倒映着山峰与森林，湖边有木栈道通往远方，天空有薄雾和几缕云彩，宁静而治愈，超写实风格，高清摄影。',
-        '赛博朋克城市夜景，雨后的街道反射霓虹灯光，远处高楼林立，空气中有薄雾，镜头语言电影感，细节丰富，适合海报构图。',
-        '未来科幻空间站内部场景，银白金属结构与蓝色光带，中心区域有悬浮装置，空间感强烈，光影精致，超高细节。',
-        '日式庭院，樱花飘落，小桥和池塘构成前景，柔和晨光穿过树影，氛围安静温暖，插画与写实融合。',
-      ]
-    : [
-        'A tranquil lake at dawn with snow mountains glowing in sunrise light, mirror reflections, forest shoreline, a wooden boardwalk, soft mist, ultra realistic photography.',
-        'A cyberpunk city at night after rain, neon reflections on wet streets, cinematic framing, layered skyscrapers, rich atmosphere and crisp detail.',
-        'A futuristic space station interior with silver architecture, blue light bands, a floating central device, dramatic depth and ultra-detailed lighting.',
-        'A Japanese garden with falling cherry blossoms, a small bridge over a pond, gentle morning light and a calm painterly-realistic mood.',
-      ]
-))
-
-const stylePresets = computed<StylePresetOption[]>(() => (
-  locale.value === 'zh'
-    ? [
-        { id: 'default', title: '默认', subtitle: '不限风格 · 仅按提示词', promptHint: '' },
-        { id: 'realistic', title: '写实', subtitle: '自然光影 · 细节丰富', promptHint: '写实摄影，光影自然，真实材质，细节丰富' },
-        { id: 'photo', title: '摄影', subtitle: '镜头质感 · 真实纪录', promptHint: '专业摄影，镜头景深，胶片颗粒，自然色调' },
-        { id: 'anime', title: '动漫', subtitle: '高对比 · 清晰轮廓', promptHint: '动漫风格，清晰线条，高对比配色，角色感强' },
-        { id: 'manga', title: '漫画', subtitle: '黑白线条 · 强烈分镜', promptHint: '日式漫画风格，黑白网点，强烈分镜，墨线明显' },
-        { id: 'illustration', title: '插画', subtitle: '柔和叙事 · 画面干净', promptHint: '插画风格，构图完整，色彩柔和，叙事感明确' },
-        { id: 'render3d', title: '3D 渲染', subtitle: '材质通透 · 体积感强', promptHint: '3D 渲染，体积光，真实材质，空间层次分明' },
-        { id: 'watercolor', title: '水彩', subtitle: '晕染边缘 · 轻盈通透', promptHint: '水彩质感，柔和晕染，轻盈色块，手工笔触' },
-        { id: 'oil', title: '油画', subtitle: '厚涂纹理 · 色彩沉稳', promptHint: '油画质感，厚涂笔触，肌理明显，色彩沉稳' },
-      ]
-    : [
-        { id: 'default', title: 'Default', subtitle: 'No style · Prompt only', promptHint: '' },
-        { id: 'realistic', title: 'Realistic', subtitle: 'Natural light · Rich detail', promptHint: 'photorealistic, natural lighting, realistic surfaces, rich detail' },
-        { id: 'photo', title: 'Photography', subtitle: 'Lens feel · Documentary', promptHint: 'professional photography, depth of field, film grain, natural color grading' },
-        { id: 'anime', title: 'Anime', subtitle: 'Bold contrast · Clean lines', promptHint: 'anime style, clean line art, bold contrast, expressive color palette' },
-        { id: 'manga', title: 'Manga', subtitle: 'Black & white · Sharp panels', promptHint: 'Japanese manga style, black-and-white screentones, dynamic paneling, strong inking' },
-        { id: 'illustration', title: 'Illustration', subtitle: 'Soft narrative · Clean frame', promptHint: 'illustration style, balanced composition, soft palette, narrative clarity' },
-        { id: 'render3d', title: '3D Render', subtitle: 'Dimensional light · Polished surfaces', promptHint: '3d render, volumetric light, polished materials, strong depth' },
-        { id: 'watercolor', title: 'Watercolor', subtitle: 'Soft bleed · Airy mood', promptHint: 'watercolor texture, soft bleeds, airy atmosphere, handcrafted brushwork' },
-        { id: 'oil', title: 'Oil Painting', subtitle: 'Thick brushwork · Mature tones', promptHint: 'oil painting texture, thick brush strokes, visible canvas grain, mature tones' },
-      ]
-))
+const promptChips = computed(() => getPromptChips(locale.value))
+const inspirationPrompts = computed(() => getInspirationPrompts(locale.value))
+const stylePresets = computed<StylePresetOption[]>(() => getStylePresets(locale.value))
 
 const builtinPromptLibraryOptions = computed<PromptLibraryOption[]>(() => stylePresets.value.map((preset) => ({
   id: `builtin-${preset.id}`,
@@ -3695,14 +3870,6 @@ function restoreSelectedPromptLibraryOption(): void {
     selectedPromptLibraryOption.value = match
   }
 }
-
-const promptLibraryCategories = computed(() => {
-  const categories = new Set<string>()
-  promptLibraryOptions.value.forEach((option) => {
-    if (option.category) categories.add(option.category)
-  })
-  return Array.from(categories)
-})
 
 const defaultPromptLibraryCategories = computed<PromptLibraryCategoryOption[]>(() => [
   { value: 'all', label: '全部分类', icon: 'grid', defaultTag: true },
@@ -3777,15 +3944,387 @@ const selectedPromptTemplateCategory = computed(() => (
   selectedPromptLibraryOption.value?.category || t('imageStudio.promptWorkspace.waitingForTemplate')
 ))
 
-const selectedPromptTemplatePrompt = computed(() => (
-  selectedPromptLibraryOption.value?.prompt
+const selectedPromptTemplateDescription = computed(() => (
+  selectedPromptLibraryOption.value?.description
   || t('imageStudio.promptWorkspace.templateImagePlaceholder')
 ))
+
+const promptTemplateArgumentItems = computed(() => (
+  parsePromptArgumentItems(prompt.value, t('imageStudio.promptReplacements.slot'))
+))
+const promptTemplateArgumentCount = computed(() => promptTemplateArgumentItems.value.length)
+
+const promptReplacementButtonTitle = computed(() => (
+  promptTemplateArgumentCount.value
+    ? t('imageStudio.promptPanel.replacementEditorWithCount', { count: promptTemplateArgumentCount.value })
+    : t('imageStudio.promptPanel.replacementEditorSmart')
+))
+
+const promptReplacementSubtitle = computed(() => (
+  promptReplacementMode.value === 'template'
+    ? t('imageStudio.promptReplacements.templateSubtitle')
+    : t('imageStudio.promptReplacements.smartSubtitle')
+))
+
+const promptReplacementModeLabel = computed(() => (
+  promptReplacementMode.value === 'template'
+    ? t('imageStudio.promptReplacements.templateMode')
+    : t('imageStudio.promptReplacements.smartMode')
+))
+
+const selectedPromptReplacementItem = computed(() => (
+  promptReplacementItems.value.find((item) => item.id === selectedPromptReplacementItemId.value)
+  || promptReplacementItems.value[0]
+  || null
+))
+
+const selectedPromptReplacementPositionLabel = computed(() => {
+  const total = promptReplacementItems.value.length
+  if (!total) {
+    return ''
+  }
+  const index = promptReplacementItems.value.findIndex((item) => item.id === selectedPromptReplacementItem.value?.id)
+  return `${Math.max(0, index) + 1}/${total}`
+})
+
+const promptReplacementSegments = computed<PromptReplacementSegment[]>(() => {
+  const text = promptReplacementBaseText.value || prompt.value
+  if (!text) {
+    return []
+  }
+
+  return buildPromptReplacementSegments(text, promptReplacementItems.value)
+})
+
+const promptReplacementPreview = computed(() => {
+  const item = selectedPromptReplacementItem.value
+  const text = promptReplacementBaseText.value || prompt.value
+  if (!item || !text) {
+    return { before: '', hit: '', after: '' }
+  }
+  const target = resolvePromptReplacementTarget(item, text, text === promptReplacementBaseText.value)
+  const start = target?.start ?? Math.max(0, item.start)
+  const end = target?.end ?? Math.min(text.length, item.end)
+  const hit = target?.text || text.slice(start, end) || item.source
+  const contextSize = 90
+  const beforeStart = Math.max(0, start - contextSize)
+  const afterEnd = Math.min(text.length, end + contextSize)
+  return {
+    before: `${beforeStart > 0 ? '...' : ''}${text.slice(beforeStart, start)}`,
+    hit,
+    after: `${text.slice(end, afterEnd)}${afterEnd < text.length ? '...' : ''}`,
+  }
+})
+
+const promptLibraryUploadSubtitle = computed(() => {
+  if (promptLibraryDraftMode.value === 'edit') {
+    return locale.value === 'zh'
+      ? '修改你上传的预览图、标题、描述、提示词和分类。'
+      : 'Update the preview image, title, description, prompt, and category you uploaded.'
+  }
+  if (promptLibraryUsesRemoteStorage) {
+    return locale.value === 'zh'
+      ? '保存到 CF 云端提示词库，预览图、标题、描述、提示词和分类会同步存储。'
+      : 'Save to the Cloudflare prompt library with preview image, title, description, prompt, and category.'
+  }
+  return locale.value === 'zh'
+    ? '本地保存预览图、标题、描述、提示词和分类。'
+    : 'Save the preview image, title, description, prompt, and category locally.'
+})
+
+const promptLibrarySaveButtonLabel = computed(() => {
+  if (promptLibraryDraftSaving.value) {
+    return locale.value === 'zh' ? '保存中...' : 'Saving...'
+  }
+  if (promptLibraryDraftMode.value === 'edit') {
+    return locale.value === 'zh' ? '保存修改' : 'Save Changes'
+  }
+  if (promptLibraryUsesRemoteStorage) {
+    return locale.value === 'zh' ? '保存到云端' : 'Save to Cloud'
+  }
+  return t('imageStudio.promptWorkspace.saveLocalPrompt')
+})
 
 const selectedPromptTemplateImage = computed(() => (
   selectedPromptLibraryOption.value?.imageUrl
   || ''
 ))
+
+function activeApiKeyValue(): string {
+  return preferences.providerMode === 'sub2api'
+    ? sub2apiApiKey.value.trim()
+    : externalApiKey.value.trim()
+}
+
+function activeApiEndpointValue(): string {
+  if (preferences.providerMode === 'sub2api') {
+    return preferences.currentSiteProfile === 'chatgpt2api'
+      ? currentSiteBaseUrl.value
+      : sub2apiBaseUrl
+  }
+  return preferences.externalBaseUrl.trim()
+}
+
+function endpointHostLabel(value: string): string {
+  try {
+    return new URL(value).host
+  } catch {
+    return value.replace(/^https?:\/\//i, '').replace(/\/.*$/, '') || value
+  }
+}
+
+function normalizeApiEndpointValue(value: string): string {
+  return value.trim().replace(/\/+$/, '').toLowerCase()
+}
+
+function apiPresetEndpointValue(preset: ImageStudioApiPreset): string {
+  if (preset.providerMode === 'sub2api') {
+    return preset.currentSiteProfile === 'chatgpt2api'
+      ? preset.currentSiteBaseUrl
+      : sub2apiBaseUrl
+  }
+  return preset.externalBaseUrl
+}
+
+const apiPresetSuggestedName = computed(() => {
+  const endpoint = endpointHostLabel(activeApiEndpointValue())
+  const mode = providerLabel(preferences.providerMode)
+  return [mode, endpoint || preferences.model].filter(Boolean).join(' / ')
+})
+
+function refreshApiPresets() {
+  apiPresets.value = listImageStudioApiPresets()
+}
+
+function apiPresetSummary(preset: ImageStudioApiPreset): string {
+  const endpoint = apiPresetEndpointValue(preset)
+  return [
+    providerLabel(preset.providerMode),
+    endpointHostLabel(endpoint),
+    preset.model,
+    maskImageStudioApiKey(preset.apiKey),
+  ].filter(Boolean).join(' · ')
+}
+
+function isApiPresetActive(preset: ImageStudioApiPreset): boolean {
+  return (
+    preset.providerMode === preferences.providerMode &&
+    preset.profile === preferences.profile &&
+    normalizeApiEndpointValue(apiPresetEndpointValue(preset)) === normalizeApiEndpointValue(activeApiEndpointValue()) &&
+    preset.apiKey.trim() === activeApiKeyValue() &&
+    preset.model.trim() === preferences.model.trim()
+  )
+}
+
+function saveCurrentApiPreset() {
+  const apiKey = activeApiKeyValue()
+  if (!apiKey) {
+    appStore.showWarning(locale.value === 'zh' ? '先填写当前通道的 API Key。' : 'Enter the API key for the current channel first.')
+    return
+  }
+
+  try {
+    const saved = saveImageStudioApiPreset({
+      name: apiPresetDraftName.value.trim() || apiPresetSuggestedName.value || (locale.value === 'zh' ? '未命名通道' : 'Untitled channel'),
+      providerMode: preferences.providerMode,
+      profile: preferences.profile,
+      currentSiteProfile: preferences.currentSiteProfile,
+      currentSiteBaseUrl: preferences.currentSiteBaseUrl,
+      externalBaseUrl: preferences.externalBaseUrl,
+      apiKey,
+      model: preferences.model,
+      externalRelayLocalUpscale: preferences.externalRelayLocalUpscale,
+    })
+    apiPresetDraftName.value = ''
+    refreshApiPresets()
+    appStore.showSuccess(locale.value === 'zh' ? `已保存通道：${saved.name}` : `Saved channel: ${saved.name}`)
+  } catch {
+    appStore.showError(locale.value === 'zh'
+      ? '通道预设保存失败，请检查浏览器本地存储权限或可用空间。'
+      : 'Failed to save the channel preset. Check browser local storage permissions or free space.')
+  }
+}
+
+function applyApiPreset(preset: ImageStudioApiPreset) {
+  preferences.providerMode = preset.providerMode
+  preferences.currentSiteProfile = preset.currentSiteProfile
+  preferences.currentSiteBaseUrl = preset.currentSiteBaseUrl
+  preferences.externalBaseUrl = preset.externalBaseUrl || preferences.externalBaseUrl
+  preferences.profile = preset.profile
+  preferences.model = preset.model || preferences.model
+  preferences.externalRelayLocalUpscale = preset.externalRelayLocalUpscale
+
+  if (preset.providerMode === 'sub2api') {
+    sub2apiApiKey.value = preset.apiKey
+  } else {
+    externalApiKey.value = preset.apiKey
+  }
+
+  appStore.showSuccess(locale.value === 'zh' ? `已应用通道：${preset.name}` : `Applied channel: ${preset.name}`)
+}
+
+function removeApiPreset(preset: ImageStudioApiPreset) {
+  try {
+    deleteImageStudioApiPreset(preset.id)
+    refreshApiPresets()
+    appStore.showSuccess(locale.value === 'zh' ? '已删除通道预设。' : 'Channel preset deleted.')
+  } catch {
+    appStore.showError(locale.value === 'zh'
+      ? '通道预设删除失败，请检查浏览器本地存储权限。'
+      : 'Failed to delete the channel preset. Check browser local storage permissions.')
+  }
+}
+
+function openPromptReplacementModal() {
+  if (!prompt.value.trim()) {
+    appStore.showWarning(t('imageStudio.toasts.promptRequired'))
+    return
+  }
+
+  const templateItems = parsePromptArgumentItems(prompt.value, t('imageStudio.promptReplacements.slot'))
+  promptReplacementBaseText.value = prompt.value
+  promptReplacementItems.value = templateItems
+  promptReplacementMode.value = templateItems.length ? 'template' : 'smart'
+  selectedPromptReplacementItemId.value = templateItems[0]?.id || ''
+  promptReplacementError.value = ''
+  promptReplacementModalOpen.value = true
+}
+
+function closePromptReplacementModal() {
+  promptReplacementModalOpen.value = false
+  promptReplacementError.value = ''
+}
+
+function selectPromptReplacementItem(id: string) {
+  selectedPromptReplacementItemId.value = id
+}
+
+function resetSelectedPromptReplacement() {
+  const item = selectedPromptReplacementItem.value
+  if (!item) {
+    return
+  }
+  item.replacement = item.source
+}
+
+function stripJsonCodeFence(value: string): string {
+  return value
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim()
+}
+
+function parsePromptHelperJson(value: string): unknown {
+  const cleaned = stripJsonCodeFence(value)
+  try {
+    return JSON.parse(cleaned)
+  } catch {
+    const arrayMatch = cleaned.match(/\[[\s\S]*\]/)
+    if (arrayMatch) {
+      return JSON.parse(arrayMatch[0])
+    }
+    const objectMatch = cleaned.match(/\{[\s\S]*\}/)
+    if (objectMatch) {
+      return JSON.parse(objectMatch[0])
+    }
+    throw new Error(t('imageStudio.promptReplacements.smartParseFailed'))
+  }
+}
+
+async function analyzePromptReplacementItems() {
+  if (promptHelperBusy.value) {
+    return
+  }
+  const baseText = (promptReplacementBaseText.value || prompt.value).trim()
+  if (!baseText) {
+    appStore.showWarning(t('imageStudio.toasts.promptRequired'))
+    return
+  }
+  if (!promptHelperConfigured.value) {
+    promptReplacementError.value = t('imageStudio.toasts.helperConfigure')
+    appStore.showWarning(t('imageStudio.toasts.helperConfigure'))
+    return
+  }
+
+  promptHelperBusy.value = 'template'
+  promptReplacementError.value = ''
+  promptReplacementBaseText.value = prompt.value
+  const localeHint = locale.value === 'zh' ? '中文' : 'English'
+  const systemPrompt = [
+    'You identify editable spans in text-to-image prompts.',
+    `Return JSON only, in ${localeHint}.`,
+    'Schema: {"items":[{"label":"short field name","original":"exact substring copied from the prompt","replacement":"same text by default"}]}',
+    'Pick 3-8 concise, useful editable spans such as subject, scene, outfit, action, style, lighting, camera, color, or mood.',
+    'The original value must be an exact contiguous substring from the prompt.',
+    'Do not rewrite the whole prompt. Do not include explanations or markdown.',
+  ].join('\n')
+  const userMessage = `Prompt:\n${promptReplacementBaseText.value}`
+
+  try {
+    const result = await callPromptHelper([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage },
+    ])
+    const parsed = parsePromptHelperJson(result)
+    const items = normalizeSmartReplacementItems(
+      parsed,
+      promptReplacementBaseText.value,
+      t('imageStudio.promptReplacements.slot'),
+    )
+    if (!items.length) {
+      promptReplacementError.value = t('imageStudio.promptReplacements.noSmartItems')
+      return
+    }
+    promptReplacementItems.value = items
+    promptReplacementMode.value = 'smart'
+    selectedPromptReplacementItemId.value = items[0].id
+  } catch (error) {
+    promptReplacementError.value = error instanceof Error
+      ? error.message
+      : t('imageStudio.toasts.helperFailed')
+  } finally {
+    promptHelperBusy.value = null
+  }
+}
+
+function applyPromptReplacements() {
+  const baseText = prompt.value
+  const preferStoredRange = baseText === promptReplacementBaseText.value
+  const updates = promptReplacementItems.value
+    .map((item) => {
+      const target = resolvePromptReplacementTarget(item, baseText, preferStoredRange)
+      const replacement = item.replacement.trim() || item.source
+      if (!target || !replacement || target.text === replacement) {
+        return null
+      }
+      return { ...target, replacement }
+    })
+    .filter((item): item is { start: number; end: number; text: string; replacement: string } => !!item)
+    .sort((left, right) => right.start - left.start)
+
+  let nextText = baseText
+  let nextBoundary = Number.POSITIVE_INFINITY
+  let appliedCount = 0
+  updates.forEach((update) => {
+    if (update.end > nextBoundary) {
+      return
+    }
+    nextText = `${nextText.slice(0, update.start)}${update.replacement}${nextText.slice(update.end)}`
+    nextBoundary = update.start
+    appliedCount += 1
+  })
+
+  if (!appliedCount || nextText === baseText) {
+    appStore.showWarning(t('imageStudio.promptReplacements.noChanges'))
+    return
+  }
+
+  prompt.value = nextText
+  appStore.showSuccess(t('imageStudio.promptReplacements.applied', { count: appliedCount }))
+  closePromptReplacementModal()
+  focusPromptTextarea()
+}
 
 function createEmptyPromptTemplateImageMeta(): PromptTemplateImageMeta {
   return {
@@ -3897,11 +4436,16 @@ watch(
 )
 
 const FALLBACK_IMAGE_MODELS = ['gpt-image-1', 'gpt-image-2', 'dall-e-3', 'dall-e-2']
-const IMAGE_MODEL_KEYWORDS = /(image|sora|dall[-_]?e|flux|sdxl|stable[-_]?diffusion|midjourney|imagen|kling|mj|wan-?\d|pika|ideogram|firefly)/i
+const FALLBACK_XAI_GROK_IMAGE_MODELS = ['grok-imagine-image-quality', 'grok-imagine-image']
+const IMAGE_MODEL_KEYWORDS = /(image|imagine|grok|sora|dall[-_]?e|flux|sdxl|stable[-_]?diffusion|midjourney|imagen|kling|mj|wan-?\d|pika|ideogram|firefly)/i
 
 const detectedImageModels = ref<string[]>([])
 const detectingModels = ref(false)
 const detectModelsAbort = ref<AbortController | null>(null)
+const detectedPromptHelperModels = ref<string[]>([])
+const detectingPromptHelperModels = ref(false)
+const detectPromptHelperModelsAbort = ref<AbortController | null>(null)
+const promptHelperModelProbeState = ref<{ kind: 'idle' | 'busy' | 'ok' | 'fail'; message?: string; count?: number }>({ kind: 'idle' })
 
 function externalApiBaseCandidates(rawBaseUrl: string): string[] {
   const baseUrl = rawBaseUrl.trim().replace(/\/+$/, '')
@@ -3941,19 +4485,56 @@ function shouldUseRelayProbeError(error: unknown): boolean {
   if (isPrivateUpstreamBlockedError(error)) {
     return false
   }
+  if (activeImageProbeProfile() === 'xai-grok-image' && (status === 400 || status === 404 || status === 405)) {
+    return false
+  }
   if (!status || status === 0 || status === 404) {
     return false
   }
   return true
 }
 
-async function fetchImageModelIds(baseUrl: string, apiKey: string, signal?: AbortSignal): Promise<string[]> {
+function shouldFallbackModelProbe(status: number, detail: string): boolean {
+  if (status === 400 || status === 404 || status === 405 || status === 415) {
+    return true
+  }
+  return /not found|unknown endpoint|unsupported|not support/i.test(detail)
+}
+
+function extractUpstreamModelIds(payload: unknown): string[] {
+  const root = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as { data?: unknown; models?: unknown }
+    : null
+  const list: unknown = root?.data || root?.models || payload
+  if (!Array.isArray(list)) {
+    return []
+  }
+
+  return Array.from(new Set(list
+    .map((entry) => {
+      if (typeof entry === 'string') return entry.trim()
+      if (entry && typeof entry === 'object') {
+        const obj = entry as { id?: unknown; name?: unknown; model?: unknown }
+        if (typeof obj.id === 'string') return obj.id.trim()
+        if (typeof obj.name === 'string') return obj.name.trim()
+        if (typeof obj.model === 'string') return obj.model.trim()
+      }
+      return ''
+    })
+    .filter((id) => typeof id === 'string' && id.length > 0)))
+}
+
+async function fetchUpstreamModelIds(
+  baseUrl: string,
+  apiKey: string,
+  signal?: AbortSignal,
+  profile: ImageStudioProtocolProfile = activeImageProbeProfile()
+): Promise<string[]> {
   let relayError: unknown = null
   try {
-    const relayModels = await probeImageStudioUpstreamModels(baseUrl, apiKey, signal)
-    const filteredRelayModels = relayModels.filter((id) => IMAGE_MODEL_KEYWORDS.test(id))
-    if (filteredRelayModels.length) {
-      return Array.from(new Set(filteredRelayModels))
+    const relayModels = await probeImageStudioUpstreamModels(baseUrl, apiKey, profile, signal)
+    if (relayModels.length) {
+      return Array.from(new Set(relayModels.map((id) => id.trim()).filter(Boolean)))
     }
   } catch (error) {
     relayError = error
@@ -3965,48 +4546,69 @@ async function fetchImageModelIds(baseUrl: string, apiKey: string, signal?: Abor
     }
   }
 
+  const modelPaths = profile === 'xai-grok-image' ? ['/image-generation-models', '/models'] : ['/models']
+  let lastModelError: unknown = relayError
   let response: Response
-  try {
-    response = await fetch(`${baseUrl}/models`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' },
-      signal,
-    })
-  } catch (error) {
-    if ((error as { name?: string })?.name === 'AbortError') {
+  for (let index = 0; index < modelPaths.length; index += 1) {
+    const modelPath = modelPaths[index]
+    try {
+      response = await fetch(`${baseUrl}${modelPath}`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' },
+        signal,
+      })
+    } catch (error) {
+      if ((error as { name?: string })?.name === 'AbortError') {
+        throw error
+      }
+      lastModelError = error
+      if (index < modelPaths.length - 1) {
+        continue
+      }
+      if (relayError) {
+        throw relayError
+      }
       throw error
     }
-    if (relayError) {
-      throw relayError
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null)
+      const detail = parseUpstreamModelProbeError(payload)
+      lastModelError = new Error(detail || `HTTP ${response.status}`)
+      if (index < modelPaths.length - 1 && shouldFallbackModelProbe(response.status, detail)) {
+        continue
+      }
+      throw lastModelError
     }
-    throw error
-  }
-  if (!response.ok) {
+
     const payload = await response.json().catch(() => null)
-    const detail = parseUpstreamModelProbeError(payload)
-    throw new Error(detail || `HTTP ${response.status}`)
-  }
-  const payload = await response.json().catch(() => null)
-  const list: unknown = payload?.data || payload?.models || payload
-  if (!Array.isArray(list)) {
-    if (relayError instanceof Error) {
-      throw relayError
+    const modelIds = extractUpstreamModelIds(payload)
+    if (modelIds.length) {
+      return modelIds
     }
-    throw new Error('unexpected response shape')
+    lastModelError = new Error('unexpected response shape')
   }
 
-  return Array.from(new Set(list
-    .map((entry) => {
-      if (typeof entry === 'string') return entry
-      if (entry && typeof entry === 'object') {
-        const obj = entry as { id?: unknown; name?: unknown }
-        if (typeof obj.id === 'string') return obj.id
-        if (typeof obj.name === 'string') return obj.name
-      }
-      return ''
-    })
-    .filter((id) => typeof id === 'string' && id.length > 0)
-    .filter((id) => IMAGE_MODEL_KEYWORDS.test(id))))
+  if (lastModelError instanceof Error) {
+    throw lastModelError
+  }
+  throw new Error('unexpected response shape')
+}
+
+async function fetchImageModelIds(
+  baseUrl: string,
+  apiKey: string,
+  signal?: AbortSignal,
+  profile: ImageStudioProtocolProfile = activeImageProbeProfile()
+): Promise<string[]> {
+  const modelIds = await fetchUpstreamModelIds(baseUrl, apiKey, signal, profile)
+  return Array.from(new Set(modelIds.filter((id) => IMAGE_MODEL_KEYWORDS.test(id))))
+}
+
+function filterPromptHelperModelIds(modelIds: string[]): string[] {
+  const unique = Array.from(new Set(modelIds.map((id) => id.trim()).filter(Boolean)))
+  const textLike = unique.filter((id) => !IMAGE_MODEL_KEYWORDS.test(id))
+  return textLike.length ? textLike : unique
 }
 
 function parseUpstreamModelProbeError(payload: unknown): string {
@@ -4044,6 +4646,9 @@ const modelOptions = computed(() => {
   if (detectedImageModels.value.length) {
     return detectedImageModels.value
   }
+  if (preferences.profile === 'xai-grok-image') {
+    return FALLBACK_XAI_GROK_IMAGE_MODELS
+  }
   return FALLBACK_IMAGE_MODELS
 })
 
@@ -4071,7 +4676,7 @@ async function fetchUpstreamImageModels(silent = true) {
     let lastError: unknown = null
     for (const candidate of candidates) {
       try {
-        unique = await fetchImageModelIds(candidate, apiKey, controller.signal)
+        unique = await fetchImageModelIds(candidate, apiKey, controller.signal, activeImageProbeProfile())
         resolvedBaseUrl = candidate
         break
       } catch (error) {
@@ -4127,6 +4732,84 @@ async function fetchUpstreamImageModels(silent = true) {
   }
 }
 
+let detectPromptHelperModelsDebounce = 0
+
+async function fetchPromptHelperModels(silent = true) {
+  const candidates = externalApiBaseCandidates(promptHelperConfig.baseUrl)
+  const apiKey = promptHelperConfig.apiKey.trim()
+  if (!candidates.length || !apiKey) {
+    detectedPromptHelperModels.value = []
+    promptHelperModelProbeState.value = { kind: 'idle' }
+    return
+  }
+
+  if (detectPromptHelperModelsAbort.value) {
+    detectPromptHelperModelsAbort.value.abort()
+  }
+  const controller = new AbortController()
+  let timedOut = false
+  const timeout = window.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, 12000)
+  detectPromptHelperModelsAbort.value = controller
+  detectingPromptHelperModels.value = true
+  promptHelperModelProbeState.value = { kind: 'busy' }
+
+  try {
+    let modelIds: string[] = []
+    let resolvedBaseUrl = candidates[0]
+    let lastError: unknown = null
+    for (const candidate of candidates) {
+      try {
+        modelIds = await fetchUpstreamModelIds(candidate, apiKey, controller.signal, 'openai-image-api')
+        resolvedBaseUrl = candidate
+        break
+      } catch (error) {
+        lastError = error
+      }
+    }
+    if (!modelIds.length && lastError) {
+      throw lastError
+    }
+
+    const promptModels = filterPromptHelperModelIds(modelIds)
+    detectedPromptHelperModels.value = promptModels
+    if (resolvedBaseUrl !== promptHelperConfig.baseUrl.trim().replace(/\/+$/, '')) {
+      promptHelperConfig.baseUrl = resolvedBaseUrl
+    }
+    if (!promptHelperConfig.model.trim() && promptModels.length) {
+      promptHelperConfig.model = promptModels[0]
+    }
+    promptHelperModelProbeState.value = { kind: 'ok', count: promptModels.length }
+    if (!silent) {
+      if (promptModels.length) {
+        appStore.showSuccess(t('imageStudio.sidebar.helperModelDetected', { count: promptModels.length }))
+      } else {
+        appStore.showWarning(t('imageStudio.sidebar.helperModelProbeNoModels'))
+      }
+    }
+  } catch (error) {
+    if ((error as { name?: string })?.name === 'AbortError' && !timedOut) {
+      return
+    }
+    const message = timedOut
+      ? t('imageStudio.sidebar.helperModelProbeTimeout')
+      : (error instanceof Error ? error.message : t('imageStudio.sidebar.helperModelProbeFailed'))
+    detectedPromptHelperModels.value = []
+    promptHelperModelProbeState.value = { kind: 'fail', message }
+    if (!silent) {
+      appStore.showError(message)
+    }
+  } finally {
+    window.clearTimeout(timeout)
+    if (detectPromptHelperModelsAbort.value === controller) {
+      detectingPromptHelperModels.value = false
+      detectPromptHelperModelsAbort.value = null
+    }
+  }
+}
+
 function scheduleFetchUpstreamImageModels() {
   if (detectModelsDebounce) {
     window.clearTimeout(detectModelsDebounce)
@@ -4135,6 +4818,16 @@ function scheduleFetchUpstreamImageModels() {
     detectModelsDebounce = 0
     void fetchUpstreamImageModels(true)
   }, 350)
+}
+
+function scheduleFetchPromptHelperModels() {
+  if (detectPromptHelperModelsDebounce) {
+    window.clearTimeout(detectPromptHelperModelsDebounce)
+  }
+  detectPromptHelperModelsDebounce = window.setTimeout(() => {
+    detectPromptHelperModelsDebounce = 0
+    void fetchPromptHelperModels(true)
+  }, 450)
 }
 
 function normalizeCustomRatioPart(value: string): number {
@@ -4200,12 +4893,10 @@ const upstreamGenerationSize = computed(() => {
   return resolvedSize.value
 })
 
-const resolvedSizeDisplay = computed(() => (
-  resolvedSize.value || t('imageStudio.providerManagedSize')
-))
-
 const resolutionHint = computed(() => (
-  supportsCustomResolution.value
+  preferences.providerMode === 'external-relay' && !preferences.externalRelayLocalUpscale
+    ? t('imageStudio.hints.resolutionNoLocalUpscale')
+    : supportsCustomResolution.value
     ? t('imageStudio.hints.resolution')
     : t('imageStudio.hints.resolutionSub2api')
 ))
@@ -4263,6 +4954,26 @@ const activeHistoryRecord = computed(() => (
   historyItems.value.find((item) => item.id === activeHistoryId.value) || historyItems.value[0] || null
 ))
 
+const historySummary = computed(() => {
+  const total = historyItems.value.length
+  const native = historyItems.value.filter((item) => !item.outputMode || item.outputMode === 'native').length
+  const upscaled = historyItems.value.filter((item) => (
+    item.outputMode === 'upscaled' || item.outputMode === 'super-4k'
+  )).length
+  const degraded = historyItems.value.filter((item) => item.outputMode === 'provider-scaled').length
+  return { total, native, upscaled, degraded }
+})
+
+const historyListStyle = computed<Record<string, string>>(() => (
+  historyListMaxHeight.value ? { maxHeight: historyListMaxHeight.value } : ({} as Record<string, string>)
+))
+
+const workbenchSurfaceStyle = computed<Record<string, string>>(() => (
+  workbenchSurfaceMaxHeight.value
+    ? { maxHeight: workbenchSurfaceMaxHeight.value }
+    : ({} as Record<string, string>)
+))
+
 const activeHistoryTiles = computed(() => {
   const historyId = activeHistoryRecord.value?.id
   return historyId
@@ -4290,12 +5001,6 @@ const sortedTilesByDate = computed(() => (
     new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   )
 ))
-
-const previousBatchTile = computed<ImageStudioWorkspaceTile | null>(() => {
-  const current = previewTile.value
-  if (!current) return null
-  return sortedTilesByDate.value.find((tile) => tile.historyId !== current.historyId) || null
-})
 
 const EVOLUTION_TIMELINE_LIMIT = 6
 const hasAnyVariant = computed(() =>
@@ -4385,6 +5090,8 @@ function outputModeLabel(mode?: ImageStudioHistoryItem['outputMode']): string {
       return locale.value === 'zh' ? '超4K输出' : 'Super 4K output'
     case 'upscaled':
       return locale.value === 'zh' ? '本地放大' : 'Local upscale'
+    case 'provider-scaled':
+      return locale.value === 'zh' ? '上游降级' : 'Provider scaled'
     case 'native':
       return locale.value === 'zh' ? '上游原生' : 'Native upstream'
     default:
@@ -4518,13 +5225,6 @@ const generateTargetSummary = computed(() => {
 })
 
 const generationElapsedSeconds = computed(() => (generationElapsedMs.value / 1000).toFixed(1))
-
-const lastGenerationDurationSeconds = computed(() => {
-  if (lastGenerationDurationMs.value == null) {
-    return null
-  }
-  return (lastGenerationDurationMs.value / 1000).toFixed(1)
-})
 
 const estimatedRemainingSeconds = computed<number | null>(() => {
   if (!generating.value || lastGenerationDurationMs.value == null) {
@@ -4720,14 +5420,6 @@ const generationFootnote = computed(() => {
   return previewTile.value.prompt
 })
 
-const previewTileDownloadText = computed(() => {
-  if (!previewTile.value) {
-    return t('imageStudio.sidebar.downloadEmpty')
-  }
-
-  return `${previewTile.value.result.filename} · ${previewTile.value.aspectRatio}`
-})
-
 const lightboxMagnifierLabel = computed(() => (
   lightboxMagnifierEnabled.value
     ? t('imageStudio.previewCanvas.exitMagnifier')
@@ -4774,16 +5466,6 @@ const lightboxFrameStyle = computed(() => ({
   height: `${lightboxNaturalHeight.value || 1}px`,
   transform: `translate3d(${lightboxPanX.value}px, ${lightboxPanY.value}px, 0) scale(${lightboxRenderScale.value || 1})`,
 }))
-
-const lightboxHintText = computed(() => {
-  if (lightboxMagnifierEnabled.value) {
-    return t('imageStudio.previewCanvas.magnifierHint')
-  }
-  if (lightboxImmersive.value) {
-    return t('imageStudio.previewCanvas.immersiveHint')
-  }
-  return t('imageStudio.previewCanvas.panHint')
-})
 
 const lightboxLensStyle = computed(() => {
   if (!previewTile.value) {
@@ -4841,6 +5523,11 @@ watch(
       return
     }
 
+    if (preferences.profile === 'xai-grok-image' && !preferences.model.trim()) {
+      preferences.model = FALLBACK_XAI_GROK_IMAGE_MODELS[0]
+      return
+    }
+
     if (preferences.model === 'gpt-image') {
       preferences.model = preferences.profile === 'sub2api-sora-compatible' ? 'gpt-image-2' : 'gpt-image-1'
     }
@@ -4874,6 +5561,14 @@ watch(
   (profile) => {
     if (profile === 'openai-responses' && preferences.providerMode !== 'sub2api') {
       preferences.count = 1
+    }
+    if (profile === 'xai-grok-image' && preferences.providerMode !== 'sub2api') {
+      if (!preferences.model.trim() || /^gpt-image|^dall[-_]?e/i.test(preferences.model.trim())) {
+        preferences.model = FALLBACK_XAI_GROK_IMAGE_MODELS[0]
+      }
+      if (!preferences.externalBaseUrl.trim() || /api\.openai\.com/i.test(preferences.externalBaseUrl)) {
+        preferences.externalBaseUrl = 'https://api.x.ai/v1'
+      }
     }
     if (profile === 'sub2api-sora-compatible' && preferences.providerMode !== 'sub2api' && preferences.model === 'gpt-image') {
       preferences.model = 'gpt-image-2'
@@ -4921,6 +5616,154 @@ watch(
   { immediate: true }
 )
 
+function readCssPixelValue(value: string): number {
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function updateHistoryListViewportHeight(): void {
+  const list = historyListRef.value
+  if (!list || typeof window === 'undefined') {
+    historyListMaxHeight.value = ''
+    return
+  }
+
+  const cards = Array.from(list.querySelectorAll<HTMLElement>(':scope > .glass-card'))
+    .slice(0, HISTORY_VISIBLE_CARD_LIMIT)
+
+  if (!cards.length) {
+    historyListMaxHeight.value = ''
+    return
+  }
+
+  const styles = window.getComputedStyle(list)
+  const gap = readCssPixelValue(styles.rowGap || styles.gap)
+  const paddingTop = readCssPixelValue(styles.paddingTop)
+  const paddingBottom = readCssPixelValue(styles.paddingBottom)
+  const cardHeight = cards.reduce((sum, card) => sum + card.getBoundingClientRect().height, 0)
+  const gapHeight = Math.max(0, cards.length - 1) * gap
+  const nextHeight = Math.ceil(cardHeight + gapHeight + paddingTop + paddingBottom + 1)
+
+  historyListMaxHeight.value = `${nextHeight}px`
+}
+
+function disconnectHistoryListResizeObserver(): void {
+  historyListResizeObserver?.disconnect()
+  historyListResizeObserver = null
+}
+
+function observeHistoryListLayout(): void {
+  disconnectHistoryListResizeObserver()
+
+  const list = historyListRef.value
+  if (!list || typeof window === 'undefined') {
+    historyListMaxHeight.value = ''
+    return
+  }
+
+  updateHistoryListViewportHeight()
+
+  if (typeof ResizeObserver === 'undefined') {
+    return
+  }
+
+  const observer = new ResizeObserver(updateHistoryListViewportHeight)
+  observer.observe(list)
+  Array.from(list.querySelectorAll<HTMLElement>(':scope > .glass-card'))
+    .slice(0, HISTORY_VISIBLE_CARD_LIMIT)
+    .forEach((card) => observer.observe(card))
+  historyListResizeObserver = observer
+}
+
+function updateWorkbenchSurfaceViewportHeight(): void {
+  const surface = workbenchSurfaceRef.value
+  if (!surface || typeof window === 'undefined') {
+    workbenchSurfaceMaxHeight.value = ''
+    return
+  }
+
+  const grid = surface.querySelector<HTMLElement>('.studio-workbench-grid')
+  const firstTile = surface.querySelector<HTMLElement>('.studio-workbench-tile')
+  if (!grid || !firstTile) {
+    workbenchSurfaceMaxHeight.value = ''
+    return
+  }
+
+  const gridStyles = window.getComputedStyle(grid)
+  const columns = gridStyles.gridTemplateColumns
+    .split(' ')
+    .filter((track) => track.trim().length > 0)
+    .length || 1
+  const tileCount = grid.querySelectorAll(':scope > .studio-workbench-tile').length
+  const visibleRows = Math.min(WORKBENCH_VISIBLE_ROW_LIMIT, Math.ceil(tileCount / columns))
+  const tileHeight = firstTile.getBoundingClientRect().height
+  const gap = readCssPixelValue(gridStyles.rowGap || gridStyles.gap)
+  const paddingTop = readCssPixelValue(gridStyles.paddingTop)
+  const paddingBottom = readCssPixelValue(gridStyles.paddingBottom)
+
+  if (!visibleRows || !tileHeight) {
+    workbenchSurfaceMaxHeight.value = ''
+    return
+  }
+
+  const nextHeight = Math.ceil(
+    (tileHeight * visibleRows)
+    + (Math.max(0, visibleRows - 1) * gap)
+    + paddingTop
+    + paddingBottom
+    + 1
+  )
+  workbenchSurfaceMaxHeight.value = `${nextHeight}px`
+}
+
+function disconnectWorkbenchResizeObserver(): void {
+  workbenchResizeObserver?.disconnect()
+  workbenchResizeObserver = null
+}
+
+function observeWorkbenchLayout(): void {
+  disconnectWorkbenchResizeObserver()
+
+  const surface = workbenchSurfaceRef.value
+  if (!surface || typeof window === 'undefined') {
+    workbenchSurfaceMaxHeight.value = ''
+    return
+  }
+
+  updateWorkbenchSurfaceViewportHeight()
+
+  if (typeof ResizeObserver === 'undefined') {
+    return
+  }
+
+  const observer = new ResizeObserver(updateWorkbenchSurfaceViewportHeight)
+  observer.observe(surface)
+  const grid = surface.querySelector<HTMLElement>('.studio-workbench-grid')
+  if (grid) {
+    observer.observe(grid)
+  }
+  Array.from(surface.querySelectorAll<HTMLElement>('.studio-workbench-tile'))
+    .slice(0, Math.max(1, WORKBENCH_VISIBLE_ROW_LIMIT * 4))
+    .forEach((tile) => observer.observe(tile))
+  workbenchResizeObserver = observer
+}
+
+watch(
+  () => historyItems.value.map((item) => item.id).join('|'),
+  () => {
+    void nextTick(observeHistoryListLayout)
+  },
+  { immediate: true }
+)
+
+watch(
+  () => workspaceTiles.value.map((tile) => tile.id).join('|'),
+  () => {
+    void nextTick(observeWorkbenchLayout)
+  },
+  { immediate: true }
+)
+
 watch(
   [
     () => preferences.providerMode,
@@ -4932,6 +5775,17 @@ watch(
   ],
   () => {
     scheduleFetchUpstreamImageModels()
+  },
+  { immediate: true }
+)
+
+watch(
+  [
+    () => promptHelperConfig.baseUrl,
+    () => promptHelperConfig.apiKey,
+  ],
+  () => {
+    scheduleFetchPromptHelperModels()
   },
   { immediate: true }
 )
@@ -5053,14 +5907,22 @@ function writeWorkspaceOrder(tileIds: string[]) {
   if (typeof window === 'undefined') {
     return
   }
-  window.localStorage.setItem(WORKSPACE_ORDER_STORAGE_KEY, JSON.stringify(tileIds))
+  try {
+    window.localStorage.setItem(WORKSPACE_ORDER_STORAGE_KEY, JSON.stringify(tileIds))
+  } catch {
+    // Ordering is a convenience preference; keep the workspace usable if storage is unavailable.
+  }
 }
 
 function clearWorkspaceOrder() {
   if (typeof window === 'undefined') {
     return
   }
-  window.localStorage.removeItem(WORKSPACE_ORDER_STORAGE_KEY)
+  try {
+    window.localStorage.removeItem(WORKSPACE_ORDER_STORAGE_KEY)
+  } catch {
+    // Ignore unavailable local storage.
+  }
 }
 
 function flattenHistoryItems(items: ImageStudioHistoryItem[]): ImageStudioWorkspaceTile[] {
@@ -5179,6 +6041,11 @@ function changeProviderMode(mode: ImageStudioProviderMode) {
   if (preferences.profile === 'sub2api-sora-compatible') {
     preferences.profile = 'openai-image-api'
   }
+
+  if (preferences.profile === 'xai-grok-image') {
+    preferences.model = preferences.model.trim() || FALLBACK_XAI_GROK_IMAGE_MODELS[0]
+    preferences.externalBaseUrl = preferences.externalBaseUrl.trim() || 'https://api.x.ai/v1'
+  }
 }
 
 function applyStudioQaRouteState() {
@@ -5282,7 +6149,7 @@ function historyTimingLabel(item: ImageStudioHistoryItem): string {
 }
 
 function historyResolutionLabel(item: ImageStudioHistoryItem): string {
-  return item.requestedSize?.trim() || item.resolutionPreset?.toUpperCase() || '-'
+  return item.actualSize?.trim() || item.requestedSize?.trim() || item.resolutionPreset?.toUpperCase() || '-'
 }
 
 function historyFormatLabel(item: ImageStudioHistoryItem): string {
@@ -5317,12 +6184,6 @@ function formatFileSize(bytes?: number): string {
 
 function historyFileSizeLabel(item: ImageStudioHistoryItem): string {
   return formatFileSize(item.results[0]?.blob?.size)
-}
-
-function historyDurationLabel(item: ImageStudioHistoryItem): string {
-  const value = formatDurationMs(item.durationMs)
-  if (!value) return ''
-  return locale.value === 'zh' ? `耗时 ${value}` : `Took ${value}`
 }
 
 async function openPromptLibrary() {
@@ -5373,10 +6234,6 @@ function closePromptLibraryDetails() {
   promptLibraryDetailsLightboxScale.value = 1
   promptDetailsParticles.value = []
   clearPromptLibraryDetailsPreviewPress()
-}
-
-function promptLibraryOptionCategory(option: PromptLibraryOption): string {
-  return option.category || t('imageStudio.promptWorkspace.localStorage')
 }
 
 function selectPromptLibraryCategory(category: string) {
@@ -5468,10 +6325,6 @@ function startPromptLibraryDetailsPreviewPress(event: PointerEvent) {
   }, 460)
 }
 
-function clearPromptLibraryCardPress() {
-  clearPromptLibraryLongPress()
-}
-
 function clearPromptLibraryDetailsPreviewPress() {
   if (promptLibraryDetailsPreviewTimer !== null) {
     window.clearTimeout(promptLibraryDetailsPreviewTimer)
@@ -5542,6 +6395,7 @@ function resetPromptLibraryDraft() {
   promptLibraryDraftImageFile.value = null
   promptLibraryDraftRemoveImage.value = false
   promptLibraryDraftError.value = ''
+  promptLibraryDraftSaving.value = false
   if (promptLibraryDraftImageUrl.value?.startsWith('blob:')) {
     URL.revokeObjectURL(promptLibraryDraftImageUrl.value)
   }
@@ -5592,16 +6446,23 @@ function handlePromptLibraryImageDrop(event: DragEvent) {
 }
 
 async function savePromptLibraryDraft() {
+  if (promptLibraryDraftSaving.value) {
+    return
+  }
+
   const promptText = promptLibraryDraftPrompt.value.trim()
   if (!promptText) {
     promptLibraryDraftError.value = t('imageStudio.promptWorkspace.localPromptRequired')
     return
   }
 
-  if (typeof window === 'undefined' || !window.indexedDB) {
+  if (!promptLibraryUsesRemoteStorage && (typeof window === 'undefined' || !window.indexedDB)) {
     promptLibraryDraftError.value = t('imageStudio.promptWorkspace.localStorageUnavailable')
     return
   }
+
+  promptLibraryDraftSaving.value = true
+  promptLibraryDraftError.value = ''
 
   try {
     const payload = {
@@ -5627,13 +6488,21 @@ async function savePromptLibraryDraft() {
     }
     appStore.showSuccess(promptLibraryDraftMode.value === 'edit'
       ? (locale.value === 'zh' ? '提示词已更新。' : 'Prompt updated.')
-      : t('imageStudio.promptWorkspace.localSaved'))
+      : (promptLibraryUsesRemoteStorage
+          ? (locale.value === 'zh' ? '已保存到云端提示词库。' : 'Saved to the cloud prompt library.')
+          : t('imageStudio.promptWorkspace.localSaved')))
     closePromptUploadModal()
     await refreshPromptLibraryItems()
-  } catch {
-    promptLibraryDraftError.value = promptLibraryDraftMode.value === 'edit'
+  } catch (error) {
+    const message = error instanceof Error ? error.message.trim() : ''
+    const baseMessage = promptLibraryDraftMode.value === 'edit'
       ? (locale.value === 'zh' ? '更新提示词失败。' : 'Failed to update the prompt.')
-      : t('imageStudio.promptWorkspace.localSaveFailed')
+      : (promptLibraryUsesRemoteStorage
+          ? (locale.value === 'zh' ? '保存云端提示词失败。' : 'Failed to save the cloud prompt.')
+          : t('imageStudio.promptWorkspace.localSaveFailed'))
+    promptLibraryDraftError.value = message ? `${baseMessage} ${message}` : baseMessage
+  } finally {
+    promptLibraryDraftSaving.value = false
   }
 }
 
@@ -6162,6 +7031,7 @@ function handleDocumentClick(event: MouseEvent) {
   if (releasePanelRef.value && !releasePanelRef.value.contains(target)) {
     avatarMenuOpen.value = false
     releasePanelOpen.value = false
+    workspacePanelOpen.value = false
   }
   if (appearancePanelRef.value && !appearancePanelRef.value.contains(target)) {
     appearancePanelOpen.value = false
@@ -6243,6 +7113,10 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   }
 
   if (event.key === 'Escape') {
+    if (promptReplacementModalOpen.value) {
+      closePromptReplacementModal()
+      return
+    }
     if (compatibilityPreviewOpen.value) {
       compatibilityPreviewOpen.value = false
       return
@@ -6344,6 +7218,8 @@ function handleWindowResize() {
   if (previewLightboxOpen.value) {
     refreshLightboxLayout()
   }
+  updateHistoryListViewportHeight()
+  updateWorkbenchSurfaceViewportHeight()
 }
 
 function pickFallbackInspiration(): string {
@@ -6521,13 +7397,54 @@ function createHistoryId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
+function dataUrlToImageBlob(dataUrl: string): Blob | null {
+  const commaIndex = dataUrl.indexOf(',')
+  if (!dataUrl.startsWith('data:') || commaIndex <= 5) {
+    return null
+  }
+
+  const metadata = dataUrl.slice(5, commaIndex)
+  const payload = dataUrl.slice(commaIndex + 1)
+  const mimeType = metadata.split(';', 1)[0] || 'image/png'
+  const isBase64 = metadata.toLowerCase().includes(';base64')
+
+  try {
+    const binary = isBase64
+      ? atob(payload)
+      : decodeURIComponent(payload)
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index)
+    }
+    return new Blob([bytes], {
+      type: mimeType.startsWith('image/') ? mimeType : 'image/png',
+    })
+  } catch {
+    return null
+  }
+}
+
 async function ensureResultBlob(result: NormalizedImageResult): Promise<Blob> {
   if (result.blob) {
     return result.blob
   }
 
   const sourceUrl = result.originalUrl || result.url
-  if (sourceUrl.startsWith('data:') || sourceUrl.startsWith('blob:')) {
+  if (!sourceUrl) {
+    throw new Error(t('imageStudio.toasts.downloadFailed'))
+  }
+
+  if (sourceUrl.startsWith('data:')) {
+    const blob = dataUrlToImageBlob(sourceUrl)
+    if (!blob) {
+      throw new Error(t('imageStudio.toasts.downloadFailed'))
+    }
+    result.blob = blob
+    result.mimeType = result.mimeType || blob.type
+    return blob
+  }
+
+  if (sourceUrl.startsWith('blob:')) {
     const response = await fetch(sourceUrl)
     if (!response.ok) {
       throw new Error(t('imageStudio.toasts.downloadFailed'))
@@ -6538,10 +7455,49 @@ async function ensureResultBlob(result: NormalizedImageResult): Promise<Blob> {
     return blob
   }
 
+  if (/^https?:\/\//i.test(sourceUrl)) {
+    try {
+      const response = await fetch(sourceUrl, {
+        mode: 'cors',
+        credentials: 'omit',
+      })
+      if (response.ok) {
+        const blob = await response.blob()
+        result.blob = blob
+        result.mimeType = result.mimeType || blob.type
+        return blob
+      }
+    } catch (error) {
+      if (IMAGE_STUDIO_DEBUG) {
+        console.warn('[image-studio] browser image fetch failed; falling back to relay download', error)
+      }
+    }
+  }
+
   const blob = await downloadRemoteImage(sourceUrl, result.filename)
   result.blob = blob
   result.mimeType = result.mimeType || blob.type
   return blob
+}
+
+async function ensureHistoryResultBlobs(results: NormalizedImageResult[]): Promise<void> {
+  let nextIndex = 0
+  const workerCount = Math.min(2, results.length)
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < results.length) {
+      const result = results[nextIndex]
+      nextIndex += 1
+      try {
+        await ensureResultBlob(result)
+      } catch (error) {
+        if (IMAGE_STUDIO_DEBUG) {
+          console.warn('[image-studio] result blob fetch failed; saving remote history fallback', error)
+        }
+      }
+    }
+  })
+
+  await Promise.all(workers)
 }
 
 async function blobToDataUrl(blob: Blob): Promise<string> {
@@ -6635,24 +7591,28 @@ async function resizeResultToPixelSize(
 
   try {
     if (bitmap.width === target.width && bitmap.height === target.height) {
-      console.info('[image-studio] output already matches target size', {
-        filename: result.filename,
-        suffix,
-        size: `${target.width}x${target.height}`,
-        mimeType: sourceBlob.type || result.mimeType,
-        bytes: sourceBlob.size,
-      })
+      if (IMAGE_STUDIO_DEBUG) {
+        console.info('[image-studio] output already matches target size', {
+          filename: result.filename,
+          suffix,
+          size: `${target.width}x${target.height}`,
+          mimeType: sourceBlob.type || result.mimeType,
+          bytes: sourceBlob.size,
+        })
+      }
       return result
     }
 
-    console.info('[image-studio] resizing output to requested preset', {
-      filename: result.filename,
-      suffix,
-      sourceSize: `${bitmap.width}x${bitmap.height}`,
-      targetSize: `${target.width}x${target.height}`,
-      mimeType: sourceBlob.type || result.mimeType,
-      sourceBytes: sourceBlob.size,
-    })
+    if (IMAGE_STUDIO_DEBUG) {
+      console.info('[image-studio] resizing output to requested preset', {
+        filename: result.filename,
+        suffix,
+        sourceSize: `${bitmap.width}x${bitmap.height}`,
+        targetSize: `${target.width}x${target.height}`,
+        mimeType: sourceBlob.type || result.mimeType,
+        sourceBytes: sourceBlob.size,
+      })
+    }
 
     const canvas = document.createElement('canvas')
     canvas.width = target.width
@@ -6697,10 +7657,105 @@ async function readBlobImageDimensions(blob: Blob): Promise<{ width: number; hei
   }
 }
 
+function formatPixelDimensions(dimensions?: { width: number; height: number } | null): string | undefined {
+  if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
+    return undefined
+  }
+  return `${dimensions.width}x${dimensions.height}`
+}
+
+function readImageElementDimensions(url?: string): Promise<{ width: number; height: number } | null> {
+  const source = (url || '').trim()
+  if (!source || typeof Image === 'undefined') {
+    return Promise.resolve(null)
+  }
+
+  return new Promise((resolve) => {
+    const image = new Image()
+    const timeout = window.setTimeout(() => {
+      cleanup()
+      resolve(null)
+    }, 15000)
+
+    function cleanup() {
+      window.clearTimeout(timeout)
+      image.onload = null
+      image.onerror = null
+    }
+
+    image.onload = () => {
+      const width = image.naturalWidth || image.width
+      const height = image.naturalHeight || image.height
+      cleanup()
+      resolve(width > 0 && height > 0 ? { width, height } : null)
+    }
+    image.onerror = () => {
+      cleanup()
+      resolve(null)
+    }
+    image.src = source
+  })
+}
+
+async function readResultImageDimensions(result?: NormalizedImageResult): Promise<{ width: number; height: number } | null> {
+  if (!result) {
+    return null
+  }
+
+  if (result.blob) {
+    try {
+      return await readBlobImageDimensions(result.blob)
+    } catch {
+      if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+        const url = URL.createObjectURL(result.blob)
+        try {
+          const dimensions = await readImageElementDimensions(url)
+          if (dimensions) {
+            return dimensions
+          }
+        } finally {
+          URL.revokeObjectURL(url)
+        }
+      }
+    }
+  }
+
+  return readImageElementDimensions(result.url || result.originalUrl)
+}
+
+async function readResultActualSize(result?: NormalizedImageResult): Promise<string | undefined> {
+  return formatPixelDimensions(await readResultImageDimensions(result))
+}
+
+function isProviderScaledOutput(requestedSize?: string, actualSize?: string): boolean {
+  const requested = parsePixelSize(requestedSize || '')
+  const actual = parsePixelSize(actualSize || '')
+  return Boolean(
+    requested &&
+    actual &&
+    actual.width * actual.height < requested.width * requested.height
+  )
+}
+
+function resolveHistoryOutputMode(
+  outputMode: ImageStudioHistoryItem['outputMode'],
+  requestedSize?: string,
+  actualSize?: string
+): ImageStudioHistoryItem['outputMode'] {
+  if ((!outputMode || outputMode === 'native') && isProviderScaledOutput(requestedSize, actualSize)) {
+    return 'provider-scaled'
+  }
+  return outputMode
+}
+
 async function auditGeneratedImageDimensions(results: NormalizedImageResult[], context: {
   model: string
   source: string
 }) {
+  if (!IMAGE_STUDIO_DEBUG) {
+    return
+  }
+
   if (!results.length) {
     return
   }
@@ -6745,7 +7800,7 @@ async function auditGeneratedImageDimensions(results: NormalizedImageResult[], c
 }
 
 async function applyOutputResolutionPreset(results: NormalizedImageResult[]): Promise<NormalizedImageResult[]> {
-  if (isGptImagePlaygroundMode.value) {
+  if (!localUpscaleAllowed.value) {
     return results
   }
 
@@ -6763,34 +7818,6 @@ async function applyOutputResolutionPreset(results: NormalizedImageResult[]): Pr
     await resizeResultToPixelSize(result, target, suffix)
   }
   return results
-}
-
-function unescapePromptTemplateAttribute(value: string): string {
-  return value
-    .replace(/\\"/g, '"')
-    .replace(/\\'/g, "'")
-    .replace(/\\\\/g, '\\')
-    .trim()
-}
-
-function readPromptTemplateAttribute(attributes: string, key: 'name' | 'default'): string {
-  const normalized = attributes.replace(/\\"/g, '"').replace(/\\'/g, "'")
-  const matcher = new RegExp(
-    `${key}\\s*=\\s*(?:"((?:\\\\.|[^"\\\\])*)"|'((?:\\\\.|[^'\\\\])*)'|([^\\s}]+))`,
-    'i'
-  )
-  const match = normalized.match(matcher)
-  if (!match) {
-    return ''
-  }
-  return unescapePromptTemplateAttribute(match[1] || match[2] || match[3] || '')
-}
-
-function resolvePromptTemplateArguments(rawPrompt: string): string {
-  return rawPrompt.replace(/\{\s*argument\b([^{}]*)\}/gi, (_match, attributes: string) => {
-    const fallback = readPromptTemplateAttribute(attributes, 'name')
-    return readPromptTemplateAttribute(attributes, 'default') || fallback
-  })
 }
 
 interface PromptCompatibilityResult {
@@ -7172,16 +8199,15 @@ async function persistCurrentResults(
 ) {
   const historyId = createHistoryId()
 
-  let blobError: unknown = null
-  for (const result of generatedResults) {
-    try {
-      await ensureResultBlob(result)
-    } catch (error) {
-      blobError = blobError || error
-    }
-  }
+  await ensureHistoryResultBlobs(generatedResults)
 
   const cleanedInputs = (imageInputs || []).filter((s) => typeof s === 'string' && s.length > 0)
+  const requestedSize = resolvedSize.value || undefined
+  const actualSize = await readResultActualSize(generatedResults[0])
+  const baseOutputMode: ImageStudioHistoryItem['outputMode'] = super4kTargetSize.value
+    ? 'super-4k'
+    : (!localUpscaleAllowed.value || preferences.resolutionPreset === 'standard' ? 'native' : 'upscaled')
+  const outputMode = resolveHistoryOutputMode(baseOutputMode, requestedSize, actualSize)
 
   const historyItem: ImageStudioHistoryItem = {
     id: historyId,
@@ -7192,12 +8218,11 @@ async function persistCurrentResults(
     model,
     prompt: resolvedPromptText,
     aspectRatio: preferences.aspectRatio,
-    count: effectiveCount.value,
+    count: generatedResults.length,
     resolutionPreset: preferences.resolutionPreset,
-    requestedSize: resolvedSize.value || undefined,
-    outputMode: super4kTargetSize.value
-      ? 'super-4k'
-      : (isGptImagePlaygroundMode.value || preferences.resolutionPreset === 'standard' ? 'native' : 'upscaled'),
+    requestedSize,
+    actualSize,
+    outputMode,
     quality: preferences.quality,
     background: preferences.background,
     format: preferences.format,
@@ -7220,19 +8245,16 @@ async function persistCurrentResults(
     activeHistoryId: historyId,
   }
 
-  try {
-    if (blobError) {
-      throw blobError
-    }
-    await saveImageStudioHistoryItem(historyItem)
-  } catch (error) {
+  const saveResult = await saveImageStudioHistoryItem(historyItem).catch((error) => {
     keepHistoryItemInCurrentSession(historyItem, workspaceSyncOptions)
     throw error
-  }
+  })
 
   await loadHistory({
     ...workspaceSyncOptions,
   })
+
+  return saveResult
 }
 
 async function ensureImageStudioPersistentStorage(options: { silent?: boolean } = {}) {
@@ -7486,6 +8508,7 @@ function isRetryableNativeResolutionError(error: unknown): boolean {
 
 function canFallbackToStandardResolution(error: unknown): boolean {
   return (
+    localUpscaleAllowed.value &&
     (supportsCustomResolution.value || !!super4kTargetSize.value) &&
     (preferences.resolutionPreset !== 'standard' || !!super4kTargetSize.value) &&
     !!standardGenerationSize.value &&
@@ -7843,16 +8866,21 @@ async function generateImages(options: {
     progress.value = 100
 
     try {
-      await persistCurrentResults(
+      const historySaveResult = await persistCurrentResults(
         resolvedModel,
         generatedResults,
         resolvedPromptText,
         imageInputs,
         { parentHistoryId: options.parentHistoryId, parentTileId: options.parentTileId }
       )
-      await ensureImageStudioPersistentStorage()
+      await ensureImageStudioPersistentStorage({ silent: true })
 
-      if (finalBatchProgress && finalBatchProgress.failed > 0 && generatedResults.length > 0) {
+      if (historySaveResult.storedResultCount < historySaveResult.requestedResultCount) {
+        appStore.showWarning(t('imageStudio.toasts.historySavedPartial', {
+          done: historySaveResult.storedResultCount,
+          total: historySaveResult.requestedResultCount,
+        }), 8000)
+      } else if (finalBatchProgress && finalBatchProgress.failed > 0 && generatedResults.length > 0) {
         appStore.showWarning(t('imageStudio.toasts.batchGeneratedPartial', {
           done: generatedResults.length,
           total: finalBatchProgress.total,
@@ -7938,7 +8966,7 @@ async function testUpstreamConnection() {
     let lastError: unknown = null
     for (const candidate of candidates) {
       try {
-        modelIds = await fetchImageModelIds(candidate, apiKey, controller.signal)
+        modelIds = await fetchImageModelIds(candidate, apiKey, controller.signal, activeImageProbeProfile())
         resolvedBaseUrl = candidate
         break
       } catch (error) {
@@ -7991,7 +9019,7 @@ async function testCurrentSiteConnection() {
       let lastError: unknown = null
       for (const candidate of candidates) {
         try {
-          modelIds = await fetchImageModelIds(candidate, apiKey, controller.signal)
+          modelIds = await fetchImageModelIds(candidate, apiKey, controller.signal, 'chatgpt2api')
           resolvedBaseUrl = candidate
           break
         } catch (error) {
@@ -8229,19 +9257,6 @@ function handleWorkbenchTileDragEnd() {
   workbenchDragTileId.value = null
   workbenchDropTileId.value = null
   workbenchIgnoreClickUntil.value = Date.now() + 180
-}
-
-function handleVariantTileClick(tileId: string, event: MouseEvent) {
-  if (event.metaKey || event.ctrlKey) {
-    focusTile(tileId, { multi: true })
-    return
-  }
-
-  focusTile(tileId)
-}
-
-function selectAllActiveHistoryTiles() {
-  selectedTileIds.value = activeHistoryTiles.value.map((tile) => tile.id)
 }
 
 function selectHistoryRecord(id: string) {
@@ -8586,19 +9601,32 @@ onMounted(async () => {
   if (!appStore.publicSettingsLoaded) {
     await appStore.fetchPublicSettings()
   }
+  refreshApiPresets()
   await refreshPromptLibraryItems()
   await loadHistory()
   applyStudioQaRouteState()
 })
 
 onBeforeUnmount(() => {
+  stopDocumentStudioAppearanceSync?.()
+  clearDocumentStudioAppearance()
   document.removeEventListener('click', handleDocumentClick)
   window.removeEventListener('keydown', handleGlobalKeydown)
   window.removeEventListener('mousemove', handleGlobalMouseMove)
   window.removeEventListener('mouseup', handleGlobalMouseUp)
   window.removeEventListener('resize', handleWindowResize)
   hideStudioTitleTooltip()
+  disconnectHistoryListResizeObserver()
+  disconnectWorkbenchResizeObserver()
   clearProgressResetTimer()
+  if (detectModelsDebounce) {
+    window.clearTimeout(detectModelsDebounce)
+  }
+  if (detectPromptHelperModelsDebounce) {
+    window.clearTimeout(detectPromptHelperModelsDebounce)
+  }
+  detectModelsAbort.value?.abort()
+  detectPromptHelperModelsAbort.value?.abort()
   revokeImageStudioHistoryItems(historyItems.value)
   revokeImageStudioPromptLibraryItems(savedPromptLibraryItems.value)
   clearPromptLibraryDetailsPreviewPress()
@@ -8662,7 +9690,7 @@ onBeforeUnmount(() => {
   max-height: min(42vh, 320px);
   overflow: auto;
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: var(--studio-radius-control, 12px);
   font-size: 12px;
   font-weight: 400;
   line-height: 1.45;
@@ -8683,10 +9711,10 @@ onBeforeUnmount(() => {
 }
 
 .studio-title-tooltip.is-outline {
-  border: 1px solid color-mix(in srgb, var(--tooltip-accent) 58%, transparent);
-  background: rgba(255, 255, 255, 0.94);
-  color: var(--tooltip-accent-deep);
-  box-shadow: 0 14px 34px rgba(var(--tooltip-accent-rgb), 0.18), 0 8px 18px rgba(15, 23, 42, 0.08);
+  border: 1px solid color-mix(in srgb, var(--tooltip-accent) 42%, rgba(148, 163, 184, 0.35));
+  background: color-mix(in srgb, rgba(255, 255, 255, 0.96) 94%, var(--tooltip-accent) 6%);
+  color: var(--tooltip-outline-text, var(--tooltip-accent-deep));
+  box-shadow: 0 14px 34px rgba(var(--tooltip-accent-rgb), 0.14), 0 8px 18px rgba(15, 23, 42, 0.08);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
 }
@@ -8711,19 +9739,19 @@ onBeforeUnmount(() => {
 }
 
 .studio-shell.theme-night {
-  --studio-bg: #0a0c12;
-  --studio-card: #1c1e26;
-  --studio-border: rgba(148, 163, 184, 0.18);
+  --studio-bg: #0b0f17;
+  --studio-card: #1b202b;
+  --studio-border: rgba(148, 163, 184, 0.22);
   --studio-text: #e5eefc;
   --studio-muted: #94a3b8;
-  --studio-soft: #14161d;
+  --studio-soft: #131822;
   --studio-dark: #06070b;
-  --studio-card-background: #1c1e26;
-  --studio-soft-background: #14161d;
-  --studio-window-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 1px rgba(0, 0, 0, 0.4);
-  --studio-panel-shadow: 0 1px 1px rgba(0, 0, 0, 0.32);
-  --studio-shell-bg: #0a0c12;
-  --studio-stage-bg: #14161d;
+  --studio-card-background: #1b202b;
+  --studio-soft-background: #131822;
+  --studio-window-shadow: 0 18px 44px rgba(0, 0, 0, 0.34), 0 0 0 1px rgba(255, 255, 255, 0.025);
+  --studio-panel-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
+  --studio-shell-bg: #080b12;
+  --studio-stage-bg: #111722;
 }
 
 /* Texture variants are intentionally collapsed: single solid look. */
@@ -8738,11 +9766,15 @@ onBeforeUnmount(() => {
   background: var(--studio-card-background);
   border: 1px solid var(--studio-border);
   border-radius: var(--studio-radius-window);
+  background-clip: padding-box;
   box-shadow: var(--studio-window-shadow);
 }
 
 .studio-header {
   @apply flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 px-6 py-5;
+  border-top-left-radius: max(0px, calc(var(--studio-radius-window) - 1px));
+  border-top-right-radius: max(0px, calc(var(--studio-radius-window) - 1px));
+  background-clip: padding-box;
 }
 
 .studio-brand {
@@ -8799,6 +9831,94 @@ onBeforeUnmount(() => {
   box-shadow: 0 22px 52px rgba(15, 23, 42, 0.16), 0 8px 24px rgba(var(--theme-color-rgb), 0.11);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
+}
+
+.studio-workspace-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 84;
+  display: grid;
+  width: min(380px, calc(100vw - 2rem));
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--theme-color) 20%, var(--studio-border));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--studio-card-background) 92%, transparent);
+  box-shadow: 0 22px 52px rgba(15, 23, 42, 0.16), 0 8px 24px rgba(var(--theme-color-rgb), 0.11);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.studio-workspace-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.studio-workspace-panel-head p {
+  color: var(--studio-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.studio-workspace-panel-head span {
+  display: block;
+  margin-top: 4px;
+  color: var(--studio-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.studio-workspace-field {
+  display: grid;
+  gap: 6px;
+}
+
+.studio-workspace-field span {
+  color: var(--studio-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.studio-workspace-field code {
+  overflow-wrap: anywhere;
+  border-radius: 10px;
+  border: 1px solid var(--studio-border);
+  background: rgba(255, 255, 255, 0.5);
+  padding: 8px 10px;
+  color: var(--studio-text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.studio-workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.studio-workspace-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--studio-border);
+  background: var(--studio-card-background);
+  padding: 8px 10px;
+  color: var(--studio-accent-deep);
+  font-size: 12px;
+  font-weight: 700;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.studio-workspace-actions button:hover {
+  border-color: var(--studio-accent);
+  background: rgba(var(--theme-color-rgb), 0.08);
+  color: var(--studio-accent);
 }
 
 .studio-release-head {
@@ -9650,6 +10770,28 @@ onBeforeUnmount(() => {
   @apply mt-1 font-mono text-xs text-slate-500;
 }
 
+.studio-local-upscale-control {
+  @apply mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3;
+}
+
+.studio-local-upscale-toggle {
+  @apply inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition;
+}
+
+.studio-local-upscale-toggle:hover {
+  @apply border-slate-300 text-slate-900;
+}
+
+.studio-local-upscale-toggle.active {
+  border-color: var(--studio-accent);
+  background: var(--studio-accent-soft);
+  color: var(--studio-accent-deep);
+}
+
+.studio-local-upscale-control .studio-helper {
+  @apply mt-2;
+}
+
 .studio-prompt-card {
   @apply gap-0;
 }
@@ -10043,6 +11185,15 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(0, 1.18fr) minmax(380px, 0.82fr);
 }
 
+.studio-prompt-modal-panel.is-replacements {
+  max-width: 1120px;
+  border-color: rgba(255, 255, 255, 0.56);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.20) 42%, rgba(var(--theme-color-rgb), 0.08)),
+    rgba(255, 255, 255, 0.46);
+  box-shadow: 0 28px 74px rgba(15, 23, 42, 0.16), 0 8px 28px rgba(var(--theme-color-rgb), 0.10);
+}
+
 .studio-prompt-modal-head {
   @apply flex items-start justify-between gap-4 px-6 py-5;
   border-bottom: 1px solid rgba(255, 255, 255, 0.34);
@@ -10057,6 +11208,444 @@ onBeforeUnmount(() => {
 .studio-prompt-modal-text {
   @apply mt-1 max-w-2xl text-sm leading-6;
   color: var(--studio-muted);
+}
+
+.studio-replacement-body {
+  display: grid;
+  gap: 14px;
+  min-height: 360px;
+  overflow-y: auto;
+  padding: 18px 22px;
+}
+
+.studio-replacement-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.studio-replacement-mode,
+.studio-replacement-smart-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.42);
+  padding: 0 13px;
+  color: var(--studio-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.studio-replacement-mode svg,
+.studio-replacement-smart-button svg {
+  color: var(--studio-accent);
+}
+
+.studio-replacement-mode strong {
+  display: inline-grid;
+  min-width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--studio-accent);
+  color: #ffffff;
+  font-size: 11px;
+}
+
+.studio-replacement-smart-button {
+  color: var(--studio-accent-deep);
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.studio-replacement-smart-button:hover:not(:disabled) {
+  border-color: rgba(var(--theme-color-rgb), 0.28);
+  background: rgba(var(--theme-color-rgb), 0.08);
+  transform: translateY(-1px);
+}
+
+.studio-replacement-smart-button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.studio-replacement-error {
+  border-radius: 12px;
+  border: 1px solid rgba(225, 29, 72, 0.22);
+  background: rgba(255, 241, 242, 0.7);
+  padding: 10px 12px;
+  color: #be123c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.studio-replacement-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.studio-replacement-item {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.36);
+  padding: 12px;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.studio-replacement-item.active {
+  border-color: rgba(var(--theme-color-rgb), 0.38);
+  background: rgba(var(--theme-color-rgb), 0.08);
+  box-shadow: 0 12px 28px rgba(var(--theme-color-rgb), 0.10);
+}
+
+.studio-replacement-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.studio-replacement-item-head div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.studio-replacement-item-head span {
+  overflow: hidden;
+  color: var(--studio-text);
+  font-size: 13px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-replacement-item-head small {
+  color: var(--studio-muted);
+  font-size: 11px;
+}
+
+.studio-replacement-locate {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(var(--theme-color-rgb), 0.18);
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--studio-accent-deep);
+  transition: background 160ms ease, transform 160ms ease;
+}
+
+.studio-replacement-locate:hover {
+  background: rgba(var(--theme-color-rgb), 0.10);
+  transform: translateY(-1px);
+}
+
+.studio-replacement-source {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.studio-replacement-source span {
+  color: var(--studio-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.studio-replacement-source code {
+  display: block;
+  min-height: 34px;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  background: rgba(15, 23, 42, 0.04);
+  padding: 8px 9px;
+  color: var(--studio-text);
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-replacement-input {
+  min-height: 38px;
+  font-size: 13px;
+}
+
+.studio-replacement-empty {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  align-content: center;
+  gap: 9px;
+  border-radius: 18px;
+  border: 1px dashed rgba(var(--theme-color-rgb), 0.24);
+  background: rgba(255, 255, 255, 0.25);
+  padding: 24px;
+  text-align: center;
+}
+
+.studio-replacement-empty svg {
+  color: var(--studio-accent);
+}
+
+.studio-replacement-empty p {
+  color: var(--studio-text);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.studio-replacement-empty span {
+  max-width: 520px;
+  color: var(--studio-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.studio-replacement-context {
+  display: grid;
+  gap: 8px;
+  border-radius: 16px;
+  border: 1px solid rgba(var(--theme-color-rgb), 0.18);
+  background: rgba(255, 255, 255, 0.38);
+  padding: 12px;
+}
+
+.studio-replacement-context-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--studio-accent-deep);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.studio-replacement-context p {
+  margin: 0;
+  color: var(--studio-muted);
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.studio-replacement-context mark {
+  border-radius: 6px;
+  background: rgba(var(--theme-color-rgb), 0.18);
+  color: var(--studio-accent-deep);
+  padding: 1px 4px;
+}
+
+@media (max-width: 760px) {
+  .studio-replacement-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .studio-replacement-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.studio-replacement-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.18fr) minmax(320px, 0.82fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.studio-replacement-preview-panel,
+.studio-replacement-editor-panel {
+  min-width: 0;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.46);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.50), rgba(255, 255, 255, 0.20)),
+    rgba(255, 255, 255, 0.34);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.52), 0 14px 34px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(16px) saturate(132%);
+  -webkit-backdrop-filter: blur(16px) saturate(132%);
+}
+
+.studio-replacement-preview-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.studio-replacement-editor-panel {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 14px;
+}
+
+.studio-replacement-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.34);
+}
+
+.studio-replacement-editor-panel > .studio-replacement-panel-head {
+  padding: 0 0 12px;
+}
+
+.studio-replacement-panel-head div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.studio-replacement-panel-head p {
+  overflow: hidden;
+  color: var(--studio-text);
+  font-size: 14px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-replacement-panel-head span {
+  color: var(--studio-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.studio-replacement-panel-head strong,
+.studio-replacement-panel-head > svg {
+  display: inline-grid;
+  min-width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(var(--theme-color-rgb), 0.12);
+  color: var(--studio-accent-deep);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.studio-replacement-prompt-view {
+  min-height: 420px;
+  max-height: 58vh;
+  overflow-y: auto;
+  padding: 18px;
+  color: var(--studio-text);
+  font-size: 14px;
+  line-height: 1.86;
+  white-space: pre-wrap;
+  word-break: break-word;
+  scrollbar-width: none;
+}
+
+.studio-replacement-prompt-view::-webkit-scrollbar {
+  display: none;
+}
+
+.studio-replacement-highlight {
+  display: inline;
+  border: 0;
+  border-radius: 7px;
+  background: rgba(var(--theme-color-rgb), 0.16);
+  color: var(--studio-accent-deep);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  padding: 2px 5px;
+  font: inherit;
+  font-weight: 750;
+  line-height: inherit;
+  transition: background 140ms ease, box-shadow 140ms ease, color 140ms ease;
+}
+
+.studio-replacement-highlight:hover,
+.studio-replacement-highlight:focus-visible,
+.studio-replacement-highlight.active {
+  background: rgba(var(--theme-color-rgb), 0.26);
+  box-shadow: 0 0 0 2px rgba(var(--theme-color-rgb), 0.12), 0 8px 18px rgba(var(--theme-color-rgb), 0.12);
+  color: var(--studio-accent-deep);
+  outline: none;
+}
+
+.studio-replacement-editor-field {
+  display: grid;
+  gap: 7px;
+}
+
+.studio-replacement-editor-field > span {
+  color: var(--studio-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.studio-replacement-editor-field code {
+  display: block;
+  min-height: 44px;
+  overflow-wrap: anywhere;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.07);
+  background: rgba(255, 255, 255, 0.36);
+  padding: 10px 11px;
+  color: var(--studio-text);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.studio-replacement-editor-input {
+  min-height: 118px;
+  resize: vertical;
+  line-height: 1.58;
+}
+
+.studio-replacement-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.studio-replacement-editor-actions button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(var(--theme-color-rgb), 0.18);
+  background: rgba(255, 255, 255, 0.40);
+  padding: 0 12px;
+  color: var(--studio-accent-deep);
+  font-size: 12px;
+  font-weight: 800;
+  transition: background 160ms ease, transform 160ms ease;
+}
+
+.studio-replacement-editor-actions button:hover {
+  background: rgba(var(--theme-color-rgb), 0.10);
+  transform: translateY(-1px);
+}
+
+@media (max-width: 900px) {
+  .studio-replacement-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .studio-replacement-prompt-view {
+    min-height: 260px;
+    max-height: 38vh;
+  }
 }
 
 .studio-prompt-library-toolbar {
@@ -10870,10 +12459,16 @@ onBeforeUnmount(() => {
   box-shadow: 0 14px 28px rgba(var(--theme-color-rgb), 0.24);
 }
 
-.studio-prompt-upload-save:hover {
+.studio-prompt-upload-save:hover:not(:disabled) {
   transform: translateY(-1px);
   filter: brightness(1.06);
   box-shadow: 0 18px 34px rgba(var(--theme-color-rgb), 0.30);
+}
+
+.studio-prompt-upload-save:disabled {
+  cursor: wait;
+  opacity: 0.72;
+  transform: none;
 }
 
 .studio-prompt-full-preview-backdrop {
@@ -10923,6 +12518,18 @@ onBeforeUnmount(() => {
   border-color: #93c5fd;
   background: var(--studio-accent-soft);
   color: var(--studio-accent-deep);
+}
+
+.studio-chip small {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(var(--theme-color-rgb), 0.14);
+  color: var(--studio-accent-deep);
+  font-size: 10px;
+  line-height: 1;
 }
 
 .studio-negative-header {
@@ -11455,18 +13062,14 @@ onBeforeUnmount(() => {
   --studio-workbench-gap: 14px;
   --studio-workbench-padding: 16px;
   --studio-workbench-columns: 4;
-  @apply relative mt-4 overflow-y-auto overflow-x-hidden rounded-[24px] border border-slate-200;
+  @apply relative mt-4 overflow-y-auto overflow-x-hidden border;
   min-height: 0;
-  max-height: min(
-    74vh,
-    calc(
-      ((100% - (var(--studio-workbench-padding) * 2) - (var(--studio-workbench-gap) * (var(--studio-workbench-columns) - 1))) / var(--studio-workbench-columns) * 3)
-      + (var(--studio-workbench-gap) * 2)
-      + (var(--studio-workbench-padding) * 2)
-    )
-  );
+  max-height: min(74vh, 720px);
+  border-color: var(--studio-border);
+  border-radius: var(--studio-radius-panel);
   scrollbar-width: none;
   -ms-overflow-style: none;
+  overscroll-behavior: contain;
   background:
     radial-gradient(circle at top left, color-mix(in srgb, var(--studio-accent) 16%, transparent) 0%, transparent 28%),
     linear-gradient(180deg, color-mix(in srgb, var(--studio-card-background) 92%, white 8%) 0%, color-mix(in srgb, var(--studio-soft-background) 92%, transparent) 100%);
@@ -11495,29 +13098,41 @@ onBeforeUnmount(() => {
 }
 
 .studio-workbench-tile {
+  --tile-tone-color: var(--studio-accent);
+  --tile-tone-rgb: var(--theme-color-rgb);
+  --tile-ring-color: color-mix(in srgb, rgb(var(--tile-tone-rgb)) 28%, var(--studio-border));
   @apply relative overflow-hidden border border-slate-200 transition;
   aspect-ratio: 1 / 1;
+  border: 0;
   border-radius: var(--studio-radius-image);
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
-  background: color-mix(in srgb, var(--studio-card-background) 92%, transparent);
+  box-shadow:
+    0 12px 28px rgba(15, 23, 42, 0.08),
+    inset 0 0 0 1px var(--tile-ring-color),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  background:
+    linear-gradient(135deg, rgba(var(--tile-tone-rgb), 0.18), rgba(255, 255, 255, 0.08) 38%, rgba(15, 23, 42, 0.04) 100%),
+    color-mix(in srgb, var(--studio-card-background) 88%, rgb(var(--tile-tone-rgb)) 12%);
 }
 
 .studio-workbench-tile.active {
-  border-color: color-mix(in srgb, var(--studio-accent) 52%, white 48%);
+  --tile-ring-color: color-mix(in srgb, rgb(var(--tile-tone-rgb)) 68%, white 32%);
   box-shadow:
-    0 18px 34px color-mix(in srgb, var(--studio-accent-shadow) 68%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--studio-accent) 16%, transparent);
+    0 18px 34px rgba(var(--tile-tone-rgb), 0.18),
+    0 0 0 1px rgba(var(--tile-tone-rgb), 0.24),
+    inset 0 0 0 1px var(--tile-ring-color),
+    inset 0 1px 0 rgba(255, 255, 255, 0.38);
 }
 
 .studio-workbench-tile.selected {
-  border-color: color-mix(in srgb, var(--studio-accent) 68%, black 6%);
+  --tile-ring-color: color-mix(in srgb, rgb(var(--tile-tone-rgb)) 78%, black 6%);
 }
 
 .studio-workbench-tile.is-drop-target {
   transform: translateY(-4px);
   box-shadow:
-    0 20px 36px color-mix(in srgb, var(--studio-accent-shadow) 72%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--studio-accent) 24%, transparent);
+    0 20px 36px rgba(var(--tile-tone-rgb), 0.22),
+    0 0 0 1px rgba(var(--tile-tone-rgb), 0.28),
+    inset 0 0 0 1px var(--tile-ring-color);
 }
 
 .studio-workbench-tile.is-dragging {
@@ -11525,20 +13140,43 @@ onBeforeUnmount(() => {
 }
 
 .studio-workbench-tile-button {
-  @apply relative block h-full w-full overflow-hidden text-left;
+  @apply absolute inset-0 block h-full w-full overflow-hidden text-left;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  padding: 0;
+  transform: translateZ(0);
+}
+
+.studio-workbench-tile-button::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.16), transparent 32%),
+    radial-gradient(circle at 20% 10%, rgba(var(--tile-tone-rgb), 0.18), transparent 46%);
+  opacity: 0.58;
 }
 
 .studio-workbench-image {
+  position: absolute;
+  inset: 0;
+  display: block;
   @apply h-full w-full object-cover;
+  border-radius: inherit;
 }
 
 .studio-workbench-tile-gradient {
-  @apply pointer-events-none absolute inset-x-0 bottom-0 h-24;
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0) 0%, rgba(15, 23, 42, 0.84) 100%);
+  @apply pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-24;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0) 0%, rgba(7, 11, 18, 0.18) 48%, rgba(7, 11, 18, 0.66) 100%);
 }
 
 .studio-workbench-tile-copy {
-  @apply pointer-events-none absolute inset-x-0 bottom-0 z-[1] px-3 pb-3;
+  @apply pointer-events-none absolute inset-x-0 bottom-0 z-[2] px-3 pb-3;
 }
 
 .studio-workbench-tile-name {
@@ -11550,21 +13188,72 @@ onBeforeUnmount(() => {
 }
 
 .studio-workbench-tile-actions {
-  @apply absolute left-2 right-2 top-2 z-[2] flex items-center justify-end gap-2;
+  --workbench-action-size: 32px;
+  --workbench-action-gap: 6px;
+  @apply absolute right-2 top-2 z-[3] flex items-center justify-end;
+  left: auto;
+  width: calc((var(--workbench-action-size) * 3) + (var(--workbench-action-gap) * 2));
+  height: var(--workbench-action-size);
+  gap: var(--workbench-action-gap);
+  pointer-events: none;
 }
 
 .studio-workbench-icon {
   @apply inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/30 text-white transition hover:bg-slate-900;
-  background-color: rgba(2, 6, 23, 0.68);
+  background-color: rgba(2, 6, 23, 0.62);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  pointer-events: auto;
+  transform: translateX(0);
+  transition:
+    transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 180ms ease,
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
 }
 
 .studio-workbench-drag-hotzone {
-  @apply absolute inset-0 cursor-grab text-transparent;
-  z-index: -1;
+  @apply inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/25 text-white/80;
+  position: static;
+  z-index: auto;
+  background-color: rgba(2, 6, 23, 0.48);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  cursor: grab;
+  pointer-events: auto;
+  transform: translateX(0);
+  transition:
+    transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 180ms ease,
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
 }
 
 .studio-workbench-tile:active .studio-workbench-drag-hotzone {
   cursor: grabbing;
+}
+
+.studio-workbench-drag-hotzone {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(calc((var(--workbench-action-size) + var(--workbench-action-gap)) * 2));
+}
+
+.studio-workbench-drag-hotzone + .studio-workbench-icon {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(calc(var(--workbench-action-size) + var(--workbench-action-gap)));
+}
+
+.studio-workbench-tile:hover .studio-workbench-drag-hotzone,
+.studio-workbench-tile:focus-within .studio-workbench-drag-hotzone,
+.studio-workbench-tile:hover .studio-workbench-drag-hotzone + .studio-workbench-icon,
+.studio-workbench-tile:focus-within .studio-workbench-drag-hotzone + .studio-workbench-icon {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
 }
 
 .studio-workbench-marquee {
@@ -11597,8 +13286,8 @@ onBeforeUnmount(() => {
 }
 
 .studio-history-header {
+  position: relative;
   display: grid;
-  gap: 4px;
   width: var(--studio-history-card-width);
   max-width: 100%;
 }
@@ -11607,12 +13296,85 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
 .studio-history-title-row .studio-panel-title {
   min-width: 0;
+}
+
+.studio-history-title-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.studio-history-title {
+  cursor: help;
+}
+
+.studio-history-title:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 4px;
+  border-radius: var(--studio-radius-soft);
+}
+
+.studio-history-stats {
+  display: inline-flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  margin: 0;
+  overflow: hidden;
+  color: var(--studio-muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  background: transparent;
+}
+
+.studio-history-stats span {
+  flex: 0 0 auto;
+  background: transparent;
+}
+
+.studio-history-stats .is-native {
+  color: oklch(48% 0.13 155);
+}
+
+.studio-history-stats .is-upscaled {
+  color: oklch(57% 0.14 75);
+}
+
+.studio-history-stats .is-degraded {
+  color: oklch(52% 0.16 28);
+}
+
+.studio-shell.theme-night .studio-history-stats,
+.studio-shell.theme-night .studio-history-stats span {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.studio-shell.theme-night .studio-history-stats .is-total {
+  color: #93c5fd;
+}
+
+.studio-shell.theme-night .studio-history-stats .is-native {
+  color: #34d399;
+}
+
+.studio-shell.theme-night .studio-history-stats .is-upscaled {
+  color: #fbbf24;
+}
+
+.studio-shell.theme-night .studio-history-stats .is-degraded {
+  color: #fb7185;
 }
 
 .studio-side-empty {
@@ -11648,22 +13410,23 @@ onBeforeUnmount(() => {
 }
 
 .studio-history-list {
-  margin: 10px -18px 0;
+  margin: 8px -18px 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
   box-sizing: border-box;
   width: calc(var(--studio-history-card-width) + 36px);
   max-width: calc(100% + 36px);
-  max-height: 632px;
-  padding: 18px 18px 30px;
+  max-height: 600px;
+  padding: 4px 18px 8px;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
-  scroll-padding: 18px 18px 30px;
-  scroll-snap-type: y proximity;
+  scroll-padding: 4px 18px 8px;
+  scroll-snap-type: none;
   scrollbar-width: none;
   -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
 }
 
 .studio-history-list::-webkit-scrollbar {
@@ -11672,18 +13435,18 @@ onBeforeUnmount(() => {
 }
 
 .studio-history-list :deep(.glass-card) {
-  scroll-snap-align: start;
+  scroll-snap-align: none;
 }
 
-@media (max-width: 1280px) {
+@media (min-width: 1536px) {
   .studio-history-list {
-    max-height: 596px;
+    max-height: 636px;
   }
 }
 
-@media (max-width: 1024px) {
+@media (max-width: 1279px) {
   .studio-history-list {
-    max-height: min(72vh, 632px);
+    max-height: min(72vh, 600px);
   }
 }
 
@@ -12318,6 +14081,11 @@ onBeforeUnmount(() => {
   margin-top: 0;
 }
 
+.studio-model-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
 .studio-preview-help-row kbd {
   flex-shrink: 0;
   display: inline-flex;
@@ -12359,6 +14127,10 @@ onBeforeUnmount(() => {
 .studio-empty-mark,
 .studio-compare-handle,
 .studio-variant-check,
+.studio-release-trigger,
+.studio-theme-trigger,
+.studio-appearance-segment,
+.studio-appearance-toggle,
 .studio-icon-button,
 .studio-icon-button.inset,
 .studio-header-pill,
@@ -12382,9 +14154,35 @@ onBeforeUnmount(() => {
 .studio-side-empty,
 .studio-variant-card,
 .studio-download-card,
+.studio-workbench-toolbar,
+.studio-progress-info,
+.studio-progress-track,
+.studio-api-presets,
+.studio-api-preset-save,
+.studio-api-preset-apply,
+.studio-api-preset-delete,
+.studio-api-preset-info,
+.studio-popover-panel,
+.studio-test-connection,
+.studio-generate-target,
+.studio-reference-images,
+.studio-reference-tile,
+.studio-preview-help-tip,
+.studio-preview-single-cell,
+.studio-prompt-template-preview,
 .studio-negative-input .input,
 .studio-seed-input .input {
   border-radius: var(--studio-radius-control);
+}
+
+.studio-release-panel,
+.studio-workspace-panel,
+.studio-appearance-panel,
+.studio-workbench-surface,
+.studio-prompt-modal-panel,
+.studio-prompt-full-preview-panel,
+.studio-lightbox-panel {
+  border-radius: var(--studio-radius-panel);
 }
 
 .studio-style-preview,
@@ -12474,7 +14272,14 @@ onBeforeUnmount(() => {
 .studio-bottom-action,
 .studio-side-empty,
 .studio-download-card,
-.studio-clear-button {
+.studio-clear-button,
+.studio-workbench-toolbar,
+.studio-progress-info,
+.studio-api-presets,
+.studio-api-preset-info,
+.studio-popover-panel,
+.studio-reference-images,
+.studio-preview-single-cell {
   border-color: var(--studio-border);
   background: var(--studio-soft-background);
   color: var(--studio-text);
@@ -12486,7 +14291,10 @@ onBeforeUnmount(() => {
 .studio-download-card,
 .studio-panel-link-button,
 .studio-inline-button,
-.studio-ghost-link {
+.studio-ghost-link,
+.studio-api-preset-save,
+.studio-api-preset-apply,
+.studio-api-preset-delete {
   background: var(--studio-card-background);
 }
 
@@ -12500,8 +14308,15 @@ onBeforeUnmount(() => {
 .studio-inline-button,
 .studio-ghost-link,
 .studio-clear-button,
-.studio-icon-button {
+.studio-icon-button,
+.studio-workbench-pill {
   color: var(--studio-muted);
+}
+
+.studio-workbench-pill.accent {
+  border-color: color-mix(in srgb, var(--studio-accent) 32%, var(--studio-border));
+  background: var(--studio-accent-soft);
+  color: var(--studio-accent-deep);
 }
 
 .studio-provider-pill.active,
@@ -12572,6 +14387,12 @@ onBeforeUnmount(() => {
 
 .studio-preview-stage {
   background: var(--studio-stage-bg);
+}
+
+.studio-shell.theme-night .studio-workbench-surface {
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--studio-accent) 18%, transparent) 0%, transparent 28%),
+    linear-gradient(180deg, color-mix(in srgb, var(--studio-card-background) 94%, #0a0c12 6%) 0%, color-mix(in srgb, var(--studio-soft-background) 94%, transparent) 100%);
 }
 
 .studio-variant-card.selected {
@@ -13315,6 +15136,149 @@ onBeforeUnmount(() => {
   background: oklch(96% 0.04 25);
 }
 
+.studio-api-presets {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--studio-border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.studio-api-presets-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.studio-api-presets-head div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.studio-api-presets-head span {
+  color: var(--studio-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.studio-api-presets-head small,
+.studio-api-preset-item small {
+  overflow: hidden;
+  color: var(--studio-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-api-preset-save-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.studio-api-preset-save,
+.studio-api-preset-apply,
+.studio-api-preset-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--studio-border);
+  background: var(--studio-card-background);
+  color: var(--studio-text);
+  font-size: 12px;
+  font-weight: 700;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.studio-api-preset-save {
+  min-width: 96px;
+  padding: 0 12px;
+  color: var(--studio-accent-deep);
+  white-space: nowrap;
+}
+
+.studio-api-preset-save:hover,
+.studio-api-preset-apply:hover,
+.studio-api-preset-delete:hover {
+  border-color: var(--studio-accent);
+  color: var(--studio-accent-deep);
+  background: rgba(var(--theme-color-rgb), 0.08);
+}
+
+.studio-api-preset-list {
+  display: grid;
+  max-height: 172px;
+  gap: 8px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.studio-api-preset-list::-webkit-scrollbar {
+  display: none;
+}
+
+.studio-api-preset-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 32px;
+  gap: 6px;
+  align-items: stretch;
+  border-radius: 10px;
+}
+
+.studio-api-preset-item.active .studio-api-preset-info {
+  border-color: rgba(var(--theme-color-rgb), 0.36);
+  background: rgba(var(--theme-color-rgb), 0.08);
+}
+
+.studio-api-preset-info {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--studio-border) 80%, transparent);
+  background: rgba(255, 255, 255, 0.46);
+  padding: 8px 10px;
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.studio-api-preset-item:hover .studio-api-preset-info {
+  border-color: rgba(var(--theme-color-rgb), 0.28);
+  background: rgba(var(--theme-color-rgb), 0.07);
+}
+
+.studio-api-preset-info strong {
+  overflow: hidden;
+  color: var(--studio-text);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-api-preset-apply {
+  min-width: 48px;
+  padding: 0 10px;
+  color: var(--studio-accent-deep);
+}
+
+.studio-api-preset-item.active .studio-api-preset-apply {
+  color: oklch(46% 0.15 155);
+}
+
+.studio-api-preset-delete {
+  width: 32px;
+  min-height: 100%;
+  color: #e11d48;
+}
+
 .studio-undo-bar {
   @apply mb-3 flex items-center gap-2 rounded-lg px-3 py-2 text-sm;
   background: oklch(96% 0.02 250);
@@ -13409,6 +15373,12 @@ onBeforeUnmount(() => {
   max-width: 420px;
 }
 
+.studio-popover-panel.is-upward {
+  top: auto;
+  bottom: calc(100% + 6px);
+  margin-top: 0;
+}
+
 .studio-popover-head {
   @apply mb-3 flex items-start justify-between gap-3;
 }
@@ -13443,6 +15413,11 @@ onBeforeUnmount(() => {
 .studio-popover-leave-to {
   opacity: 0;
   transform: translateY(-4px) scale(0.98);
+}
+
+.studio-popover-panel.is-upward.studio-popover-enter-from,
+.studio-popover-panel.is-upward.studio-popover-leave-to {
+  transform: translateY(4px) scale(0.98);
 }
 
 .studio-inline-meta {
@@ -13758,6 +15733,506 @@ onBeforeUnmount(() => {
   background-size: 220% 100%;
   background-repeat: no-repeat;
   animation: studio-preview-shine 1.6s linear infinite;
+}
+
+/* ===== Global theme normalization =====
+   Keep the appearance controls authoritative across the whole studio surface. */
+.studio-shell :is(
+  .studio-release-trigger,
+  .studio-theme-trigger,
+  .studio-avatar,
+  .studio-avatar-menu,
+  .studio-avatar-menu-item,
+  .studio-release-panel,
+  .studio-workspace-panel,
+  .studio-workspace-field code,
+  .studio-workspace-actions button,
+  .studio-appearance-panel,
+  .studio-appearance-segment,
+  .studio-appearance-toggle,
+  .studio-accent-card,
+  .studio-provider-pill,
+  .studio-popover-trigger,
+  .studio-popover-panel,
+  .studio-api-presets,
+  .studio-api-preset-save,
+  .studio-api-preset-apply,
+  .studio-api-preset-delete,
+  .studio-api-preset-info,
+  .studio-test-connection,
+  .studio-ratio-card,
+  .studio-quality-pill,
+  .studio-resolution-card,
+  .studio-chip,
+  .studio-count-quick-button,
+  .studio-generate-target,
+  .studio-reference-images,
+  .studio-reference-tile,
+  .studio-prompt-template-panel,
+  .studio-prompt-template-preview,
+  .studio-template-info-row,
+  .studio-prompt-template-button,
+  .studio-translate-row,
+  .studio-generate-button,
+  .studio-secondary-action,
+  .studio-preview-tab,
+  .studio-preview-help-tip,
+  .studio-preview-single-cell,
+  .studio-workbench-toolbar,
+  .studio-workbench-surface,
+  .studio-workbench-tile,
+  .studio-progress-info,
+  .studio-progress-track,
+  .studio-progress-cancel,
+  .studio-inline-button,
+  .studio-bottom-action,
+  .studio-side-empty,
+  .studio-history-clear,
+  .studio-helper-provider-card,
+  .studio-evolution-step-card,
+  .studio-disabled,
+  .studio-disabled-card
+) {
+  border-radius: var(--studio-radius-control);
+}
+
+.studio-shell :is(
+  .studio-panel,
+  .studio-disabled,
+  .studio-disabled-card,
+  .studio-release-panel,
+  .studio-workspace-panel,
+  .studio-appearance-panel,
+  .studio-workbench-surface,
+  .studio-prompt-modal-panel,
+  .studio-prompt-full-preview-panel,
+  .studio-lightbox-panel
+) {
+  border-radius: var(--studio-radius-panel);
+}
+
+.studio-shell .studio-window {
+  border-radius: var(--studio-radius-window);
+}
+
+.studio-shell :is(
+  .studio-preview-image,
+  .studio-style-preview,
+  .studio-compare-stage,
+  .studio-lightbox-image,
+  .studio-reference-tile img,
+  .studio-prompt-template-preview img,
+  .studio-prompt-library-card-visual,
+  .studio-prompt-library-item
+) {
+  border-radius: var(--studio-radius-image);
+}
+
+.studio-shell.theme-night :is(
+  .studio-header,
+  .studio-workbench-toolbar,
+  .studio-progress-info,
+  .studio-prompt-template-panel,
+  .studio-translate-row,
+  .studio-reference-images,
+  .studio-api-presets,
+  .studio-popover-panel,
+  .studio-appearance-panel,
+  .studio-release-panel,
+  .studio-workspace-panel,
+  .studio-avatar-menu,
+  .studio-disabled-card,
+  .studio-preview-single-cell,
+  .studio-replacement-preview-panel,
+  .studio-replacement-editor-panel,
+  .studio-replacement-context,
+  .studio-prompt-library-empty,
+  .studio-prompt-upload-body
+) {
+  border-color: var(--studio-border);
+  background: color-mix(in srgb, var(--studio-card-background) 88%, #0a0c12 12%);
+  color: var(--studio-text);
+}
+
+.studio-shell.theme-night :is(
+  .studio-workspace-field code,
+  .studio-workspace-actions button,
+  .studio-template-info-row,
+  .studio-prompt-template-button,
+  .studio-secondary-action,
+  .studio-bottom-action,
+  .studio-inline-button,
+  .studio-clear-button,
+  .studio-panel-link-button,
+  .studio-ghost-link,
+  .studio-api-preset-save,
+  .studio-api-preset-apply,
+  .studio-api-preset-delete,
+  .studio-api-preset-info,
+  .studio-helper-provider-card,
+  .studio-evolution-step-card,
+  .studio-character-badge,
+  .studio-preview-tab,
+  .studio-count-quick-button,
+  .studio-reference-remove
+) {
+  border-color: var(--studio-border);
+  background: var(--studio-soft-background);
+  color: var(--studio-text);
+}
+
+.studio-shell.theme-night :is(
+  .studio-brand-title,
+  .studio-panel-title,
+  .studio-field-label,
+  .studio-workbench-toolbar-title,
+  .studio-prompt-template-title,
+  .studio-template-info-row strong,
+  .studio-release-title,
+  .studio-workspace-panel-head p,
+  .studio-helper-provider-name,
+  .studio-evolution-step-model,
+  .studio-disabled-title
+) {
+  color: var(--studio-text);
+}
+
+.studio-shell.theme-night :is(
+  .studio-brand-kicker,
+  .studio-helper,
+  .studio-panel-link,
+  .studio-workbench-tip,
+  .studio-template-info-row span,
+  .studio-release-subtitle,
+  .studio-workspace-panel-head span,
+  .studio-helper-provider-meta,
+  .studio-evolution-step-time,
+  .studio-disabled-text
+) {
+  color: var(--studio-muted);
+}
+
+.studio-shell.theme-night :is(
+  .studio-generate-target,
+  .studio-progress-track,
+  .studio-preview-stage,
+  .studio-side-empty,
+  .studio-character-badge,
+  .studio-prompt-template-button:not(.primary)
+) {
+  background: var(--studio-soft-background);
+  color: var(--studio-text);
+  border-color: var(--studio-border);
+}
+
+.studio-shell.theme-night .studio-generate-target-host {
+  color: color-mix(in srgb, var(--studio-text) 78%, transparent);
+}
+
+.studio-shell.theme-night .studio-prompt-template-button.primary {
+  background: var(--studio-accent);
+  border-color: var(--studio-accent);
+  color: #fff;
+}
+
+.studio-shell.theme-night .studio-workbench-surface {
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--studio-accent) 18%, transparent) 0%, transparent 28%),
+    linear-gradient(180deg, color-mix(in srgb, var(--studio-card-background) 94%, #0a0c12 6%) 0%, color-mix(in srgb, var(--studio-soft-background) 94%, transparent) 100%);
+}
+
+.studio-shell.theme-night .studio-preview-generating-label {
+  background: var(--studio-card-background);
+  color: var(--studio-accent-deep);
+}
+
+/* Teleported dialogs and late-added tool surfaces must obey the same
+   appearance variables as the main studio shell. */
+.studio-shell :is(
+  .studio-strip-chip,
+  .studio-strip-trigger,
+  .studio-profile-advice,
+  .studio-profile-advice button,
+  .studio-quota-card,
+  .studio-local-upscale-control,
+  .studio-local-upscale-toggle,
+  .studio-count-quick,
+  .studio-strip-row,
+  .studio-generate-target-elapsed,
+  .studio-generation-banner,
+  .studio-generation-banner-raw,
+  .studio-banner-action,
+  .studio-banner-dismiss,
+  .studio-translate-lang,
+  .studio-translate-btn,
+  .studio-prompt-template-panel,
+  .studio-template-info-row,
+  .studio-workbench-pill,
+  .studio-workbench-icon,
+  .studio-current-progress-track,
+  .studio-current-progress-track span,
+  .studio-accent-swatch,
+  .studio-history-stats,
+  .studio-history-stats span
+) {
+  border-radius: var(--studio-radius-control);
+}
+
+.studio-shell :is(
+  .studio-workbench-image,
+  .studio-reference-preview-image
+) {
+  border-radius: var(--studio-radius-image);
+}
+
+.studio-prompt-modal-backdrop :is(
+  .studio-prompt-modal-panel,
+  .studio-compatibility-modal,
+  .studio-custom-ratio-modal,
+  .studio-prompt-category-menu,
+  .studio-prompt-library-empty,
+  .studio-replacement-preview-panel,
+  .studio-replacement-editor-panel,
+  .studio-prompt-details-prompt,
+  .studio-reference-preview-panel
+) {
+  border-radius: var(--studio-radius-panel);
+}
+
+.studio-prompt-modal-backdrop :is(
+  .studio-prompt-library-search,
+  .studio-prompt-library-category-trigger,
+  .studio-prompt-library-command,
+  .studio-prompt-category-search,
+  .studio-prompt-category-option,
+  .studio-prompt-category-add,
+  .studio-prompt-category-icon,
+  .studio-prompt-category-option small,
+  .studio-prompt-library-batchbar,
+  .studio-prompt-library-batchbar button,
+  .studio-prompt-library-item,
+  .studio-prompt-library-check,
+  .studio-prompt-image-drop,
+  .studio-prompt-upload-fields .input,
+  .studio-prompt-upload-error,
+  .studio-prompt-upload-remove-image,
+  .studio-prompt-upload-cancel,
+  .studio-prompt-upload-save,
+  .studio-replacement-mode,
+  .studio-replacement-mode strong,
+  .studio-replacement-smart-button,
+  .studio-replacement-error,
+  .studio-replacement-empty,
+  .studio-replacement-context,
+  .studio-replacement-context mark,
+  .studio-replacement-editor-field code,
+  .studio-replacement-editor-actions button,
+  .studio-replacement-highlight,
+  .studio-prompt-details-close,
+  .studio-prompt-details-prompt
+) {
+  border-radius: var(--studio-radius-control);
+}
+
+.studio-prompt-modal-backdrop :is(
+  .studio-prompt-library-card-visual,
+  .studio-prompt-details-visual,
+  .studio-prompt-full-preview-image
+) {
+  border-radius: var(--studio-radius-image);
+}
+
+.studio-reference-preview :is(
+  .studio-reference-preview-panel,
+  .studio-lightbox-panel
+) {
+  border-radius: var(--studio-radius-panel);
+}
+
+.studio-reference-preview :is(
+  .studio-lightbox-button,
+  .studio-reference-preview-image
+) {
+  border-radius: var(--studio-radius-control);
+}
+
+.studio-prompt-full-preview-backdrop :is(
+  .studio-prompt-full-preview-close,
+  .studio-prompt-full-preview-image
+) {
+  border-radius: var(--studio-radius-control);
+}
+
+.studio-shell.theme-night :is(
+  .studio-strip-chip,
+  .studio-strip-trigger,
+  .studio-profile-advice,
+  .studio-quota-card,
+  .studio-local-upscale-control,
+  .studio-local-upscale-toggle,
+  .studio-count-quick,
+  .studio-generate-target-elapsed,
+  .studio-translate-lang,
+  .studio-workbench-pill,
+  .studio-workbench-icon,
+  .studio-template-info-row,
+  .studio-prompt-template-empty
+) {
+  border-color: var(--studio-border);
+  background: var(--studio-soft-background);
+  color: var(--studio-text);
+}
+
+.studio-shell.theme-night .studio-workbench-tile {
+  --tile-ring-color: rgba(var(--tile-tone-rgb), 0.48);
+  background:
+    linear-gradient(135deg, rgba(var(--tile-tone-rgb), 0.20), rgba(255, 255, 255, 0.035) 36%, rgba(0, 0, 0, 0.18) 100%),
+    color-mix(in srgb, var(--studio-card-background) 78%, rgb(var(--tile-tone-rgb)) 22%);
+  box-shadow:
+    0 16px 34px rgba(0, 0, 0, 0.28),
+    0 0 0 1px rgba(var(--tile-tone-rgb), 0.055),
+    inset 0 0 0 1px var(--tile-ring-color),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.studio-shell.theme-night .studio-workbench-tile.active,
+.studio-shell.theme-night .studio-workbench-tile.selected {
+  --tile-ring-color: rgba(var(--tile-tone-rgb), 0.78);
+  box-shadow:
+    0 18px 34px rgba(0, 0, 0, 0.34),
+    0 0 0 1px rgba(var(--tile-tone-rgb), 0.32),
+    0 0 22px rgba(var(--tile-tone-rgb), 0.14),
+    inset 0 0 0 1px var(--tile-ring-color),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.studio-shell.theme-night .studio-workbench-tile .studio-workbench-icon,
+.studio-shell.theme-night .studio-workbench-tile .studio-workbench-drag-hotzone {
+  border-color: rgba(var(--tile-tone-rgb), 0.24);
+  background: rgba(7, 11, 18, 0.66);
+  color: rgba(229, 238, 252, 0.88);
+}
+
+.studio-shell.theme-night .studio-workbench-tile .studio-workbench-icon:hover {
+  border-color: rgba(var(--tile-tone-rgb), 0.44);
+  background: rgba(var(--tile-tone-rgb), 0.16);
+  color: #ffffff;
+}
+
+.studio-shell.theme-night :is(
+  .studio-strip-chip.active,
+  .studio-strip-trigger.active,
+  .studio-strip-trigger.is-open,
+  .studio-local-upscale-toggle.active
+) {
+  border-color: var(--studio-accent);
+  background: var(--studio-accent-soft);
+  color: var(--studio-accent-deep);
+}
+
+.studio-shell.theme-night .studio-generation-banner {
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(127, 29, 29, 0.20);
+  color: #fecaca;
+}
+
+.studio-shell.theme-night .studio-generation-banner.is-recoverable {
+  border-color: rgba(251, 191, 36, 0.34);
+  background: rgba(120, 53, 15, 0.20);
+  color: #fde68a;
+}
+
+.studio-shell.theme-night :is(
+  .studio-generation-banner-raw,
+  .studio-banner-action,
+  .studio-banner-dismiss
+) {
+  border-color: currentColor;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.studio-prompt-modal-backdrop :is(
+  .studio-prompt-modal-panel,
+  .studio-compatibility-modal,
+  .studio-custom-ratio-modal,
+  .studio-prompt-details-body,
+  .studio-prompt-category-menu,
+  .studio-prompt-library-item,
+  .studio-prompt-library-empty,
+  .studio-prompt-image-drop,
+  .studio-prompt-upload-fields .input,
+  .studio-replacement-preview-panel,
+  .studio-replacement-editor-panel,
+  .studio-replacement-mode,
+  .studio-replacement-smart-button,
+  .studio-replacement-empty,
+  .studio-replacement-context,
+  .studio-replacement-editor-field code,
+  .studio-prompt-details-prompt,
+  .studio-prompt-details-close
+) {
+  border-color: var(--studio-border);
+  background: color-mix(in srgb, var(--studio-card-background) 84%, transparent);
+  color: var(--studio-text);
+}
+
+.studio-prompt-modal-backdrop :is(
+  .studio-prompt-modal-head,
+  .studio-prompt-library-toolbar,
+  .studio-prompt-library-list,
+  .studio-prompt-library-batchbar,
+  .studio-prompt-upload-body,
+  .studio-prompt-modal-actions.is-upload-actions,
+  .studio-compatibility-preview-grid,
+  .studio-replacement-body
+) {
+  border-color: var(--studio-border);
+  background: color-mix(in srgb, var(--studio-soft-background) 82%, transparent);
+}
+
+.studio-prompt-modal-backdrop :is(
+  .studio-prompt-library-search,
+  .studio-prompt-library-category-trigger,
+  .studio-prompt-library-command:not(.studio-prompt-library-upload),
+  .studio-prompt-category-search,
+  .studio-prompt-category-option,
+  .studio-prompt-category-add,
+  .studio-prompt-upload-cancel,
+  .studio-replacement-editor-actions button
+) {
+  border-color: var(--studio-border);
+  background: color-mix(in srgb, var(--studio-soft-background) 78%, transparent);
+  color: var(--studio-text);
+}
+
+.studio-prompt-modal-backdrop :is(
+  .studio-compatibility-preview-card p,
+  .studio-prompt-details-body h3,
+  .studio-prompt-details-prompt-scroll p,
+  .studio-replacement-panel-head p,
+  .studio-replacement-editor-field code
+) {
+  color: var(--studio-text);
+}
+
+.studio-prompt-modal-backdrop :is(
+  .studio-compatibility-preview-card span,
+  .studio-prompt-details-meta,
+  .studio-replacement-panel-head span,
+  .studio-replacement-empty span,
+  .studio-replacement-context p
+) {
+  color: var(--studio-muted);
+}
+
+.studio-prompt-modal-backdrop :is(
+  .input,
+  input,
+  textarea
+) {
+  border-color: var(--studio-border);
+  background: color-mix(in srgb, var(--studio-soft-background) 80%, transparent);
+  color: var(--studio-text);
 }
 
 .studio-shell.motion-reduced .studio-preview-image.is-generating-shimmer,

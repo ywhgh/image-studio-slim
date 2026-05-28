@@ -4,6 +4,7 @@ interface ImportMetaEnv {
   readonly VITE_API_BASE_URL: string
   readonly VITE_PROMPT_LIBRARY_API_BASE?: string
   readonly VITE_PROMPT_LIBRARY_TOKEN?: string
+  readonly VITE_PROMPT_LIBRARY_STORAGE_MODE?: 'remote' | 'local'
   readonly BASE_URL: string
 }
 

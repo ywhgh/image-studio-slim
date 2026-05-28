@@ -53,6 +53,15 @@ interface UpstreamModelsResponse {
   models?: string[]
 }
 
+export interface PromptHelperChatMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+interface PromptHelperChatResponse {
+  content?: string
+}
+
 export interface ImageStudioBatchProgress {
   total: number
   completed: number
@@ -565,14 +574,15 @@ function normalizeImageStudioResults(payload: unknown, formatHint?: string): Nor
     try {
       const nested = getObject(JSON.parse(value))
       if (nested) {
-        const nestedUrl = getString(nested.url) || getString(nested.image_url) || getString(nested.media_url)
-        if (nestedUrl) {
-          addResult(nestedUrl, 'remote-url', getString(nested.mime_type), revisedPrompt)
-        }
         const nestedB64 = getString(nested.result) || getString(nested.b64_json)
         if (nestedB64) {
           const mimeType = getString(nested.mime_type) || defaultMime
           addResult(buildDataUrl(nestedB64, mimeType), 'data-url', mimeType, revisedPrompt)
+        } else {
+          const nestedUrl = getString(nested.url) || getString(nested.image_url) || getString(nested.media_url)
+          if (nestedUrl) {
+            addResult(nestedUrl, 'remote-url', getString(nested.mime_type), revisedPrompt)
+          }
         }
       }
     } catch {
@@ -611,15 +621,15 @@ function normalizeImageStudioResults(payload: unknown, formatHint?: string): Nor
       if (!record) return
 
       const revisedPrompt = getString(record.revised_prompt) || getString(record.revisedPrompt)
-      const resultUrl = getString(record.url)
-      if (resultUrl) {
-        addResult(resultUrl, 'remote-url', getString(record.mime_type), revisedPrompt)
-      }
-
       const b64 = getString(record.b64_json)
       if (b64) {
         const mimeType = getString(record.mime_type) || defaultMime
         addResult(buildDataUrl(b64, mimeType), 'data-url', mimeType, revisedPrompt)
+      } else {
+        const resultUrl = getString(record.url)
+        if (resultUrl) {
+          addResult(resultUrl, 'remote-url', getString(record.mime_type), revisedPrompt)
+        }
       }
     })
   }
@@ -630,15 +640,15 @@ function normalizeImageStudioResults(payload: unknown, formatHint?: string): Nor
       if (!record) return
 
       const revisedPrompt = getString(record.revised_prompt) || getString(record.revisedPrompt)
-      const resultUrl = getString(record.url) || getString(record.image_url)
-      if (resultUrl) {
-        addResult(resultUrl, 'remote-url', getString(record.mime_type), revisedPrompt)
-      }
-
       const b64 = getString(record.result) || getString(record.b64_json)
       if (b64) {
         const mimeType = getString(record.mime_type) || defaultMime
         addResult(buildDataUrl(b64, mimeType), 'data-url', mimeType, revisedPrompt)
+      } else {
+        const resultUrl = getString(record.url) || getString(record.image_url)
+        if (resultUrl) {
+          addResult(resultUrl, 'remote-url', getString(record.mime_type), revisedPrompt)
+        }
       }
 
       if (!Array.isArray(record.content)) {
@@ -649,15 +659,15 @@ function normalizeImageStudioResults(payload: unknown, formatHint?: string): Nor
         const contentRecord = getObject(contentItem)
         if (!contentRecord) return
 
-        const contentUrl = getString(contentRecord.url) || getString(contentRecord.image_url)
-        if (contentUrl) {
-          addResult(contentUrl, 'remote-url', getString(contentRecord.mime_type), revisedPrompt)
-        }
-
         const contentB64 = getString(contentRecord.result) || getString(contentRecord.b64_json)
         if (contentB64) {
           const mimeType = getString(contentRecord.mime_type) || defaultMime
           addResult(buildDataUrl(contentB64, mimeType), 'data-url', mimeType, revisedPrompt)
+        } else {
+          const contentUrl = getString(contentRecord.url) || getString(contentRecord.image_url)
+          if (contentUrl) {
+            addResult(contentUrl, 'remote-url', getString(contentRecord.mime_type), revisedPrompt)
+          }
         }
       })
     })
@@ -687,34 +697,34 @@ function normalizeImageStudioResults(payload: unknown, formatHint?: string): Nor
           addTextContent(text, revisedPrompt)
         }
 
-        const imageUrlValue = contentRecord.image_url
-        const imageUrlRecord = getObject(imageUrlValue)
-        const contentUrl =
-          getString(contentRecord.url) ||
-          getString(contentRecord.image_url) ||
-          getString(imageUrlRecord?.url)
-        if (contentUrl) {
-          addResult(contentUrl, 'remote-url', getString(contentRecord.mime_type), revisedPrompt)
-        }
-
         const contentB64 = getString(contentRecord.result) || getString(contentRecord.b64_json)
         if (contentB64) {
           const mimeType = getString(contentRecord.mime_type) || defaultMime
           addResult(buildDataUrl(contentB64, mimeType), 'data-url', mimeType, revisedPrompt)
+        } else {
+          const imageUrlValue = contentRecord.image_url
+          const imageUrlRecord = getObject(imageUrlValue)
+          const contentUrl =
+            getString(contentRecord.url) ||
+            getString(contentRecord.image_url) ||
+            getString(imageUrlRecord?.url)
+          if (contentUrl) {
+            addResult(contentUrl, 'remote-url', getString(contentRecord.mime_type), revisedPrompt)
+          }
         }
       })
     })
-  }
-
-  const topLevelUrl = getString(root.url)
-  if (topLevelUrl) {
-    addResult(topLevelUrl, 'remote-url', getString(root.mime_type))
   }
 
   const topLevelB64 = getString(root.result) || getString(root.b64_json)
   if (topLevelB64) {
     const mimeType = getString(root.mime_type) || defaultMime
     addResult(buildDataUrl(topLevelB64, mimeType), 'data-url', mimeType)
+  } else {
+    const topLevelUrl = getString(root.url)
+    if (topLevelUrl) {
+      addResult(topLevelUrl, 'remote-url', getString(root.mime_type))
+    }
   }
 
   return finalizeResults(results)
@@ -816,6 +826,126 @@ function buildChatCompletionInputImageMessages(prompt: string, imageInputs: stri
   }]
 }
 
+function xaiGrokResolution(size: string): '1k' | '2k' | '' {
+  const value = size.trim().toLowerCase()
+  if (value === '1k' || value === '2k') {
+    return value
+  }
+  const match = /^(\d+)\s*x\s*(\d+)$/.exec(value)
+  if (!match) {
+    return ''
+  }
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (!Number.isFinite(width) || !Number.isFinite(height)) {
+    return ''
+  }
+  return width >= 1800 || height >= 1800 ? '2k' : '1k'
+}
+
+function xaiGrokAspectRatio(aspectRatio?: string): string {
+  const value = (aspectRatio || '').trim()
+  const supported = new Set(['1:1', '3:4', '4:3', '9:16', '16:9', '2:3', '3:2', '19.5:9', '9:19.5', '20:9', '9:20', '1:2', '2:1'])
+  if (value === '21:9') {
+    return '20:9'
+  }
+  if (value === '9:21') {
+    return '9:20'
+  }
+  return supported.has(value) ? value : ''
+}
+
+function buildXAIGrokImagePayload(
+  request: ExternalImageStudioRequest,
+  count: number,
+  size: string,
+  imageInputs: string[],
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    model: request.model,
+    prompt: request.prompt,
+    n: count,
+    response_format: 'b64_json',
+  }
+  const resolution = xaiGrokResolution(size)
+  if (resolution) {
+    payload.resolution = resolution
+  }
+  const aspectRatio = xaiGrokAspectRatio(request.aspect_ratio)
+  if (aspectRatio) {
+    payload.aspect_ratio = aspectRatio
+  }
+  if (imageInputs.length === 1) {
+    payload.image = { url: imageInputs[0] }
+  } else if (imageInputs.length > 1) {
+    payload.images = imageInputs.map((url) => ({ url }))
+  }
+  return payload
+}
+
+function buildXAIGrokGenerationPayloads(
+  request: ExternalImageStudioRequest,
+  count: number,
+  size: string,
+): Array<Record<string, unknown>> {
+  const compatible: Record<string, unknown> = {
+    model: request.model,
+    prompt: request.prompt,
+    n: count,
+    response_format: 'b64_json',
+    ...(size ? { size } : {}),
+  }
+  const minimal: Record<string, unknown> = {
+    model: request.model,
+    prompt: request.prompt,
+    n: count,
+  }
+  return [buildXAIGrokImagePayload(request, count, size, []), compatible, minimal]
+}
+
+function buildXAIGrokEditPayloads(
+  request: ExternalImageStudioRequest,
+  count: number,
+  size: string,
+  imageInputs: string[],
+): Array<Record<string, unknown>> {
+  const compatible: Record<string, unknown> = {
+    model: request.model,
+    prompt: request.prompt,
+    n: count,
+    response_format: 'b64_json',
+    ...(size ? { size } : {}),
+  }
+  if (imageInputs.length === 1) {
+    compatible.image = imageInputs[0]
+    compatible.image_url = imageInputs[0]
+  } else if (imageInputs.length > 1) {
+    compatible.image = imageInputs[0]
+    compatible.images = imageInputs
+    compatible.image_urls = imageInputs
+  }
+  return [buildXAIGrokImagePayload(request, count, size, imageInputs), compatible]
+}
+
+function buildXAIGrokReferenceGenerationPayloads(
+  request: ExternalImageStudioRequest,
+  count: number,
+  size: string,
+  imageInputs: string[],
+): Array<Record<string, unknown>> {
+  return [{
+    model: request.model,
+    prompt: request.prompt,
+    n: count,
+    response_format: 'b64_json',
+    image_input: imageInputs[0],
+    image_inputs: imageInputs,
+    input_image: imageInputs[0],
+    input_images: imageInputs,
+    ...(size ? { size } : {}),
+  }]
+}
+
 function clampImageResultsForRequest(
   results: NormalizedImageResult[],
   request: ExternalImageStudioRequest,
@@ -846,6 +976,31 @@ function mapExternalPayloads(request: ExternalImageStudioRequest): ExternalMappe
   const count = normalizeImageRequestCount(request.count)
   const size = resolveSizeFromAspect(request.aspect_ratio, request.size)
   const imageInputs = collectImageInputs(request)
+
+  if (request.profile === 'xai-grok-image') {
+    if (!imageInputs.length) {
+      const endpoint = joinEndpoint(request.base_url, '/images/generations')
+      return buildXAIGrokGenerationPayloads(request, count, size).map((payload) => ({
+        url: endpoint,
+        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'application/json' },
+      }))
+    }
+    const editEndpoint = joinEndpoint(request.base_url, '/images/edits')
+    const generationEndpoint = joinEndpoint(request.base_url, '/images/generations')
+    return [
+      ...buildXAIGrokEditPayloads(request, count, size, imageInputs).map((payload) => ({
+        url: editEndpoint,
+        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'application/json' },
+      })),
+      ...buildXAIGrokReferenceGenerationPayloads(request, count, size, imageInputs).map((payload) => ({
+        url: generationEndpoint,
+        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'application/json' },
+      })),
+    ]
+  }
 
   if (request.profile === 'openai-image-api' || request.profile === 'chatgpt2api') {
     if (imageInputs.length === 0) {
@@ -1318,6 +1473,9 @@ export async function generateImageWithExternalRelay(
   options: ImageStudioGenerationOptions = {}
 ): Promise<NormalizedImageResult[]> {
   const count = normalizeImageRequestCount(request.count)
+  if (request.profile === 'xai-grok-image') {
+    return generateImageWithExternalRelaySingle({ ...request, count }, options)
+  }
   return runExternalImageBatch({ ...request, count }, options, generateImageWithExternalRelaySingle)
 }
 
@@ -1357,6 +1515,9 @@ export async function generateImageWithExternalBrowser(
   options: ImageStudioGenerationOptions = {}
 ): Promise<NormalizedImageResult[]> {
   const count = normalizeImageRequestCount(request.count)
+  if (request.profile === 'xai-grok-image') {
+    return generateImageWithExternalBrowserSingle({ ...request, count }, options)
+  }
   if (count > 1) {
     return runExternalImageBatch({ ...request, count }, options, generateImageWithExternalBrowserSingle)
   }
@@ -1409,6 +1570,7 @@ export async function fetchChatgpt2ApiImageQuota(
 export async function probeImageStudioUpstreamModels(
   baseUrl: string,
   apiKey: string,
+  profile?: string,
   signal?: AbortSignal
 ): Promise<string[]> {
   const { data } = await apiClient.post<UpstreamModelsResponse>(
@@ -1416,12 +1578,39 @@ export async function probeImageStudioUpstreamModels(
     {
       base_url: baseUrl,
       api_key: apiKey,
+      ...(profile ? { profile } : {}),
     },
     { signal, timeout: 30000 }
   )
   return Array.isArray(data.models)
     ? data.models.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
     : []
+}
+
+export async function callImageStudioPromptHelper(
+  request: {
+    baseUrl: string
+    apiKey: string
+    model: string
+    messages: PromptHelperChatMessage[]
+    temperature?: number
+    maxTokens?: number
+  },
+  signal?: AbortSignal
+): Promise<string> {
+  const { data } = await apiClient.post<PromptHelperChatResponse>(
+    '/image-studio/prompt-helper/chat',
+    {
+      base_url: request.baseUrl,
+      api_key: request.apiKey,
+      model: request.model,
+      messages: request.messages,
+      temperature: request.temperature,
+      max_tokens: request.maxTokens,
+    },
+    { signal, timeout: 120000 }
+  )
+  return typeof data.content === 'string' ? data.content.trim() : ''
 }
 
 export async function downloadRemoteImage(url: string, filename: string): Promise<Blob> {

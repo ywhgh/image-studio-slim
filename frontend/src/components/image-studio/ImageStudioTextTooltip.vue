@@ -50,6 +50,7 @@ const props = withDefaults(defineProps<{
   accentColor?: string
   accentDeep?: string
   accentRgb?: string
+  radius?: number
 }>(), {
   text: '',
   variant: 'outline',
@@ -60,6 +61,7 @@ const props = withDefaults(defineProps<{
   accentColor: '#2563eb',
   accentDeep: '#1d4ed8',
   accentRgb: '37, 99, 235',
+  radius: 12,
 })
 
 const triggerRef = ref<HTMLElement | null>(null)
@@ -77,11 +79,20 @@ let openTimer = 0
 let closeTimer = 0
 
 const normalizedText = computed(() => props.text.trim())
+const outlineTextColor = computed(() => {
+  const isBlueAccent = props.accentColor.toLowerCase() === '#2563eb' ||
+    props.accentRgb.replace(/\s+/g, '') === '37,99,235'
+  return isBlueAccent
+    ? `color-mix(in srgb, #1e293b 72%, ${props.accentDeep} 28%)`
+    : props.accentDeep
+})
 const resolvedTooltipStyle = computed(() => ({
   ...tooltipStyle.value,
   '--tooltip-accent': props.accentColor,
   '--tooltip-accent-deep': props.accentDeep,
   '--tooltip-accent-rgb': props.accentRgb,
+  '--tooltip-outline-text': outlineTextColor.value,
+  '--studio-radius-control': `${props.radius === 0 ? 0 : Math.max(10, props.radius - 1)}px`,
 }))
 
 function clampValue(value: number, min: number, max: number): number {
@@ -211,7 +222,7 @@ onBeforeUnmount(closeNow)
   max-height: min(42vh, 320px);
   overflow: auto;
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: var(--studio-radius-control, 12px);
   font-size: 12px;
   font-weight: 400;
   line-height: 1.45;
@@ -232,10 +243,10 @@ onBeforeUnmount(closeNow)
 }
 
 .studio-text-tooltip.is-outline {
-  border: 1px solid color-mix(in srgb, var(--tooltip-accent) 58%, transparent);
-  background: rgba(255, 255, 255, 0.94);
-  color: var(--tooltip-accent-deep);
-  box-shadow: 0 14px 34px rgba(var(--tooltip-accent-rgb), 0.18), 0 8px 18px rgba(15, 23, 42, 0.08);
+  border: 1px solid color-mix(in srgb, var(--tooltip-accent) 42%, rgba(148, 163, 184, 0.35));
+  background: color-mix(in srgb, rgba(255, 255, 255, 0.96) 94%, var(--tooltip-accent) 6%);
+  color: var(--tooltip-outline-text, var(--tooltip-accent-deep));
+  box-shadow: 0 14px 34px rgba(var(--tooltip-accent-rgb), 0.14), 0 8px 18px rgba(15, 23, 42, 0.08);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
 }

@@ -32,7 +32,7 @@ function clampRadiusScale(value: unknown): number {
     return getDefaultAppearance().radiusScale
   }
 
-  return Math.min(24, Math.max(10, Math.round(value)))
+  return Math.min(24, Math.max(0, Math.round(value)))
 }
 
 function loadAppearance(): Partial<ImageStudioAppearancePreferences> {

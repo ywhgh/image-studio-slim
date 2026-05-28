@@ -1,7 +1,7 @@
 <template>
   <div
     class="glass-card"
-    :class="{ active }"
+    :class="{ active, 'is-night': nightMode }"
     role="button"
     tabindex="0"
     @click="$emit('select')"
@@ -25,6 +25,7 @@
           :accent-color="tooltipAccent"
           :accent-deep="tooltipAccentDeep"
           :accent-rgb="tooltipAccentRgb"
+          :radius="tooltipRadius"
         >
           <h3 class="title">{{ title }}</h3>
         </ImageStudioTextTooltip>
@@ -38,6 +39,7 @@
               :accent-color="tooltipAccent"
               :accent-deep="tooltipAccentDeep"
               :accent-rgb="tooltipAccentRgb"
+              :radius="tooltipRadius"
               :max-width="240"
             >
               <span class="tag-label">{{ model }}</span>
@@ -102,8 +104,8 @@ import Icon from '@/components/icons/Icon.vue'
 import ImageStudioTextTooltip from '@/components/image-studio/ImageStudioTextTooltip.vue'
 
 type PreviewOrientation = 'landscape' | 'portrait' | 'square' | 'unknown'
-type OutputMode = 'native' | 'upscaled' | 'super-4k'
-type OutputModeTone = 'native' | 'upscaled' | 'super4k'
+type OutputMode = 'native' | 'upscaled' | 'super-4k' | 'provider-scaled'
+type OutputModeTone = 'native' | 'upscaled' | 'super4k' | 'provider-scaled'
 type TooltipStyle = 'outline' | 'plain' | 'soft'
 
 const props = withDefaults(defineProps<{
@@ -129,6 +131,8 @@ const props = withDefaults(defineProps<{
   tooltipAccent?: string
   tooltipAccentDeep?: string
   tooltipAccentRgb?: string
+  tooltipRadius?: number
+  nightMode?: boolean
   active?: boolean
 }>(), {
   styleLabel: '',
@@ -138,6 +142,8 @@ const props = withDefaults(defineProps<{
   tooltipAccent: '#2563eb',
   tooltipAccentDeep: '#1d4ed8',
   tooltipAccentRgb: '37, 99, 235',
+  tooltipRadius: 12,
+  nightMode: false,
   active: false,
 })
 
@@ -183,6 +189,8 @@ const outputModeTone = computed<OutputModeTone>(() => {
       return 'super4k'
     case 'upscaled':
       return 'upscaled'
+    case 'provider-scaled':
+      return 'provider-scaled'
     case 'native':
     default:
       return 'native'
@@ -206,6 +214,9 @@ defineEmits<{
   --theme-color: var(--studio-accent, #2563eb);
   --theme-color-deep: var(--studio-accent-deep, #1d4ed8);
   --theme-rgb: var(--theme-color-rgb, 37, 99, 235);
+  --surface-color: var(--theme-color);
+  --surface-rgb: var(--theme-rgb);
+  --surface-deep: var(--theme-color-deep);
   --card-bg: rgba(var(--bg-rgb), 0.38);
   --card-border: var(--studio-border, rgba(31, 41, 55, 0.08));
   --card-active-bg: rgba(var(--theme-rgb), 0.06);
@@ -221,6 +232,8 @@ defineEmits<{
     0 0 22px rgba(var(--theme-rgb), 0.14),
     0 14px 30px rgba(var(--theme-rgb), 0.12),
     0 22px 42px rgba(var(--theme-rgb), 0.08);
+  --content-bg: transparent;
+  --content-border: transparent;
   --glass-highlight: rgba(255, 255, 255, 0.66);
   --glass-lowlight: rgba(255, 255, 255, 0.08);
   --glass-side-highlight: rgba(255, 255, 255, 0.18);
@@ -255,7 +268,7 @@ defineEmits<{
   width: 100%;
   align-self: flex-start;
   isolation: isolate;
-  border-radius: 16px;
+  border-radius: var(--studio-radius-panel, 16px);
   border: 1px solid var(--card-border);
   background: var(--card-bg);
   box-shadow:
@@ -268,8 +281,29 @@ defineEmits<{
   overflow: visible;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
-  will-change: transform;
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.glass-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.16), transparent 38%),
+    radial-gradient(circle at 10% 12%, rgba(var(--surface-rgb), 0.14), transparent 58%);
+  opacity: var(--card-sheen-opacity, 0);
+}
+
+.image-wrapper,
+.content-wrapper {
+  z-index: 1;
 }
 
 .glass-card:hover {
@@ -315,7 +349,7 @@ defineEmits<{
   min-width: 0;
   aspect-ratio: 1 / 1;
   overflow: hidden;
-  border-radius: 15px 0 0 15px;
+  border-radius: var(--studio-radius-panel, 16px) 0 0 var(--studio-radius-panel, 16px);
   background: var(--image-bg);
   transform: translateZ(0);
 }
@@ -327,8 +361,7 @@ defineEmits<{
   height: 100%;
   object-fit: cover;
   object-position: center;
-  transition: transform 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
-  will-change: transform;
+  transition: transform 220ms ease;
 }
 
 .poster.is-preview-portrait {
@@ -363,7 +396,7 @@ defineEmits<{
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  border-radius: 6px;
+  border-radius: var(--studio-radius-soft, 6px);
   border: 1px solid var(--image-tag-border);
   background: var(--image-tag-bg);
   color: var(--image-tag-text);
@@ -379,6 +412,7 @@ defineEmits<{
 
 .content-wrapper {
   /* Column rhythm: right-side content keeps the 2-part width and clips instead of forcing layout wider. */
+  position: relative;
   flex: 2 1 0;
   display: flex;
   min-width: 0;
@@ -387,6 +421,9 @@ defineEmits<{
   justify-content: space-between;
   gap: 4px;
   padding: 8px 10px;
+  border-radius: 0 var(--studio-radius-panel, 16px) var(--studio-radius-panel, 16px) 0;
+  background: var(--content-bg);
+  box-shadow: inset 1px 0 0 var(--content-border);
 }
 
 .content-top {
@@ -435,7 +472,7 @@ defineEmits<{
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  border-radius: 4px;
+  border-radius: var(--studio-radius-soft, 4px);
   border: 1px solid var(--tag-primary-border);
   background: var(--tag-primary-bg);
   color: var(--tag-primary-text);
@@ -562,6 +599,11 @@ defineEmits<{
   --output-mode-halo: rgba(59, 130, 246, 0.16);
 }
 
+.output-mode-dot.tone-provider-scaled {
+  --output-mode-color: #ef4444;
+  --output-mode-halo: rgba(239, 68, 68, 0.16);
+}
+
 .format {
   display: inline-flex;
   flex: 0 0 auto;
@@ -589,7 +631,7 @@ defineEmits<{
   align-items: center;
   justify-content: center;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--studio-radius-soft, 6px);
   background: transparent;
   color: var(--text-soft);
   transition: background 180ms ease, color 180ms ease, border-color 180ms ease, transform 180ms ease;
@@ -611,21 +653,27 @@ defineEmits<{
   color: var(--danger-color);
 }
 
-:global(.studio-shell.theme-night) .glass-card {
-  --bg-rgb: 30, 30, 30;
-  --card-bg: rgba(var(--bg-rgb), 0.4);
-  --card-border: var(--studio-border, rgba(255, 255, 255, 0.1));
-  --card-shadow: 0 10px 26px rgba(0, 0, 0, 0.24);
-  --card-hover-shadow: 0 14px 34px rgba(0, 0, 0, 0.36);
+.glass-card.is-night {
+  --bg-rgb: 24, 28, 38;
+  --card-bg:
+    linear-gradient(135deg, rgba(var(--surface-rgb), 0.18), rgba(255, 255, 255, 0.025) 34%, rgba(0, 0, 0, 0.12) 100%),
+    color-mix(in srgb, #071016 76%, rgb(var(--surface-rgb)) 24%);
+  --card-border: color-mix(in srgb, rgb(var(--surface-rgb)) 56%, var(--studio-border, rgba(255, 255, 255, 0.1)));
+  --content-bg:
+    linear-gradient(135deg, rgba(var(--surface-rgb), 0.24), rgba(255, 255, 255, 0.035) 42%, rgba(8, 11, 18, 0.18) 100%),
+    color-mix(in srgb, #06151a 62%, rgb(var(--surface-rgb)) 38%);
+  --content-border: rgba(var(--surface-rgb), 0.30);
+  --card-shadow: 0 10px 24px rgba(0, 0, 0, 0.24), 0 0 0 1px rgba(var(--surface-rgb), 0.08);
+  --card-hover-shadow: 0 14px 30px rgba(0, 0, 0, 0.34), 0 0 0 1px rgba(var(--surface-rgb), 0.11);
   --card-active-shadow:
-    0 0 0 1px rgba(var(--theme-rgb), 0.22),
-    0 0 18px rgba(var(--theme-rgb), 0.14),
-    0 12px 28px rgba(var(--theme-rgb), 0.11),
+    0 0 0 1px rgba(var(--surface-rgb), 0.28),
+    0 0 18px rgba(var(--surface-rgb), 0.16),
+    0 12px 28px rgba(var(--surface-rgb), 0.12),
     0 12px 30px rgba(0, 0, 0, 0.3);
   --card-active-hover-shadow:
-    0 0 0 1px rgba(var(--theme-rgb), 0.3),
-    0 0 24px rgba(var(--theme-rgb), 0.18),
-    0 16px 34px rgba(var(--theme-rgb), 0.14),
+    0 0 0 1px rgba(var(--surface-rgb), 0.34),
+    0 0 24px rgba(var(--surface-rgb), 0.20),
+    0 16px 34px rgba(var(--surface-rgb), 0.15),
     0 16px 34px rgba(0, 0, 0, 0.34);
   --glass-highlight: rgba(255, 255, 255, 0.16);
   --glass-lowlight: rgba(255, 255, 255, 0.04);
@@ -638,6 +686,13 @@ defineEmits<{
   --tooltip-border: rgba(var(--theme-rgb), 0.6);
   --tooltip-text: color-mix(in srgb, var(--theme-color) 52%, #fff);
   --tooltip-shadow: 0 14px 30px rgba(0, 0, 0, 0.32), 0 8px 22px rgba(var(--theme-rgb), 0.22);
+  --tag-primary-bg: rgba(var(--surface-rgb), 0.18);
+  --tag-primary-text: color-mix(in srgb, rgb(var(--surface-rgb)) 62%, #ffffff);
+  --tag-primary-border: rgba(var(--surface-rgb), 0.28);
+  --tag-model-bg: rgba(var(--surface-rgb), 0.16);
+  --tag-model-text: color-mix(in srgb, rgb(var(--surface-rgb)) 58%, #ffffff);
+  --tag-model-border: rgba(var(--surface-rgb), 0.24);
+  --card-sheen-opacity: 0.48;
   background: var(--card-bg);
   box-shadow:
     inset 0 1px 1px var(--glass-highlight),
@@ -646,7 +701,7 @@ defineEmits<{
     var(--card-shadow);
 }
 
-:global(.studio-shell.theme-night) .glass-card:hover {
+.glass-card.is-night:hover {
   box-shadow:
     inset 0 1px 1px var(--glass-hover-highlight),
     inset 0 -1px 1px var(--glass-hover-lowlight),
@@ -654,9 +709,21 @@ defineEmits<{
     var(--card-hover-shadow);
 }
 
-:global(.studio-shell.theme-night) .glass-card.active {
+.glass-card.is-night .content-wrapper {
   background:
-    radial-gradient(circle at 12% 22%, rgba(var(--theme-rgb), 0.24), transparent 48%),
+    linear-gradient(135deg, rgba(var(--theme-rgb), 0.30), rgba(var(--theme-rgb), 0.16) 46%, rgba(5, 18, 22, 0.88) 100%),
+    color-mix(in srgb, var(--studio-accent) 50%, #071d1b 50%) !important;
+  box-shadow: inset 1px 0 0 rgba(var(--theme-rgb), 0.36);
+}
+
+.glass-card.is-night.active {
+  --content-bg:
+    linear-gradient(135deg, rgba(var(--surface-rgb), 0.34), rgba(255, 255, 255, 0.045) 42%, rgba(8, 11, 18, 0.14) 100%),
+    color-mix(in srgb, #06151a 52%, rgb(var(--surface-rgb)) 48%);
+  --content-border: rgba(var(--surface-rgb), 0.36);
+  border-color: rgba(var(--surface-rgb), 0.78);
+  background:
+    radial-gradient(circle at 12% 22%, rgba(var(--surface-rgb), 0.28), transparent 48%),
     linear-gradient(var(--card-active-bg), var(--card-active-bg)),
     var(--card-bg);
   box-shadow:
@@ -666,7 +733,17 @@ defineEmits<{
     var(--card-active-shadow);
 }
 
-:global(.studio-shell.theme-night) .glass-card.active:hover {
+.glass-card.is-night.active .content-wrapper {
+  background:
+    linear-gradient(135deg, rgba(var(--theme-rgb), 0.38), rgba(var(--theme-rgb), 0.20) 46%, rgba(5, 18, 22, 0.82) 100%),
+    color-mix(in srgb, var(--studio-accent) 58%, #071d1b 42%) !important;
+}
+
+.glass-card.is-night .format {
+  color: color-mix(in srgb, rgb(var(--surface-rgb)) 64%, #ffffff);
+}
+
+.glass-card.is-night.active:hover {
   box-shadow:
     inset 0 1px 1px var(--glass-hover-highlight),
     inset 0 -1px 1px var(--glass-hover-lowlight),

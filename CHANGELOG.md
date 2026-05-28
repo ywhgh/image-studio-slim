@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.3.2 - 2026-05-29
+
+Patch release for Grok image generation, local history, and Image Studio UI polish:
+
+- Added a dedicated Grok image protocol for official xAI `/images` endpoints and Grok2API-style OpenAI-compatible relays.
+- Improved upstream model probing so Grok first tries `/image-generation-models` and automatically falls back to `/models` for compatible relays.
+- Added Grok image request variants for official xAI JSON payloads and OpenAI-compatible fallback payloads.
+- Improved local history persistence, source statistics, recent prompt/parameter restore, and compact scrolling history display.
+- Improved prompt-helper model configuration, probing, and fetch error handling.
+- Fixed night-mode colors, global radius coverage, history/workbench card texture, image preview cropping, and hover action behavior.
+- Added API channel presets and workspace identity controls for switching between multiple upstream URLs and keys.
+
+Validation:
+
+- `pnpm -s typecheck`
+- `go test -count=1 .`
+
 ## v1.3.1 - 2026-05-23
 
 Patch release for native 4K generation, workspace layout, and local result recovery:

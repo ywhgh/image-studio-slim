@@ -7,7 +7,12 @@ import { useAppStore } from '@/stores/app'
 import './style.css'
 
 function initThemeClass() {
-  const savedTheme = localStorage.getItem('theme')
+  let savedTheme = ''
+  try {
+    savedTheme = localStorage.getItem('theme') || ''
+  } catch {
+    savedTheme = ''
+  }
   const shouldUseDark =
     savedTheme === 'dark' ||
     (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)
