@@ -34,6 +34,21 @@ interface RelayImageJobError {
   err_code?: string
 }
 
+export interface RelayImageJobEvent {
+  time: string
+  stage: string
+  message: string
+  variant?: string
+  endpoint?: string
+  attempt?: number
+  max_attempts?: number
+  status?: number
+  duration_ms?: number
+  body_bytes?: number
+  results?: number
+  retrying?: boolean
+}
+
 interface RelayImageJobResponse {
   id: string
   status: RelayImageJobStatus
@@ -45,6 +60,7 @@ interface RelayImageJobResponse {
   created_at: string
   started_at?: string
   finished_at?: string
+  events?: RelayImageJobEvent[]
   results?: RelayImageStudioResult[]
   error?: RelayImageJobError
 }
@@ -70,6 +86,7 @@ export interface ImageStudioBatchProgress {
   queued: number
   queueLength?: number
   concurrency?: number
+  events?: RelayImageJobEvent[]
   items: ImageStudioBatchItemProgress[]
 }
 
@@ -80,6 +97,7 @@ export interface ImageStudioBatchItemProgress {
   startedAt?: number
   finishedAt?: number
   resultCount?: number
+  events?: RelayImageJobEvent[]
 }
 
 export interface ImageStudioBatchResultMeta {
@@ -1215,6 +1233,7 @@ interface BatchTaskState {
   startedAt?: number
   finishedAt?: number
   resultCount?: number
+  events?: RelayImageJobEvent[]
 }
 
 function normalizeImageRequestCount(count?: number): number {
@@ -1266,6 +1285,7 @@ function emitBatchProgress(
     queued,
     queueLength: meta.queueLength,
     concurrency: meta.concurrency,
+    events: states.flatMap((state) => state.events || []),
     items: states.map((state, index) => ({
       index,
       status: state.status,
@@ -1273,6 +1293,7 @@ function emitBatchProgress(
       startedAt: state.startedAt,
       finishedAt: state.finishedAt,
       resultCount: state.resultCount,
+      events: state.events,
     })),
   })
 }
@@ -1334,9 +1355,11 @@ async function runExternalImageBatch(
             const status = batchStatusFromJob(job.status)
             meta.queueLength = job.queue_length
             meta.concurrency = job.concurrency
-            if (status === 'queued' || status === 'running') {
-              updateBatchTaskState(states, index, status, options, meta, { attempt })
-            }
+            updateBatchTaskState(states, index, status, options, meta, {
+              attempt,
+              events: job.events || [],
+              resultCount: job.results?.length,
+            })
           },
         })
         if (!results.length) {
@@ -1350,18 +1373,19 @@ async function runExternalImageBatch(
         updateBatchTaskState(states, index, 'succeeded', options, meta, {
           attempt,
           resultCount: results.length,
+          events: states[index].events,
         })
         return results
       } catch (error) {
         if (options.signal?.aborted) {
-          updateBatchTaskState(states, index, 'canceled', options, meta, { attempt })
+          updateBatchTaskState(states, index, 'canceled', options, meta, { attempt, events: states[index].events })
           throw error
         }
         if (attempt < maxAttempts) {
-          updateBatchTaskState(states, index, 'queued', options, meta, { attempt })
+          updateBatchTaskState(states, index, 'queued', options, meta, { attempt, events: states[index].events })
           continue
         }
-        updateBatchTaskState(states, index, 'failed', options, meta, { attempt })
+        updateBatchTaskState(states, index, 'failed', options, meta, { attempt, events: states[index].events })
         throw error
       }
     }

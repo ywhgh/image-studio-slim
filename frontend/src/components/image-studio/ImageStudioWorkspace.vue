@@ -1203,21 +1203,82 @@
 
               <!-- FOOTER spans both columns -->
               <div class="studio-prompt-footer">
-                <div class="studio-generate-target studio-generate-target-compact">
-                  <span class="studio-generate-target-mode">
-                    <span class="studio-generate-target-dot"></span>
-                    {{ generateTargetSummary.modeLabel }}
-                  </span>
-                  <span
-                    v-if="generateTargetSummary.endpointLabel"
-                    class="studio-generate-target-host"
-                    :title="generateTargetSummary.endpointLabel"
+                <div
+                  class="studio-generate-target studio-generate-target-compact"
+                  :class="{ 'has-generation-flow': generationFlowVisible }"
+                >
+                  <div class="studio-generate-target-line">
+                    <span class="studio-generate-target-mode">
+                      <span class="studio-generate-target-dot"></span>
+                      {{ generateTargetSummary.modeLabel }}
+                    </span>
+                    <span
+                      v-if="generateTargetSummary.endpointLabel"
+                      class="studio-generate-target-host"
+                      :title="generateTargetSummary.endpointLabel"
+                    >
+                      → {{ generateTargetSummary.endpointLabel }}
+                    </span>
+                    <span v-if="generating" class="studio-generate-target-elapsed">
+                      {{ t('imageStudio.workbench.elapsedSeconds', { value: generationElapsedSeconds }) }}
+                    </span>
+                  </div>
+                  <div
+                    v-if="generationFlowVisible"
+                    class="studio-generation-flow studio-generation-flow-compact"
+                    :class="{ 'is-idle': !generationFlowActive }"
+                    role="status"
+                    aria-live="polite"
                   >
-                    → {{ generateTargetSummary.endpointLabel }}
-                  </span>
-                  <span v-if="generating" class="studio-generate-target-elapsed">
-                    {{ t('imageStudio.workbench.elapsedSeconds', { value: generationElapsedSeconds }) }}
-                  </span>
+                    <div class="studio-generation-flow-head">
+                      <div>
+                        <strong>{{ locale === 'zh' ? '生图流程' : 'Generation flow' }}</strong>
+                        <span :title="generationFlowCurrentEvent?.endpoint || generateTargetSummary.endpointLabel">
+                          {{ generationFlowCurrentEvent?.endpoint || generateTargetSummary.endpointLabel }}
+                        </span>
+                      </div>
+                      <span
+                        v-if="generationFlowCurrentEvent?.duration_ms != null"
+                        class="studio-generation-flow-duration"
+                        :title="`${locale === 'zh' ? '本步耗时' : 'Step duration'} ${formatDurationMs(generationFlowCurrentEvent.duration_ms)}`"
+                      >
+                        {{ locale === 'zh' ? '本步 ' : 'Step ' }}{{ formatDurationMs(generationFlowCurrentEvent.duration_ms) }}
+                      </span>
+                    </div>
+                    <div class="studio-generation-flow-steps">
+                      <div
+                        v-for="step in generationFlowSteps"
+                        :key="step.key"
+                        class="studio-generation-flow-step"
+                        :class="`is-${step.state}`"
+                      >
+                        <span class="studio-generation-flow-dot"></span>
+                        <div class="studio-generation-flow-step-copy">
+                          <strong :title="step.label">{{ step.label }}</strong>
+                          <span :title="step.detail">{{ step.detail }}</span>
+                          <small v-if="step.meta" :title="step.meta">{{ step.meta }}</small>
+                        </div>
+                      </div>
+                    </div>
+                    <div
+                      v-if="generationFlowCurrentEvent?.variant || generationFlowCurrentEvent?.status"
+                      class="studio-generation-flow-meta"
+                    >
+                      <span v-if="generationFlowCurrentEvent?.variant" :title="generationFlowCurrentEvent.variant">
+                        {{ generationFlowCurrentEvent.variant }}
+                      </span>
+                      <span v-if="generationFlowCurrentEvent?.status" :title="`HTTP ${generationFlowCurrentEvent.status}`">
+                        HTTP {{ generationFlowCurrentEvent.status }}
+                      </span>
+                      <span
+                        v-if="generationFlowCurrentEvent?.attempt"
+                        :title="`${locale === 'zh' ? '尝试' : 'Attempt'} ${generationFlowCurrentEvent.attempt}${generationFlowCurrentEvent.max_attempts ? `/${generationFlowCurrentEvent.max_attempts}` : ''}`"
+                      >
+                        {{ locale === 'zh' ? '尝试' : 'Attempt' }}
+                        {{ generationFlowCurrentEvent.attempt }}{{ generationFlowCurrentEvent.max_attempts ? `/${generationFlowCurrentEvent.max_attempts}` : '' }}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2548,63 +2609,127 @@
             </button>
           </div>
           <div class="studio-prompt-upload-body">
-            <label
+            <input
+              ref="promptLibraryImageInputRef"
+              type="file"
+              accept="image/*"
+              multiple
+              class="hidden"
+              @change="handlePromptLibraryImageSelect"
+            />
+            <div
               class="studio-prompt-image-drop is-modal"
+              :class="{ 'has-preview': activePromptLibraryDraftImageUrl && !promptLibraryDraftRemoveImage }"
               @dragover.prevent
               @drop.prevent="handlePromptLibraryImageDrop"
+              @click="handlePromptLibraryImageDropAreaClick"
             >
-              <input
-                type="file"
-                accept="image/*"
-                class="hidden"
-                @change="handlePromptLibraryImageSelect"
-              />
               <img
-                v-if="promptLibraryDraftImageUrl && !promptLibraryDraftRemoveImage"
-                :src="promptLibraryDraftImageUrl"
+                v-if="activePromptLibraryDraftImageUrl && !promptLibraryDraftRemoveImage"
+                :src="activePromptLibraryDraftImageUrl"
                 alt=""
+                @load="handlePromptPreviewImageLoad"
               />
-              <span v-else>
+              <button
+                v-if="promptLibraryDraftImageUrls.length > 1 && !promptLibraryDraftRemoveImage"
+                type="button"
+                class="studio-prompt-upload-switch is-prev"
+                :aria-label="locale === 'zh' ? '上一张' : 'Previous image'"
+                @click.stop.prevent="showPreviousPromptLibraryDraftImage"
+              >
+                <Icon name="chevronLeft" size="sm" />
+              </button>
+              <button
+                v-if="promptLibraryDraftImageUrls.length > 1 && !promptLibraryDraftRemoveImage"
+                type="button"
+                class="studio-prompt-upload-switch is-next"
+                :aria-label="locale === 'zh' ? '下一张' : 'Next image'"
+                @click.stop.prevent="showNextPromptLibraryDraftImage"
+              >
+                <Icon name="chevronRight" size="sm" />
+              </button>
+              <span v-if="!activePromptLibraryDraftImageUrl || promptLibraryDraftRemoveImage">
                 <Icon name="upload" size="md" />
                 <strong>{{ t('imageStudio.promptWorkspace.uploadImage') }}</strong>
-                <small>支持拖拽或点击上传，最高 20MB</small>
               </span>
-            </label>
+            </div>
 
             <div class="studio-prompt-upload-fields">
-              <input
-                v-model.trim="promptLibraryDraftTitle"
-                class="input"
-                type="text"
-                :placeholder="t('imageStudio.promptWorkspace.localTitlePlaceholder')"
-              />
-              <input
-                v-model.trim="promptLibraryDraftCategory"
-                class="input"
-                type="text"
-                placeholder="分类，例如：人物、场景、写实"
-              />
-              <textarea
-                v-model.trim="promptLibraryDraftDescription"
-                class="input studio-prompt-upload-textarea is-description"
-                placeholder="描述"
-              ></textarea>
-              <textarea
-                v-model.trim="promptLibraryDraftPrompt"
-                class="input studio-prompt-upload-textarea"
-                :placeholder="t('imageStudio.promptWorkspace.localPromptPlaceholder')"
-              ></textarea>
+              <label class="studio-prompt-upload-labeled-field">
+                <span>{{ t('imageStudio.promptWorkspace.titleLabel') }}</span>
+                <input
+                  v-model.trim="promptLibraryDraftTitle"
+                  type="text"
+                  :placeholder="t('imageStudio.promptWorkspace.localTitlePlaceholder')"
+                />
+              </label>
+              <div class="studio-prompt-upload-control-row">
+                <label class="studio-prompt-category-field">
+                  <span>{{ t('imageStudio.promptWorkspace.categoryLabel') }}</span>
+                  <select
+                    v-model="promptLibraryDraftCategory"
+                    class="studio-prompt-category-select"
+                    :aria-label="locale === 'zh' ? '分类' : 'Category'"
+                  >
+                    <option
+                      v-for="category in promptLibraryDraftCategoryOptions"
+                      :key="category.value"
+                      :value="category.value"
+                    >
+                      {{ category.label }}
+                    </option>
+                  </select>
+                </label>
+                <div class="studio-prompt-upload-icon-actions">
+                  <button
+                    type="button"
+                    class="studio-prompt-upload-icon-button is-cover"
+                    :disabled="promptLibraryDraftImageUrls.length < 2 || promptLibraryDraftImageIndex === 0 || promptLibraryDraftRemoveImage"
+                    :aria-label="locale === 'zh' ? '设为封面' : 'Set as cover'"
+                    :title="locale === 'zh' ? '设为封面' : 'Set as cover'"
+                    @click="setPromptLibraryDraftCurrentImageAsCover"
+                  >
+                    <Icon name="checkCircle" size="sm" />
+                  </button>
+                  <button
+                    type="button"
+                    class="studio-prompt-upload-icon-button"
+                    :aria-label="t('imageStudio.promptWorkspace.uploadImage')"
+                    @click="openPromptLibraryImagePicker"
+                  >
+                    <Icon name="upload" size="sm" />
+                  </button>
+                  <button
+                    type="button"
+                    class="studio-prompt-upload-icon-button is-danger"
+                    :disabled="!promptLibraryDraftImageUrls.length || promptLibraryDraftRemoveImage"
+                    :aria-label="locale === 'zh' ? '删除当前预览图' : 'Remove current preview image'"
+                    :title="locale === 'zh' ? '删除当前预览图' : 'Remove current preview image'"
+                    @click="removePromptLibraryDraftImage"
+                  >
+                    <Icon name="trash" size="sm" />
+                  </button>
+                </div>
+              </div>
+              <label class="studio-prompt-upload-labeled-field is-textarea is-description">
+                <span>{{ t('imageStudio.promptWorkspace.descriptionLabel') }}</span>
+                <textarea
+                  v-model.trim="promptLibraryDraftDescription"
+                  class="studio-prompt-upload-textarea is-description"
+                  :placeholder="t('imageStudio.promptWorkspace.descriptionPlaceholder')"
+                ></textarea>
+              </label>
+              <label class="studio-prompt-upload-labeled-field is-textarea">
+                <span>{{ t('imageStudio.promptWorkspace.promptLabel') }}</span>
+                <textarea
+                  v-model.trim="promptLibraryDraftPrompt"
+                  class="studio-prompt-upload-textarea"
+                  :placeholder="t('imageStudio.promptWorkspace.localPromptPlaceholder')"
+                ></textarea>
+              </label>
               <p v-if="promptLibraryDraftError" class="studio-prompt-upload-error">
                 {{ promptLibraryDraftError }}
               </p>
-              <button
-                v-if="promptLibraryDraftImageUrl && !promptLibraryDraftRemoveImage"
-                type="button"
-                class="studio-prompt-upload-remove-image"
-                @click="removePromptLibraryDraftImage"
-              >
-                {{ locale === 'zh' ? '移除预览图' : 'Remove preview image' }}
-              </button>
             </div>
           </div>
           <div class="studio-prompt-modal-actions is-upload-actions">
@@ -2644,12 +2769,30 @@
             @pointerleave="clearPromptLibraryDetailsPreviewPress"
           >
             <img
-              v-if="promptLibraryDetailsItem.imageUrl"
-              :src="promptLibraryDetailsItem.imageUrl"
+              v-if="promptLibraryDetailsImageUrl"
+              :src="promptLibraryDetailsImageUrl"
               :alt="promptLibraryDetailsItem.title"
               @load="handlePromptPreviewImageLoad"
             />
             <Icon v-else name="sparkles" size="lg" />
+            <div
+              v-if="promptLibraryDetailsHasMultipleImages"
+              class="studio-prompt-details-dots"
+              @pointerdown.stop
+              @pointerup.stop
+              @pointerleave.stop
+              @click.stop
+            >
+              <button
+                v-for="(_, index) in promptLibraryDetailsImageUrls"
+                :key="`${promptLibraryDetailsItem.id}-dot-${index}`"
+                type="button"
+                class="studio-prompt-details-dot"
+                :class="{ active: index === promptLibraryDetailsImageIndex }"
+                :aria-label="locale === 'zh' ? `切换到第 ${index + 1} 张图片` : `View image ${index + 1}`"
+                @click="setPromptLibraryDetailsImageIndex(index)"
+              ></button>
+            </div>
           </div>
           <div class="studio-prompt-details-body">
             <h3>{{ promptLibraryDetailsItem.title }}</h3>
@@ -2689,24 +2832,51 @@
 
     <Teleport to="body">
       <div
-        v-if="promptLibraryDetailsLightboxOpen && promptLibraryDetailsItem?.imageUrl"
+        v-if="promptLibraryDetailsLightboxOpen && promptLibraryDetailsImageUrl"
         class="studio-prompt-full-preview-backdrop"
         :class="{ 'theme-night': studioAppearance.themeMode === 'night' }"
         :style="studioAppearanceStyle"
         role="dialog"
         aria-modal="true"
-        @click.self="closePromptLibraryDetailsLightbox"
+        @click.self="handlePromptLibraryDetailsLightboxBackdropClick"
         @wheel.prevent="handlePromptLibraryDetailsLightboxWheel"
+        @pointerdown="startPromptLibraryDetailsLightboxDrag"
+        @pointermove="movePromptLibraryDetailsLightboxDrag"
+        @pointerup="finishPromptLibraryDetailsLightboxDrag"
+        @pointercancel="finishPromptLibraryDetailsLightboxDrag"
+        @pointerleave="finishPromptLibraryDetailsLightboxDrag"
+        @lostpointercapture="finishPromptLibraryDetailsLightboxDrag"
       >
         <button type="button" class="studio-prompt-full-preview-close" @click="closePromptLibraryDetailsLightbox">
           <Icon name="x" size="sm" />
         </button>
         <img
-          :src="promptLibraryDetailsItem.imageUrl"
-          :alt="promptLibraryDetailsItem.title"
+          :src="promptLibraryDetailsImageUrl"
+          :alt="promptLibraryDetailsItem?.title || ''"
           class="studio-prompt-full-preview-image"
-          :style="{ transform: `scale(${promptLibraryDetailsLightboxScale})` }"
+          :class="{ 'is-dragging': promptLibraryDetailsLightboxDragging }"
+          :style="promptLibraryFullPreviewImageStyle"
+          draggable="false"
+          @dragstart.prevent
         />
+        <div v-if="promptLibraryDetailsHasMultipleImages" class="studio-prompt-full-preview-switches">
+          <button
+            type="button"
+            class="studio-prompt-full-preview-switch"
+            :aria-label="t('imageStudio.workbench.previousPreview')"
+            @click="stepPromptLibraryDetailsImage(-1)"
+          >
+            <Icon name="chevronUp" size="md" />
+          </button>
+          <button
+            type="button"
+            class="studio-prompt-full-preview-switch"
+            :aria-label="t('imageStudio.workbench.nextPreview')"
+            @click="stepPromptLibraryDetailsImage(1)"
+          >
+            <Icon name="chevronDown" size="md" />
+          </button>
+        </div>
       </div>
     </Teleport>
 
@@ -2743,7 +2913,7 @@ import {
   probeImageStudioUpstreamModels,
   resolveImageStudioSize,
 } from '@/api/imageStudio'
-import type { ImageStudioBatchProgress, ImageStudioGenerationOptions, PromptHelperChatMessage } from '@/api/imageStudio'
+import type { ImageStudioBatchProgress, ImageStudioGenerationOptions, PromptHelperChatMessage, RelayImageJobEvent } from '@/api/imageStudio'
 import { useImageStudioAppearance } from '@/composables/useImageStudioAppearance'
 import { useImageStudioPreferences } from '@/composables/useImageStudioPreferences'
 import { calculateGptImagePlaygroundSize } from '@/utils/gptImagePlaygroundSize'
@@ -2817,6 +2987,7 @@ import type {
   NormalizedImageResult,
 } from '@/types/imageStudio'
 import type { ImageStudioPromptLibraryItem } from '@/services/imageStudioPromptLibrary'
+import type { ImageStudioPromptLibraryInput } from '@/services/imageStudioPromptLibrary'
 
 const WORKSPACE_ORDER_STORAGE_KEY = 'image-studio.workspace-order'
 const PROMPT_LIBRARY_SELECTED_STORAGE_KEY = 'image-studio.prompt-library-selected-id'
@@ -2826,6 +2997,11 @@ const LIGHTBOX_ZOOM_MIN = 1
 const LIGHTBOX_ZOOM_MAX = 4
 const LIGHTBOX_ZOOM_STEP = 0.35
 const PROMPT_LIBRARY_IMAGE_MAX_BYTES = 20 * 1024 * 1024
+const PROMPT_LIBRARY_IMAGE_MAX_COUNT = 5
+const PROMPT_LIBRARY_DETAILS_ROTATE_MS = 30000
+const PROMPT_LIBRARY_DETAILS_ZOOM_MIN = 0.35
+const PROMPT_LIBRARY_DETAILS_ZOOM_MAX = 6
+const PROMPT_LIBRARY_DETAILS_ZOOM_STEP = 0.22
 const GITHUB_PROJECT_URL = 'https://github.com/ywhgh/image-studio-slim'
 const IMAGE_STUDIO_DEBUG = false
 
@@ -2841,8 +3017,24 @@ interface PromptLibraryOption {
   title: string
   description: string
   prompt: string
+  imageKey?: string
+  imageKeys?: string[]
   imageUrl?: string
+  imageUrls?: string[]
+  imageMimeType?: string
+  imageMimeTypes?: string[]
+  imageFilename?: string
+  imageFilenames?: string[]
   category?: string
+}
+
+interface PromptLibraryDraftImage {
+  id: string
+  url: string
+  file?: File
+  filename?: string
+  mimeType?: string
+  source: 'existing' | 'file'
 }
 
 type PreviewOrientation = 'landscape' | 'portrait' | 'square' | 'unknown'
@@ -2897,6 +3089,7 @@ const studioShellRef = ref<HTMLElement | null>(null)
 const historyListRef = ref<HTMLElement | null>(null)
 const historyListMaxHeight = ref('')
 const promptTextareaRef = ref<HTMLTextAreaElement | null>(null)
+const promptLibraryImageInputRef = ref<HTMLInputElement | null>(null)
 const studioTitleTooltipRef = ref<HTMLElement | null>(null)
 const studioTitleTooltipVisible = ref(false)
 const studioTitleTooltipReady = ref(false)
@@ -2929,8 +3122,9 @@ const promptLibraryDraftTitle = ref('')
 const promptLibraryDraftDescription = ref('')
 const promptLibraryDraftPrompt = ref('')
 const promptLibraryDraftCategory = ref('')
-const promptLibraryDraftImageFile = ref<File | null>(null)
-const promptLibraryDraftImageUrl = ref('')
+const promptLibraryDraftImages = ref<PromptLibraryDraftImage[]>([])
+const promptLibraryDraftImageIndex = ref(0)
+const promptLibraryDraftImagesChanged = ref(false)
 const promptLibraryDraftRemoveImage = ref(false)
 const promptLibraryDraftError = ref('')
 const promptLibraryDraftSaving = ref(false)
@@ -2938,6 +3132,15 @@ const promptLibraryDetailsItem = ref<PromptLibraryOption | null>(null)
 const selectedPromptLibraryOption = ref<PromptLibraryOption | null>(null)
 const promptLibraryDetailsLightboxOpen = ref(false)
 const promptLibraryDetailsLightboxScale = ref(1)
+const promptLibraryDetailsLightboxPanX = ref(0)
+const promptLibraryDetailsLightboxPanY = ref(0)
+const promptLibraryDetailsLightboxDragging = ref(false)
+const promptLibraryDetailsLightboxDragStartX = ref(0)
+const promptLibraryDetailsLightboxDragStartY = ref(0)
+const promptLibraryDetailsLightboxPanStartX = ref(0)
+const promptLibraryDetailsLightboxPanStartY = ref(0)
+const promptLibraryDetailsLightboxDragMoved = ref(false)
+const promptLibraryDetailsImageIndex = ref(0)
 const promptDetailsParticles = ref<PromptDetailParticle[]>([])
 const upstreamCompatibilityEnabled = ref(false)
 const compatibilityPreviewOpen = ref(false)
@@ -2960,6 +3163,7 @@ const referencePreviewIndex = ref<number | null>(null)
 const savedPromptLibraryItems = ref<ImageStudioPromptLibraryItem[]>([])
 const promptLibraryUsesRemoteStorage = isImageStudioPromptLibraryRemoteEnabled()
 let promptLibraryDetailsPreviewTimer: number | null = null
+let promptLibraryDetailsAutoRotateTimer: number | null = null
 let promptLibraryLongPressTimer: number | null = null
 let promptDetailsParticleId = 0
 let promptDetailsParticleFrame = 0
@@ -3087,6 +3291,7 @@ const generationElapsedMs = ref(0)
 const lastGenerationDurationMs = ref<number | null>(null)
 const lastGenerationImageCount = ref(1)
 const generationBatchProgress = ref<ImageStudioBatchProgress | null>(null)
+const generationFlowSnapshot = ref<ImageStudioBatchProgress | null>(null)
 const transientTiles = ref<ImageStudioWorkspaceTile[]>([])
 type GenerationErrorKind = 'backend-unreachable' | 'generic'
 type GenerationErrorDescription = {
@@ -3095,6 +3300,14 @@ type GenerationErrorDescription = {
   detail?: string
   rawMessage?: string
   kind: GenerationErrorKind
+}
+type GenerationFlowStepState = 'waiting' | 'active' | 'done' | 'error'
+type GenerationFlowStep = {
+  key: 'queued' | 'worker' | 'upstream' | 'retry' | 'parse' | 'done'
+  label: string
+  detail: string
+  state: GenerationFlowStepState
+  meta?: string
 }
 const generationError = ref<GenerationErrorDescription | null>(null)
 const lightboxNaturalSize = ref<{ width: number; height: number } | null>(null)
@@ -3847,6 +4060,7 @@ const builtinPromptLibraryOptions = computed<PromptLibraryOption[]>(() => styleP
   description: preset.subtitle,
   prompt: preset.promptHint || preset.title,
   imageUrl: `/style-presets/${preset.id}.png`,
+  imageUrls: [`/style-presets/${preset.id}.png`],
   category: t('imageStudio.promptWorkspace.builtinSource'),
 })))
 
@@ -3856,7 +4070,14 @@ const promptLibraryOptions = computed<PromptLibraryOption[]>(() => [
     title: item.title || t('imageStudio.promptWorkspace.uploadedPrompt'),
     description: item.description || t('imageStudio.promptWorkspace.localStorage'),
     prompt: item.prompt,
+    imageKey: item.imageKey,
+    imageKeys: item.imageKeys,
     imageUrl: item.imageUrl,
+    imageUrls: item.imageUrls?.length ? item.imageUrls : (item.imageUrl ? [item.imageUrl] : undefined),
+    imageMimeType: item.imageMimeType,
+    imageMimeTypes: item.imageMimeTypes,
+    imageFilename: item.imageFilename,
+    imageFilenames: item.imageFilenames,
     category: item.category || t('imageStudio.promptWorkspace.uploadedSource'),
   })),
   ...builtinPromptLibraryOptions.value,
@@ -3921,6 +4142,26 @@ const filteredDefaultPromptLibraryCategories = computed(() => (
 const filteredCustomPromptLibraryCategories = computed(() => (
   customPromptLibraryCategories.value.filter(matchesPromptLibraryCategoryQuery)
 ))
+
+const promptLibraryDraftCategoryOptions = computed<PromptLibraryCategoryOption[]>(() => {
+  const options: PromptLibraryCategoryOption[] = [
+    {
+      value: '',
+      label: t('imageStudio.promptWorkspace.uploadedSource'),
+      icon: 'upload',
+    },
+    ...customPromptLibraryCategories.value,
+  ]
+  const currentCategory = promptLibraryDraftCategory.value.trim()
+  if (currentCategory && !options.some((category) => category.value === currentCategory)) {
+    options.unshift({
+      value: currentCategory,
+      label: currentCategory,
+      icon: 'sparkles',
+    })
+  }
+  return options
+})
 
 const filteredPromptLibraryOptions = computed(() => {
   const query = promptLibrarySearch.value.trim().toLowerCase()
@@ -4049,6 +4290,43 @@ const selectedPromptTemplateImage = computed(() => (
   selectedPromptLibraryOption.value?.imageUrl
   || ''
 ))
+
+const promptLibraryDraftImageUrls = computed(() => (
+  promptLibraryDraftImages.value.map((item) => item.url)
+))
+
+const activePromptLibraryDraftImageUrl = computed(() => (
+  promptLibraryDraftImageUrls.value[promptLibraryDraftImageIndex.value]
+  || promptLibraryDraftImageUrls.value[0]
+  || ''
+))
+
+const promptLibraryDetailsImageUrls = computed(() => {
+  const detailsItem = promptLibraryDetailsItem.value
+  if (!detailsItem) return []
+  const savedItem = savedPromptLibraryItems.value.find((item) => item.id === detailsItem.id)
+  const urls = [
+    ...resolvePromptLibraryImageUrls(savedItem),
+    ...resolvePromptLibraryImageUrls(detailsItem),
+  ]
+    .filter((url): url is string => typeof url === 'string' && !!url.trim())
+    .map((url) => url.trim())
+  return Array.from(new Set(urls)).slice(0, PROMPT_LIBRARY_IMAGE_MAX_COUNT)
+})
+
+const promptLibraryDetailsImageUrl = computed(() => (
+  promptLibraryDetailsImageUrls.value[promptLibraryDetailsImageIndex.value]
+  || promptLibraryDetailsImageUrls.value[0]
+  || ''
+))
+
+const promptLibraryDetailsHasMultipleImages = computed(() => (
+  promptLibraryDetailsImageUrls.value.length > 1
+))
+
+const promptLibraryFullPreviewImageStyle = computed(() => ({
+  transform: `translate3d(${promptLibraryDetailsLightboxPanX.value}px, ${promptLibraryDetailsLightboxPanY.value}px, 0) scale(${promptLibraryDetailsLightboxScale.value})`,
+}))
 
 function activeApiKeyValue(): string {
   return preferences.providerMode === 'sub2api'
@@ -4411,6 +4689,33 @@ function resetSelectedPromptTemplateImageMeta(): void {
 }
 
 watch(selectedPromptTemplateImage, resetSelectedPromptTemplateImageMeta)
+
+watch(promptLibraryDetailsImageUrls, (urls) => {
+  if (promptLibraryDetailsImageIndex.value >= urls.length) {
+    promptLibraryDetailsImageIndex.value = Math.max(0, urls.length - 1)
+  }
+  if (!urls.length) {
+    promptLibraryDetailsImageIndex.value = 0
+  }
+  restartPromptLibraryDetailsAutoRotate()
+})
+
+watch(promptLibraryDetailsLightboxOpen, (isOpen) => {
+  if (isOpen) {
+    stopPromptLibraryDetailsAutoRotate()
+    return
+  }
+  restartPromptLibraryDetailsAutoRotate()
+})
+
+watch(promptLibraryDraftImageUrls, (urls) => {
+  if (promptLibraryDraftImageIndex.value >= urls.length) {
+    promptLibraryDraftImageIndex.value = Math.max(0, urls.length - 1)
+  }
+  if (!urls.length) {
+    promptLibraryDraftImageIndex.value = 0
+  }
+})
 
 watch(
   () => selectedPromptLibraryOption.value?.id || '',
@@ -5241,6 +5546,226 @@ const generationBatchActive = computed(() => (
 const generationJobActive = computed(() => (
   generating.value && !!generationBatchProgress.value
 ))
+
+const activeGenerationFlowProgress = computed(() => (
+  generationBatchProgress.value || generationFlowSnapshot.value
+))
+
+const generationFlowEvents = computed<RelayImageJobEvent[]>(() => {
+  const progressState = activeGenerationFlowProgress.value
+  if (!progressState) return []
+  const items = progressState.items || []
+  const currentItem = (
+    items.find((item) => item.status === 'succeeded' && item.events?.length) ||
+    items.find((item) => item.status === 'running' && item.events?.length) ||
+    (!progressState.completed ? items.find((item) => item.status === 'failed') : undefined) ||
+    items.find((item) => item.status === 'queued') ||
+    items.find((item) => item.events?.length) ||
+    items[0]
+  )
+  const sourceEvents = currentItem?.events?.length
+    ? currentItem.events
+    : (progressState.events || [])
+  return sourceEvents.filter((event): event is RelayImageJobEvent => (
+    !!event && typeof event.stage === 'string'
+  ))
+})
+
+const generationFlowActive = computed(() => (
+  generating.value || !!generationError.value || generationFlowEvents.value.length > 0
+))
+
+const generationFlowVisible = computed(() => true)
+
+function isGenerationFlowErrorEvent(event: RelayImageJobEvent): boolean {
+  return /error|failed|too_large|invalid|canceled/i.test(event.stage)
+    || (typeof event.status === 'number' && event.status >= 400)
+}
+
+function isGenerationFlowSuccessEvent(event: RelayImageJobEvent): boolean {
+  return /upstream_success|succeeded/i.test(event.stage)
+}
+
+function generationFlowEventsHaveSuccess(events = generationFlowEvents.value): boolean {
+  return events.some(isGenerationFlowSuccessEvent)
+}
+
+function generationFlowErrorStep(event: RelayImageJobEvent | null): GenerationFlowStep['key'] | null {
+  if (!event) return null
+  if (/transport_error|read_error|response_too_large|upstream_error/.test(event.stage)) {
+    return 'upstream'
+  }
+  if (/invalid_response/.test(event.stage)) {
+    return 'parse'
+  }
+  if (/failed|canceled/.test(event.stage)) {
+    return generationFlowErrorStep(latestGenerationFlowEvent((item) => item !== event && isGenerationFlowErrorEvent(item))) || 'done'
+  }
+  if (typeof event.status === 'number' && event.status >= 400) {
+    return 'upstream'
+  }
+  return null
+}
+
+function latestGenerationFlowEvent(predicate: (event: RelayImageJobEvent) => boolean): RelayImageJobEvent | null {
+  const events = generationFlowEvents.value
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (predicate(events[index])) return events[index]
+  }
+  return null
+}
+
+function formatGenerationFlowEventMeta(event: RelayImageJobEvent | null): string {
+  if (!event) return ''
+  const parts: string[] = []
+  if (event.status) parts.push(`HTTP ${event.status}`)
+  if (event.duration_ms != null) parts.push(formatDurationMs(event.duration_ms))
+  if (event.attempt) {
+    const attemptLabel = event.max_attempts
+      ? `${event.attempt}/${event.max_attempts}`
+      : `${event.attempt}`
+    parts.push(locale.value === 'zh' ? `第 ${attemptLabel} 次` : `attempt ${attemptLabel}`)
+  }
+  return parts.join(' · ')
+}
+
+function generationFlowEventDetail(event: RelayImageJobEvent | null, fallback: string): string {
+  if (!event) return fallback
+  if (locale.value === 'zh') {
+    if (event.stage === 'upstream_attempt') {
+      const attemptLabel = event.max_attempts
+        ? `${event.attempt || 1}/${event.max_attempts}`
+        : `${event.attempt || 1}`
+      return `正在请求上游，尝试 ${attemptLabel}`
+    }
+    if (event.stage === 'retry_wait') return '上游暂时失败，等待后重试'
+    if (event.stage === 'variant_fallback') return '正在切换备用请求格式'
+    if (event.stage === 'upstream_success') {
+      return event.results ? `上游已返回 ${event.results} 张图片` : '上游已返回可用图片'
+    }
+    if (event.stage === 'transport_error') return '无法连接到上游服务'
+    if (event.stage === 'read_error') return '读取上游响应时中断'
+    if (event.stage === 'response_too_large') return '上游响应过大'
+    if (event.stage === 'upstream_error') return event.status ? `上游返回 HTTP ${event.status}` : '上游返回错误'
+    if (event.stage === 'invalid_response') return '上游响应里没有可用图片'
+    if (event.stage === 'failed') return '生成任务失败'
+    if (event.stage === 'canceled') return '生成任务已取消'
+    if (event.stage === 'succeeded') return '图片已写入工作区'
+  }
+  const message = event.message?.trim()
+  if (message) return message
+  if (event.endpoint) return event.endpoint
+  return fallback
+}
+
+const generationFlowSteps = computed<GenerationFlowStep[]>(() => {
+  const events = generationFlowEvents.value
+  const progressState = activeGenerationFlowProgress.value
+  const completedCount = progressState?.completed || 0
+  const failedCount = progressState?.failed || 0
+  const runningCount = progressState?.running || 0
+  const queuedCount = progressState?.queued || 0
+  const totalCount = progressState?.total || 0
+  const unfinishedCount = runningCount + queuedCount
+  const hasEvent = (pattern: RegExp) => events.some((event) => pattern.test(event.stage))
+  const hasQueued = hasEvent(/queued/)
+  const hasStarted = hasEvent(/started/)
+  const hasAttempt = hasEvent(/upstream_attempt/)
+  const hasSuccess = hasEvent(/upstream_success|succeeded/)
+  const hasFinished = hasEvent(/succeeded/)
+  const finalSucceeded = hasFinished || completedCount > 0
+  const errorEvent = finalSucceeded ? null : latestGenerationFlowEvent(isGenerationFlowErrorEvent)
+  const retryEvent = latestGenerationFlowEvent((event) => event.stage === 'retry_wait' || event.stage === 'variant_fallback')
+  const attemptEvent = latestGenerationFlowEvent((event) => event.stage === 'upstream_attempt')
+  const successEvent = latestGenerationFlowEvent((event) => event.stage === 'upstream_success')
+  const finalEvent = latestGenerationFlowEvent((event) => /succeeded|failed|canceled/.test(event.stage))
+  const errorStep = generationFlowErrorStep(errorEvent)
+  const upstreamDetailEvent = finalSucceeded ? (successEvent || attemptEvent) : (errorEvent || attemptEvent)
+  const parseDetailEvent = finalSucceeded ? successEvent : (errorEvent || successEvent)
+  const batchStillRunning = completedCount > 0 && unfinishedCount > 0
+  const finalDetail = completedCount > 0
+    ? (locale.value === 'zh'
+        ? `已写入 ${completedCount}${totalCount ? `/${totalCount}` : ''} 张${failedCount ? `，${failedCount} 个任务失败` : ''}${unfinishedCount ? '，剩余任务处理中' : ''}`
+        : `Saved ${completedCount}${totalCount ? `/${totalCount}` : ''} image(s)${failedCount ? `, ${failedCount} failed` : ''}${unfinishedCount ? ', remaining tasks still running' : ''}`)
+    : generationFlowEventDetail(finalEvent, locale.value === 'zh' ? '保存到工作区和历史记录' : 'Save to workspace and history')
+
+  const upstreamState: GenerationFlowStepState = errorEvent
+    ? (errorStep === 'upstream' ? 'error' : 'done')
+    : (hasAttempt ? ((hasSuccess || finalSucceeded) ? 'done' : 'active') : (hasStarted ? 'active' : 'waiting'))
+  const parseState: GenerationFlowStepState = errorEvent
+    ? (errorStep === 'parse' ? 'error' : (hasSuccess || errorStep === 'done' ? 'done' : 'waiting'))
+    : ((hasSuccess || finalSucceeded) ? 'done' : (hasAttempt ? 'active' : 'waiting'))
+  const finalState: GenerationFlowStepState = finalSucceeded
+    ? (batchStillRunning ? 'active' : 'done')
+    : finalEvent?.stage === 'failed' || finalEvent?.stage === 'canceled'
+    ? (errorStep === 'done' ? 'error' : 'waiting')
+    : (hasFinished ? 'done' : 'waiting')
+
+  return [
+    {
+      key: 'queued',
+      label: locale.value === 'zh' ? '本地排队' : 'Local queue',
+      detail: hasQueued
+        ? (locale.value === 'zh' ? '任务已进入本地中转队列' : 'Job entered the local relay queue')
+        : (locale.value === 'zh' ? '等待创建任务' : 'Waiting to create job'),
+      state: hasQueued ? 'done' : (generating.value ? 'active' : 'waiting'),
+    },
+    {
+      key: 'worker',
+      label: locale.value === 'zh' ? '开始执行' : 'Worker started',
+      detail: hasStarted
+        ? (locale.value === 'zh' ? '本地 worker 已开始处理' : 'Local worker is processing the job')
+        : (locale.value === 'zh' ? '等待 worker 接手' : 'Waiting for worker'),
+      state: hasStarted ? 'done' : (hasQueued ? 'active' : 'waiting'),
+    },
+    {
+      key: 'upstream',
+      label: locale.value === 'zh' ? '请求上游' : 'Upstream request',
+      detail: generationFlowEventDetail(upstreamDetailEvent, locale.value === 'zh' ? '正在请求上游图片接口' : 'Calling upstream image endpoint'),
+      state: upstreamState,
+      meta: formatGenerationFlowEventMeta(finalSucceeded ? (successEvent || attemptEvent) : (errorEvent || attemptEvent)),
+    },
+    {
+      key: 'retry',
+      label: locale.value === 'zh' ? '重试/切换' : 'Retry / fallback',
+      detail: retryEvent
+        ? (finalSucceeded
+            ? (locale.value === 'zh' ? '已完成重试，后续请求成功' : 'Retry completed; a later request succeeded')
+            : generationFlowEventDetail(retryEvent, locale.value === 'zh' ? '正在尝试备用请求格式' : 'Trying an alternate request format'))
+        : (locale.value === 'zh' ? '如遇 502/524 会自动重试或切换格式' : 'Retries or alternate payloads are used for 502/524'),
+      state: retryEvent ? (finalSucceeded || hasSuccess ? 'done' : (errorEvent ? 'done' : 'active')) : (hasAttempt ? 'waiting' : 'waiting'),
+      meta: formatGenerationFlowEventMeta(retryEvent),
+    },
+    {
+      key: 'parse',
+      label: locale.value === 'zh' ? '解析图片' : 'Parse image',
+      detail: generationFlowEventDetail(parseDetailEvent, locale.value === 'zh' ? '等待上游返回可用图片' : 'Waiting for a usable image result'),
+      state: parseState,
+      meta: formatGenerationFlowEventMeta(successEvent || errorEvent),
+    },
+    {
+      key: 'done',
+      label: locale.value === 'zh' ? '写入结果' : 'Finish',
+      detail: finalDetail,
+      state: finalState,
+      meta: formatGenerationFlowEventMeta(finalSucceeded ? (finalEvent || successEvent) : finalEvent),
+    },
+  ]
+})
+
+const generationFlowCurrentEvent = computed(() => {
+  const events = generationFlowEvents.value
+  if (generationFlowEventsHaveSuccess(events) || (activeGenerationFlowProgress.value?.completed || 0) > 0) {
+    return latestGenerationFlowEvent((event) => event.stage === 'succeeded')
+      || latestGenerationFlowEvent((event) => event.stage === 'upstream_success')
+      || events[events.length - 1]
+      || null
+  }
+  return latestGenerationFlowEvent(isGenerationFlowErrorEvent)
+    || latestGenerationFlowEvent((event) => event.stage === 'upstream_attempt')
+    || events[events.length - 1]
+    || null
+})
 
 const generationBatchFinishedCount = computed(() => {
   const batch = generationBatchProgress.value
@@ -6222,18 +6747,77 @@ function applyPromptLibraryOption(nextPrompt: string, option?: PromptLibraryOpti
 }
 
 function openPromptLibraryDetails(option: PromptLibraryOption) {
-  promptLibraryDetailsItem.value = option
+  const latestOption = promptLibraryOptions.value.find((item) => item.id === option.id) || option
+  promptLibraryDetailsItem.value = latestOption
   promptLibraryDetailsLightboxOpen.value = false
-  promptLibraryDetailsLightboxScale.value = 1
+  promptLibraryDetailsImageIndex.value = 0
+  resetPromptLibraryDetailsLightboxTransform()
   promptDetailsParticles.value = []
+  restartPromptLibraryDetailsAutoRotate()
 }
 
 function closePromptLibraryDetails() {
+  stopPromptLibraryDetailsAutoRotate()
   promptLibraryDetailsItem.value = null
   promptLibraryDetailsLightboxOpen.value = false
-  promptLibraryDetailsLightboxScale.value = 1
+  promptLibraryDetailsImageIndex.value = 0
+  resetPromptLibraryDetailsLightboxTransform()
   promptDetailsParticles.value = []
   clearPromptLibraryDetailsPreviewPress()
+}
+
+function resetPromptLibraryDetailsLightboxTransform() {
+  promptLibraryDetailsLightboxScale.value = 1
+  promptLibraryDetailsLightboxPanX.value = 0
+  promptLibraryDetailsLightboxPanY.value = 0
+  promptLibraryDetailsLightboxDragging.value = false
+  promptLibraryDetailsLightboxDragMoved.value = false
+}
+
+function stopPromptLibraryDetailsAutoRotate() {
+  if (promptLibraryDetailsAutoRotateTimer !== null) {
+    window.clearTimeout(promptLibraryDetailsAutoRotateTimer)
+    promptLibraryDetailsAutoRotateTimer = null
+  }
+}
+
+function startPromptLibraryDetailsAutoRotate() {
+  stopPromptLibraryDetailsAutoRotate()
+  if (
+    !promptLibraryDetailsItem.value
+    || !promptLibraryDetailsHasMultipleImages.value
+    || promptLibraryDetailsLightboxOpen.value
+  ) {
+    return
+  }
+  promptLibraryDetailsAutoRotateTimer = window.setTimeout(() => {
+    promptLibraryDetailsAutoRotateTimer = null
+    stepPromptLibraryDetailsImage(1, { restartAuto: false })
+    startPromptLibraryDetailsAutoRotate()
+  }, PROMPT_LIBRARY_DETAILS_ROTATE_MS)
+}
+
+function restartPromptLibraryDetailsAutoRotate() {
+  stopPromptLibraryDetailsAutoRotate()
+  startPromptLibraryDetailsAutoRotate()
+}
+
+function setPromptLibraryDetailsImageIndex(index: number, options: { restartAuto?: boolean } = {}) {
+  promptLibraryDetailsImageIndex.value = Math.min(
+    Math.max(0, index),
+    Math.max(0, promptLibraryDetailsImageUrls.value.length - 1)
+  )
+  resetPromptLibraryDetailsLightboxTransform()
+  if (options.restartAuto !== false) {
+    restartPromptLibraryDetailsAutoRotate()
+  }
+}
+
+function stepPromptLibraryDetailsImage(direction: -1 | 1, options: { restartAuto?: boolean } = {}) {
+  const imageCount = promptLibraryDetailsImageUrls.value.length
+  if (imageCount <= 1) return
+  const nextIndex = (promptLibraryDetailsImageIndex.value + direction + imageCount) % imageCount
+  setPromptLibraryDetailsImageIndex(nextIndex, options)
 }
 
 function selectPromptLibraryCategory(category: string) {
@@ -6320,7 +6904,7 @@ function startPromptLibraryDetailsPreviewPress(event: PointerEvent) {
   if ((event.target as HTMLElement).closest('button')) return
   clearPromptLibraryDetailsPreviewPress()
   promptLibraryDetailsPreviewTimer = window.setTimeout(() => {
-    promptLibraryDetailsLightboxScale.value = 1
+    resetPromptLibraryDetailsLightboxTransform()
     promptLibraryDetailsLightboxOpen.value = true
   }, 460)
 }
@@ -6334,12 +6918,94 @@ function clearPromptLibraryDetailsPreviewPress() {
 
 function closePromptLibraryDetailsLightbox() {
   promptLibraryDetailsLightboxOpen.value = false
-  promptLibraryDetailsLightboxScale.value = 1
+  resetPromptLibraryDetailsLightboxTransform()
+}
+
+function handlePromptLibraryDetailsLightboxBackdropClick() {
+  if (promptLibraryDetailsLightboxDragMoved.value) {
+    window.setTimeout(() => {
+      promptLibraryDetailsLightboxDragMoved.value = false
+    }, 0)
+    return
+  }
+  closePromptLibraryDetailsLightbox()
 }
 
 function handlePromptLibraryDetailsLightboxWheel(event: WheelEvent) {
-  const nextScale = promptLibraryDetailsLightboxScale.value + (event.deltaY < 0 ? 0.12 : -0.12)
-  promptLibraryDetailsLightboxScale.value = Math.min(3, Math.max(0.45, Number(nextScale.toFixed(2))))
+  const direction = event.deltaY < 0 ? 1 : -1
+  const zoomStep = PROMPT_LIBRARY_DETAILS_ZOOM_STEP * Math.max(1, promptLibraryDetailsLightboxScale.value * 0.36)
+  const nextScale = promptLibraryDetailsLightboxScale.value + direction * zoomStep
+  promptLibraryDetailsLightboxScale.value = Math.min(
+    PROMPT_LIBRARY_DETAILS_ZOOM_MAX,
+    Math.max(PROMPT_LIBRARY_DETAILS_ZOOM_MIN, Number(nextScale.toFixed(2)))
+  )
+}
+
+function startPromptLibraryDetailsLightboxDrag(event: PointerEvent) {
+  if (event.button !== 0) return
+  if ((event.target as HTMLElement | null)?.closest('button')) return
+  event.preventDefault()
+  promptLibraryDetailsLightboxDragging.value = true
+  promptLibraryDetailsLightboxDragStartX.value = event.clientX
+  promptLibraryDetailsLightboxDragStartY.value = event.clientY
+  promptLibraryDetailsLightboxPanStartX.value = promptLibraryDetailsLightboxPanX.value
+  promptLibraryDetailsLightboxPanStartY.value = promptLibraryDetailsLightboxPanY.value
+  promptLibraryDetailsLightboxDragMoved.value = false
+  const target = event.currentTarget as HTMLElement | null
+  target?.setPointerCapture?.(event.pointerId)
+}
+
+function movePromptLibraryDetailsLightboxDrag(event: PointerEvent) {
+  if (!promptLibraryDetailsLightboxDragging.value) return
+  event.preventDefault()
+  const deltaX = event.clientX - promptLibraryDetailsLightboxDragStartX.value
+  const deltaY = event.clientY - promptLibraryDetailsLightboxDragStartY.value
+  if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+    promptLibraryDetailsLightboxDragMoved.value = true
+  }
+  const dragFactor = Math.max(1, promptLibraryDetailsLightboxScale.value * 0.72)
+  promptLibraryDetailsLightboxPanX.value = promptLibraryDetailsLightboxPanStartX.value
+    + deltaX * dragFactor
+  promptLibraryDetailsLightboxPanY.value = promptLibraryDetailsLightboxPanStartY.value
+    + deltaY * dragFactor
+}
+
+function finishPromptLibraryDetailsLightboxDrag(event?: PointerEvent) {
+  const target = event?.currentTarget as HTMLElement | null
+  if (event && target?.hasPointerCapture?.(event.pointerId)) {
+    target.releasePointerCapture?.(event.pointerId)
+  }
+  if (!promptLibraryDetailsLightboxDragging.value) return
+  promptLibraryDetailsLightboxDragging.value = false
+  promptLibraryDetailsLightboxDragStartX.value = 0
+  promptLibraryDetailsLightboxDragStartY.value = 0
+  promptLibraryDetailsLightboxPanStartX.value = promptLibraryDetailsLightboxPanX.value
+  promptLibraryDetailsLightboxPanStartY.value = promptLibraryDetailsLightboxPanY.value
+}
+
+function forceFinishPromptLibraryDetailsLightboxDrag() {
+  if (!promptLibraryDetailsLightboxDragging.value) return
+  promptLibraryDetailsLightboxDragging.value = false
+  promptLibraryDetailsLightboxDragStartX.value = 0
+  promptLibraryDetailsLightboxDragStartY.value = 0
+  promptLibraryDetailsLightboxPanStartX.value = promptLibraryDetailsLightboxPanX.value
+  promptLibraryDetailsLightboxPanStartY.value = promptLibraryDetailsLightboxPanY.value
+}
+
+function isKeyboardTextEntryTarget(target: EventTarget | null): boolean {
+  const element = target instanceof HTMLElement ? target : null
+  if (!element) return false
+  const tagName = element.tagName
+  return tagName === 'INPUT'
+    || tagName === 'TEXTAREA'
+    || tagName === 'SELECT'
+    || element.isContentEditable
+}
+
+function promptLibraryDetailsArrowDirection(key: string): -1 | 1 | null {
+  if (key === 'ArrowLeft' || key === 'ArrowUp') return -1
+  if (key === 'ArrowRight' || key === 'ArrowDown') return 1
+  return null
 }
 
 function openPromptUploadModal() {
@@ -6375,13 +7041,19 @@ function openSelectedPromptTemplateEditor() {
   promptLibraryDraftDescription.value = item.description || ''
   promptLibraryDraftPrompt.value = item.prompt || ''
   promptLibraryDraftCategory.value = item.category || ''
-  promptLibraryDraftImageFile.value = null
+  clearPromptLibraryDraftObjectUrls()
+  promptLibraryDraftImages.value = normalizePromptLibraryOptionImageUrls(item)
+    .map((url, index) => ({
+      id: `existing-${item.id}-${index}`,
+      url,
+      filename: item.imageFilenames?.[index] || item.imageFilename,
+      mimeType: item.imageMimeTypes?.[index] || item.imageMimeType,
+      source: 'existing',
+    }))
+  promptLibraryDraftImagesChanged.value = false
   promptLibraryDraftRemoveImage.value = false
+  promptLibraryDraftImageIndex.value = 0
   promptLibraryDraftError.value = ''
-  if (promptLibraryDraftImageUrl.value?.startsWith('blob:')) {
-    URL.revokeObjectURL(promptLibraryDraftImageUrl.value)
-  }
-  promptLibraryDraftImageUrl.value = item.imageUrl || ''
   promptUploadModalOpen.value = true
 }
 
@@ -6392,14 +7064,13 @@ function resetPromptLibraryDraft() {
   promptLibraryDraftDescription.value = ''
   promptLibraryDraftPrompt.value = ''
   promptLibraryDraftCategory.value = ''
-  promptLibraryDraftImageFile.value = null
+  clearPromptLibraryDraftObjectUrls()
+  promptLibraryDraftImages.value = []
+  promptLibraryDraftImageIndex.value = 0
+  promptLibraryDraftImagesChanged.value = false
   promptLibraryDraftRemoveImage.value = false
   promptLibraryDraftError.value = ''
   promptLibraryDraftSaving.value = false
-  if (promptLibraryDraftImageUrl.value?.startsWith('blob:')) {
-    URL.revokeObjectURL(promptLibraryDraftImageUrl.value)
-  }
-  promptLibraryDraftImageUrl.value = ''
 }
 
 function closePromptUploadModal() {
@@ -6407,42 +7078,226 @@ function closePromptUploadModal() {
   resetPromptLibraryDraft()
 }
 
-function setPromptLibraryDraftImage(file: File | undefined) {
+function createPromptLibraryDraftImageId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `prompt-image-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function derivePromptLibraryIndexedImageUrl(rawUrl: string, index: number): string {
+  if (!rawUrl.trim()) return ''
+  try {
+    const url = new URL(rawUrl, window.location.origin)
+    if (/\/image\/\d+$/i.test(url.pathname)) {
+      url.pathname = url.pathname.replace(/\/image\/\d+$/i, `/image/${index}`)
+      return url.toString()
+    }
+    if (/\/image$/i.test(url.pathname)) {
+      url.pathname = `${url.pathname}/${index}`
+      return url.toString()
+    }
+  } catch {
+    if (/\/image\/\d+($|[?#])/i.test(rawUrl)) {
+      return rawUrl.replace(/\/image\/\d+($|[?#])/i, `/image/${index}$1`)
+    }
+    if (/\/image($|[?#])/i.test(rawUrl)) {
+      return rawUrl.replace(/\/image($|[?#])/i, `/image/${index}$1`)
+    }
+  }
+  return index === 0 ? rawUrl : ''
+}
+
+function resolvePromptLibraryImageUrls(
+  item: Pick<PromptLibraryOption, 'imageUrl' | 'imageUrls' | 'imageKeys' | 'imageMimeTypes' | 'imageFilenames'> | null | undefined
+): string[] {
+  if (!item) return []
+  const urls = item.imageUrls?.length
+    ? item.imageUrls
+    : (item.imageUrl ? [item.imageUrl] : [])
+  if (urls.length > 1 || !item.imageUrl) {
+    return urls.filter((url) => typeof url === 'string' && url.trim()).slice(0, PROMPT_LIBRARY_IMAGE_MAX_COUNT)
+  }
+  const inferredCount = Math.max(item.imageKeys?.length || 0, item.imageMimeTypes?.length || 0, item.imageFilenames?.length || 0)
+  if (inferredCount <= 1) {
+    return urls
+  }
+  return Array.from({ length: Math.min(inferredCount, PROMPT_LIBRARY_IMAGE_MAX_COUNT) }, (_, index) => (
+    derivePromptLibraryIndexedImageUrl(item.imageUrl || '', index)
+  )).filter((url) => typeof url === 'string' && url.trim())
+}
+
+function normalizePromptLibraryOptionImageUrls(item: Pick<ImageStudioPromptLibraryItem, 'imageUrl' | 'imageUrls'> | PromptLibraryOption): string[] {
+  const urls = resolvePromptLibraryImageUrls(item)
+  return urls.filter((url) => typeof url === 'string' && url.trim()).slice(0, PROMPT_LIBRARY_IMAGE_MAX_COUNT)
+}
+
+function upsertSavedPromptLibraryItem(item: ImageStudioPromptLibraryItem) {
+  const index = savedPromptLibraryItems.value.findIndex((record) => record.id === item.id)
+  if (index >= 0) {
+    savedPromptLibraryItems.value.splice(index, 1, item)
+    syncPromptLibraryItemReferences(item)
+    return
+  }
+  savedPromptLibraryItems.value = [item, ...savedPromptLibraryItems.value]
+  syncPromptLibraryItemReferences(item)
+}
+
+function promptLibraryItemToOption(item: ImageStudioPromptLibraryItem): PromptLibraryOption {
+  return {
+    id: item.id,
+    title: item.title || t('imageStudio.promptWorkspace.uploadedPrompt'),
+    description: item.description || t('imageStudio.promptWorkspace.localStorage'),
+    prompt: item.prompt,
+    imageKey: item.imageKey,
+    imageKeys: item.imageKeys,
+    imageUrl: item.imageUrl,
+    imageUrls: item.imageUrls?.length ? item.imageUrls : (item.imageUrl ? [item.imageUrl] : undefined),
+    category: item.category || t('imageStudio.promptWorkspace.uploadedSource'),
+  }
+}
+
+function syncPromptLibraryItemReferences(item: ImageStudioPromptLibraryItem) {
+  const nextOption = promptLibraryItemToOption(item)
+  if (promptLibraryDetailsItem.value?.id === item.id) {
+    promptLibraryDetailsItem.value = nextOption
+  }
+  if (selectedPromptLibraryOption.value?.id === item.id) {
+    selectedPromptLibraryOption.value = nextOption
+  }
+}
+
+function clearPromptLibraryDraftObjectUrls() {
+  promptLibraryDraftImages.value.forEach((image) => {
+    if (image.source === 'file' && image.url.startsWith('blob:')) {
+      URL.revokeObjectURL(image.url)
+    }
+  })
+}
+
+function formatPromptLibraryImageSize(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`
+}
+
+function openPromptLibraryImagePicker() {
+  promptLibraryImageInputRef.value?.click()
+}
+
+function handlePromptLibraryImageDropAreaClick() {
+  if (!promptLibraryDraftImageUrls.value.length || promptLibraryDraftRemoveImage.value) {
+    openPromptLibraryImagePicker()
+  }
+}
+
+function showPreviousPromptLibraryDraftImage() {
+  const imageCount = promptLibraryDraftImageUrls.value.length
+  if (imageCount <= 1) return
+  promptLibraryDraftImageIndex.value = (promptLibraryDraftImageIndex.value - 1 + imageCount) % imageCount
+}
+
+function showNextPromptLibraryDraftImage() {
+  const imageCount = promptLibraryDraftImageUrls.value.length
+  if (imageCount <= 1) return
+  promptLibraryDraftImageIndex.value = (promptLibraryDraftImageIndex.value + 1) % imageCount
+}
+
+function setPromptLibraryDraftCurrentImageAsCover() {
+  const imageCount = promptLibraryDraftImages.value.length
+  const index = promptLibraryDraftImageIndex.value
+  if (imageCount <= 1 || index <= 0 || index >= imageCount) return
+  const nextImages = [...promptLibraryDraftImages.value]
+  const [coverImage] = nextImages.splice(index, 1)
+  if (!coverImage) return
+  promptLibraryDraftImages.value = [coverImage, ...nextImages]
+  promptLibraryDraftImageIndex.value = 0
+  promptLibraryDraftImagesChanged.value = true
+  promptLibraryDraftRemoveImage.value = false
+}
+
+function setPromptLibraryDraftImages(files: File[]) {
   promptLibraryDraftError.value = ''
-  if (!file) return
-  if (!file.type.startsWith('image/')) {
+  const imageFiles = files.filter((file) => file.type.startsWith('image/'))
+  const invalidTypeCount = files.length - imageFiles.length
+  if (!files.length) return
+  if (!imageFiles.length) {
     promptLibraryDraftError.value = t('imageStudio.promptWorkspace.imageTypeInvalid')
     return
   }
-  if (file.size > PROMPT_LIBRARY_IMAGE_MAX_BYTES) {
-    promptLibraryDraftError.value = t('imageStudio.promptWorkspace.imageTooLarge')
+
+  const remaining = PROMPT_LIBRARY_IMAGE_MAX_COUNT - promptLibraryDraftImages.value.length
+  if (remaining <= 0) {
+    promptLibraryDraftError.value = t('imageStudio.promptWorkspace.imageTooMany', { max: PROMPT_LIBRARY_IMAGE_MAX_COUNT })
     return
   }
-  if (promptLibraryDraftImageUrl.value?.startsWith('blob:')) {
-    URL.revokeObjectURL(promptLibraryDraftImageUrl.value)
+
+  const startIndex = promptLibraryDraftImages.value.length
+  const nextImages: PromptLibraryDraftImage[] = []
+  let oversizedFile: File | null = null
+  for (const file of imageFiles.slice(0, remaining)) {
+    if (file.size > PROMPT_LIBRARY_IMAGE_MAX_BYTES) {
+      oversizedFile = oversizedFile || file
+      continue
+    }
+    nextImages.push({
+      id: createPromptLibraryDraftImageId(),
+      file,
+      filename: file.name,
+      mimeType: file.type,
+      url: URL.createObjectURL(file),
+      source: 'file',
+    })
   }
-  promptLibraryDraftImageFile.value = file
+
+  if (imageFiles.length > remaining) {
+    promptLibraryDraftError.value = t('imageStudio.promptWorkspace.imageTooMany', { max: PROMPT_LIBRARY_IMAGE_MAX_COUNT })
+  } else if (oversizedFile) {
+    promptLibraryDraftError.value = locale.value === 'zh'
+      ? `单张图片不能超过 20MB：${oversizedFile.name} (${formatPromptLibraryImageSize(oversizedFile.size)})`
+      : `Each image must be under 20MB: ${oversizedFile.name} (${formatPromptLibraryImageSize(oversizedFile.size)})`
+  } else if (invalidTypeCount > 0) {
+    promptLibraryDraftError.value = t('imageStudio.promptWorkspace.imageTypeInvalid')
+  }
+  if (!nextImages.length) return
+
+  promptLibraryDraftImages.value = [...promptLibraryDraftImages.value, ...nextImages]
+  promptLibraryDraftImageIndex.value = startIndex
+  promptLibraryDraftImagesChanged.value = true
   promptLibraryDraftRemoveImage.value = false
-  promptLibraryDraftImageUrl.value = URL.createObjectURL(file)
 }
 
 function removePromptLibraryDraftImage() {
-  if (promptLibraryDraftImageUrl.value?.startsWith('blob:')) {
-    URL.revokeObjectURL(promptLibraryDraftImageUrl.value)
+  const index = promptLibraryDraftImageIndex.value
+  const target = promptLibraryDraftImages.value[index]
+  if (!target) return
+  if (target.source === 'file' && target.url.startsWith('blob:')) {
+    URL.revokeObjectURL(target.url)
   }
-  promptLibraryDraftImageFile.value = null
-  promptLibraryDraftImageUrl.value = ''
-  promptLibraryDraftRemoveImage.value = true
+  const nextImages = promptLibraryDraftImages.value.filter((_, imageIndex) => imageIndex !== index)
+  promptLibraryDraftImages.value = nextImages
+  promptLibraryDraftImageIndex.value = Math.min(index, Math.max(0, nextImages.length - 1))
+  promptLibraryDraftImagesChanged.value = true
+  promptLibraryDraftRemoveImage.value = nextImages.length === 0
 }
 
 function handlePromptLibraryImageSelect(event: Event) {
   const input = event.target as HTMLInputElement
-  setPromptLibraryDraftImage(input.files?.[0])
+  setPromptLibraryDraftImages(Array.from(input.files || []))
   input.value = ''
 }
 
 function handlePromptLibraryImageDrop(event: DragEvent) {
-  setPromptLibraryDraftImage(event.dataTransfer?.files?.[0])
+  setPromptLibraryDraftImages(Array.from(event.dataTransfer?.files || []))
+}
+
+async function resolvePromptLibraryDraftImageBlob(image: PromptLibraryDraftImage): Promise<Blob> {
+  if (image.file) {
+    return image.file
+  }
+  const response = await fetch(image.url)
+  if (!response.ok) {
+    throw new Error(locale.value === 'zh' ? '读取已有预览图失败。' : 'Failed to read an existing preview image.')
+  }
+  return response.blob()
 }
 
 async function savePromptLibraryDraft() {
@@ -6465,26 +7320,40 @@ async function savePromptLibraryDraft() {
   promptLibraryDraftError.value = ''
 
   try {
-    const payload = {
+    const payload: ImageStudioPromptLibraryInput = {
       title: promptLibraryDraftTitle.value.trim() || t('imageStudio.promptWorkspace.uploadedPrompt'),
       description: promptLibraryDraftDescription.value.trim(),
       prompt: promptText,
       category: promptLibraryDraftCategory.value.trim(),
-      imageBlob: promptLibraryDraftImageFile.value || undefined,
-      imageMimeType: promptLibraryDraftImageFile.value?.type,
-      imageFilename: promptLibraryDraftImageFile.value?.name,
       removeImage: promptLibraryDraftRemoveImage.value,
+    }
+    if (promptLibraryDraftImages.value.length && (promptLibraryDraftMode.value !== 'edit' || promptLibraryDraftImagesChanged.value)) {
+      const imageBlobs = await Promise.all(promptLibraryDraftImages.value.map(resolvePromptLibraryDraftImageBlob))
+      payload.imageBlob = imageBlobs[0]
+      payload.imageBlobs = imageBlobs
+      payload.imageMimeType = promptLibraryDraftImages.value[0]?.mimeType || imageBlobs[0]?.type
+      payload.imageMimeTypes = imageBlobs.map((blob, index) => (
+        promptLibraryDraftImages.value[index]?.mimeType || blob.type || ''
+      ))
+      payload.imageFilename = promptLibraryDraftImages.value[0]?.filename
+      payload.imageFilenames = promptLibraryDraftImages.value.map((image, index) => (
+        image.filename || `preview-image-${index + 1}`
+      ))
+    } else if (promptLibraryDraftMode.value === 'edit' && promptLibraryDraftImagesChanged.value) {
+      payload.removeImage = true
     }
     if (promptLibraryDraftMode.value === 'edit') {
       if (!promptLibraryEditingId.value) {
         throw new Error('Missing prompt library item id.')
       }
-      await updateImageStudioPromptLibraryItem(promptLibraryEditingId.value, payload)
+      const savedItem = await updateImageStudioPromptLibraryItem(promptLibraryEditingId.value, payload)
+      upsertSavedPromptLibraryItem(savedItem)
       if (selectedPromptLibraryOption.value?.id === promptLibraryEditingId.value) {
         prompt.value = promptText
       }
     } else {
-      await saveImageStudioPromptLibraryItem(payload)
+      const savedItem = await saveImageStudioPromptLibraryItem(payload)
+      upsertSavedPromptLibraryItem(savedItem)
     }
     appStore.showSuccess(promptLibraryDraftMode.value === 'edit'
       ? (locale.value === 'zh' ? '提示词已更新。' : 'Prompt updated.')
@@ -7086,6 +7955,8 @@ function handleGlobalMouseMove(event: MouseEvent) {
 }
 
 function handleGlobalMouseUp(event: MouseEvent) {
+  forceFinishPromptLibraryDetailsLightboxDrag()
+
   const shouldZoomOut = (
     lightboxPointerDown.value &&
     lightboxPointerButton.value === 2 &&
@@ -7110,6 +7981,33 @@ function handleGlobalMouseUp(event: MouseEvent) {
 function handleGlobalKeydown(event: KeyboardEvent) {
   if (event.isComposing) {
     return
+  }
+
+  if (promptLibraryDetailsLightboxOpen.value) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closePromptLibraryDetailsLightbox()
+      return
+    }
+    const lightboxDirection = promptLibraryDetailsArrowDirection(event.key)
+    if (lightboxDirection !== null) {
+      event.preventDefault()
+      stepPromptLibraryDetailsImage(lightboxDirection)
+      return
+    }
+  }
+
+  if (
+    promptLibraryDetailsItem.value
+    && promptLibraryDetailsHasMultipleImages.value
+    && !isKeyboardTextEntryTarget(event.target)
+  ) {
+    const detailsDirection = promptLibraryDetailsArrowDirection(event.key)
+    if (detailsDirection !== null) {
+      event.preventDefault()
+      stepPromptLibraryDetailsImage(detailsDirection)
+      return
+    }
   }
 
   if (event.key === 'Escape') {
@@ -7180,11 +8078,8 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   }
 
   const target = event.target as HTMLElement | null
-  if (target) {
-    const tag = target.tagName
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) {
-      return
-    }
+  if (isKeyboardTextEntryTarget(target)) {
+    return
   }
 
   if (event.key === 'ArrowLeft') {
@@ -8663,6 +9558,7 @@ function startElapsedTracker() {
 
 function updateGenerationBatchProgress(next: ImageStudioBatchProgress) {
   generationBatchProgress.value = { ...next }
+  generationFlowSnapshot.value = { ...next }
 }
 
 async function generateImages(options: {
@@ -8728,6 +9624,7 @@ async function generateImages(options: {
   clearProgressResetTimer()
   progress.value = 0
   generationElapsedMs.value = 0
+  generationFlowSnapshot.value = null
   generationBatchProgress.value = effectiveCount.value > 1
     ? {
         total: effectiveCount.value,
@@ -8741,7 +9638,21 @@ async function generateImages(options: {
           attempt: 0,
         })),
       }
-    : null
+    : {
+        total: 1,
+        completed: 0,
+        failed: 0,
+        running: 0,
+        queued: 1,
+        items: [{
+          index: 0,
+          status: 'queued' as const,
+          attempt: 0,
+        }],
+      }
+  if (generationBatchProgress.value) {
+    generationFlowSnapshot.value = { ...generationBatchProgress.value }
+  }
   generating.value = true
   const controller = new AbortController()
   generationAbort.value = controller
@@ -9595,6 +10506,9 @@ onMounted(async () => {
   window.addEventListener('keydown', handleGlobalKeydown)
   window.addEventListener('mousemove', handleGlobalMouseMove)
   window.addEventListener('mouseup', handleGlobalMouseUp)
+  window.addEventListener('pointerup', forceFinishPromptLibraryDetailsLightboxDrag)
+  window.addEventListener('pointercancel', forceFinishPromptLibraryDetailsLightboxDrag)
+  window.addEventListener('blur', forceFinishPromptLibraryDetailsLightboxDrag)
   window.addEventListener('resize', handleWindowResize)
   warnIfOriginCanSplitLocalHistory()
   void ensureImageStudioPersistentStorage({ silent: true })
@@ -9614,8 +10528,13 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)
   window.removeEventListener('mousemove', handleGlobalMouseMove)
   window.removeEventListener('mouseup', handleGlobalMouseUp)
+  window.removeEventListener('pointerup', forceFinishPromptLibraryDetailsLightboxDrag)
+  window.removeEventListener('pointercancel', forceFinishPromptLibraryDetailsLightboxDrag)
+  window.removeEventListener('blur', forceFinishPromptLibraryDetailsLightboxDrag)
   window.removeEventListener('resize', handleWindowResize)
   hideStudioTitleTooltip()
+  stopPromptLibraryDetailsAutoRotate()
+  clearPromptLibraryDetailsPreviewPress()
   disconnectHistoryListResizeObserver()
   disconnectWorkbenchResizeObserver()
   clearProgressResetTimer()
@@ -11036,6 +11955,10 @@ onBeforeUnmount(() => {
   @apply min-w-0;
 }
 
+.studio-prompt-footer .studio-generation-flow {
+  width: 100%;
+}
+
 .studio-translate-row {
   @apply flex flex-wrap items-center gap-2 rounded-2xl border p-3;
   border-color: var(--studio-border);
@@ -11183,6 +12106,14 @@ onBeforeUnmount(() => {
 .studio-prompt-modal-panel.is-details {
   @apply relative grid max-h-[86vh] max-w-6xl;
   grid-template-columns: minmax(0, 1.18fr) minmax(380px, 0.82fr);
+}
+
+.studio-prompt-modal-panel.is-details .studio-prompt-details-visual {
+  border-radius: 24px 0 0 24px;
+}
+
+.studio-prompt-modal-panel.is-details .studio-prompt-details-body {
+  border-radius: 0 24px 24px 0;
 }
 
 .studio-prompt-modal-panel.is-replacements {
@@ -11645,6 +12576,24 @@ onBeforeUnmount(() => {
   .studio-replacement-prompt-view {
     min-height: 260px;
     max-height: 38vh;
+  }
+
+  .studio-prompt-modal-panel.is-details {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-y: auto;
+  }
+
+  .studio-prompt-modal-panel.is-details .studio-prompt-details-visual {
+    min-height: 360px;
+    border-radius: 24px 24px 0 0;
+  }
+
+  .studio-prompt-modal-panel.is-details .studio-prompt-details-body {
+    border-radius: 0 0 24px 24px;
+  }
+
+  .studio-prompt-details-prompt {
+    height: clamp(300px, 42vh, 520px);
   }
 }
 
@@ -12175,6 +13124,10 @@ onBeforeUnmount(() => {
   box-shadow: 0 18px 38px rgba(var(--theme-color-rgb), 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.52);
 }
 
+.studio-prompt-image-drop.has-preview {
+  cursor: default;
+}
+
 .studio-prompt-image-drop img {
   @apply h-full w-full object-cover;
   display: block;
@@ -12203,6 +13156,20 @@ onBeforeUnmount(() => {
   @apply flex min-w-0 flex-col gap-3;
 }
 
+.studio-prompt-upload-control-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.studio-prompt-upload-icon-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .studio-prompt-upload-fields .input {
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 18px;
@@ -12224,6 +13191,169 @@ onBeforeUnmount(() => {
   color: color-mix(in srgb, var(--studio-muted) 82%, transparent);
 }
 
+.studio-prompt-upload-labeled-field,
+.studio-prompt-category-field {
+  display: grid;
+  min-width: 0;
+  min-height: 44px;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.56);
+  padding: 0 12px 0 14px;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.025), inset 0 1px 0 rgba(255, 255, 255, 0.58);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.studio-prompt-upload-labeled-field:focus-within,
+.studio-prompt-category-field:focus-within {
+  border-color: rgba(var(--theme-color-rgb), 0.46);
+  background: rgba(255, 255, 255, 0.70);
+  box-shadow: 0 0 0 4px rgba(var(--theme-color-rgb), 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.50);
+}
+
+.studio-prompt-upload-labeled-field > span,
+.studio-prompt-category-field > span {
+  color: color-mix(in srgb, var(--studio-muted) 88%, transparent);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.studio-prompt-upload-labeled-field input,
+.studio-prompt-category-select {
+  min-height: 44px;
+  max-width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--studio-text);
+  outline: none;
+  padding-right: 26px;
+  cursor: pointer;
+}
+
+.studio-prompt-upload-labeled-field input {
+  padding-right: 0;
+  cursor: text;
+}
+
+.studio-prompt-upload-labeled-field input::placeholder,
+.studio-prompt-upload-labeled-field textarea::placeholder {
+  color: color-mix(in srgb, var(--studio-muted) 82%, transparent);
+}
+
+.studio-prompt-upload-labeled-field.is-textarea {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+  padding: 12px 14px;
+}
+
+.studio-prompt-upload-labeled-field.is-textarea > span {
+  line-height: 1;
+}
+
+.studio-prompt-upload-labeled-field textarea {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--studio-text);
+  outline: none;
+  padding: 0;
+  resize: vertical;
+}
+
+.studio-prompt-upload-icon-button {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(var(--theme-color-rgb), 0.18);
+  border-radius: 16px;
+  background: rgba(var(--theme-color-rgb), 0.08);
+  color: var(--theme-color);
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.studio-prompt-upload-icon-button:hover:not(:disabled) {
+  border-color: rgba(var(--theme-color-rgb), 0.34);
+  background: rgba(var(--theme-color-rgb), 0.13);
+  transform: translateY(-1px);
+}
+
+.studio-prompt-upload-icon-button.is-cover {
+  border-color: rgba(16, 185, 129, 0.22);
+  background: rgba(16, 185, 129, 0.09);
+  color: #047857;
+}
+
+.studio-prompt-upload-icon-button.is-cover:hover:not(:disabled) {
+  border-color: rgba(16, 185, 129, 0.34);
+  background: rgba(16, 185, 129, 0.14);
+}
+
+.studio-prompt-upload-icon-button.is-danger {
+  border-color: rgba(244, 63, 94, 0.18);
+  background: rgba(244, 63, 94, 0.08);
+  color: #be123c;
+}
+
+.studio-prompt-upload-icon-button.is-danger:hover:not(:disabled) {
+  border-color: rgba(244, 63, 94, 0.32);
+  background: rgba(244, 63, 94, 0.12);
+}
+
+.studio-prompt-upload-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+  transform: none;
+}
+
+.studio-prompt-upload-switch {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  display: inline-flex;
+  width: 42px;
+  height: 72px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.94);
+  filter:
+    drop-shadow(0 1px 0 rgba(15, 23, 42, 0.90))
+    drop-shadow(0 2px 8px rgba(15, 23, 42, 0.58));
+  transform: translateY(-50%);
+  transition: color 160ms ease, filter 160ms ease, transform 160ms ease;
+}
+
+.studio-prompt-upload-switch:hover {
+  color: #ffffff;
+  filter:
+    drop-shadow(0 1px 0 rgba(15, 23, 42, 0.96))
+    drop-shadow(0 3px 12px rgba(15, 23, 42, 0.68));
+}
+
+.studio-prompt-upload-switch svg {
+  color: currentColor;
+}
+
+.studio-prompt-upload-switch.is-prev {
+  left: 0;
+}
+
+.studio-prompt-upload-switch.is-next {
+  right: 0;
+}
+
 .studio-prompt-upload-textarea {
   min-height: 160px;
   resize: vertical;
@@ -12237,28 +13367,6 @@ onBeforeUnmount(() => {
   @apply rounded-2xl px-4 py-3 text-sm;
   background: rgba(244, 63, 94, 0.08);
   color: #be123c;
-}
-
-.studio-prompt-upload-remove-image {
-  display: inline-flex;
-  min-height: 38px;
-  align-items: center;
-  justify-content: center;
-  align-self: flex-start;
-  border: 1px solid rgba(244, 63, 94, 0.18);
-  border-radius: 999px;
-  background: rgba(244, 63, 94, 0.08);
-  color: #be123c;
-  padding: 0 14px;
-  font-size: 12px;
-  font-weight: 500;
-  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
-}
-
-.studio-prompt-upload-remove-image:hover {
-  border-color: rgba(244, 63, 94, 0.32);
-  background: rgba(244, 63, 94, 0.12);
-  transform: translateY(-1px);
 }
 
 @keyframes prompt-card-in {
@@ -12297,11 +13405,15 @@ onBeforeUnmount(() => {
 
 .studio-prompt-details-visual {
   @apply relative flex min-h-[560px] items-center justify-center overflow-hidden text-white;
+  isolation: isolate;
   background: linear-gradient(135deg, #eef2f7, #dbeafe 52%, #f8fafc);
+  border-radius: inherit;
 }
 
 .studio-prompt-details-visual img {
   @apply h-full w-full object-cover;
+  display: block;
+  border-radius: inherit;
   object-position: center center;
 }
 
@@ -12313,8 +13425,56 @@ onBeforeUnmount(() => {
   object-position: center center;
 }
 
+.studio-prompt-details-dots {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(34px, 6%, 52px);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transform: translateX(-50%);
+  min-height: 26px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.46);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.22);
+  box-shadow:
+    0 10px 24px rgba(15, 23, 42, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  backdrop-filter: blur(16px) saturate(1.25);
+  pointer-events: auto;
+}
+
+.studio-prompt-details-dot {
+  width: 7px;
+  height: 7px;
+  min-width: 7px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.18);
+  transition: width 180ms ease, background 180ms ease, opacity 180ms ease, transform 180ms ease;
+}
+
+.studio-prompt-details-dot:hover,
+.studio-prompt-details-dot.active {
+  width: 22px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 1px 5px rgba(15, 23, 42, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  opacity: 1;
+}
+
+.studio-prompt-details-dot:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.88);
+  outline-offset: 3px;
+}
+
 .studio-prompt-details-body {
-  @apply flex min-w-0 flex-col gap-4 overflow-hidden p-7;
+  @apply flex min-w-0 flex-col gap-3 overflow-hidden p-7;
   background: #ffffff;
 }
 
@@ -12330,7 +13490,7 @@ onBeforeUnmount(() => {
 
 .studio-prompt-details-prompt {
   @apply relative min-h-0 overflow-hidden text-sm leading-7;
-  height: clamp(320px, 50vh, 560px);
+  height: clamp(420px, 58vh, 660px);
   border-radius: 22px;
   border: 1px solid rgba(31, 41, 55, 0.04);
   background: #f9fafb;
@@ -12483,18 +13643,61 @@ onBeforeUnmount(() => {
   object-fit: contain;
   border-radius: 22px;
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.24);
+  cursor: grab;
+  user-select: none;
   transition: transform 120ms ease;
   transform-origin: center center;
+  will-change: transform;
+}
+
+.studio-prompt-full-preview-image.is-dragging {
+  cursor: grabbing;
+  transition: none;
 }
 
 .studio-prompt-full-preview-close {
-  @apply absolute right-6 top-6 inline-flex h-10 w-10 items-center justify-center rounded-full text-white transition;
+  @apply absolute right-8 top-9 inline-flex h-10 w-10 items-center justify-center rounded-full text-white transition;
+  z-index: 3;
   background: rgba(255, 255, 255, 0.16);
   backdrop-filter: blur(12px);
 }
 
 .studio-prompt-full-preview-close:hover {
   background: rgba(255, 255, 255, 0.28);
+}
+
+.studio-prompt-full-preview-switches {
+  position: absolute;
+  right: 27px;
+  top: 50%;
+  display: flex;
+  flex-direction: column;
+  z-index: 3;
+  gap: 34px;
+  width: 42px;
+  align-items: center;
+  transform: translateY(-50%);
+}
+
+.studio-prompt-full-preview-switch {
+  display: inline-flex;
+  width: 42px;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.92);
+  filter:
+    drop-shadow(0 1px 0 rgba(15, 23, 42, 0.75))
+    drop-shadow(0 2px 8px rgba(15, 23, 42, 0.42));
+  transition: color 160ms ease, transform 160ms ease;
+}
+
+.studio-prompt-full-preview-switch:hover,
+.studio-prompt-full-preview-switch:focus-visible {
+  color: #ffffff;
+  transform: scale(1.08);
+  outline: none;
 }
 
 .studio-chip {
@@ -14154,10 +15357,11 @@ onBeforeUnmount(() => {
 .studio-side-empty,
 .studio-variant-card,
 .studio-download-card,
-.studio-workbench-toolbar,
-.studio-progress-info,
-.studio-progress-track,
-.studio-api-presets,
+  .studio-workbench-toolbar,
+  .studio-progress-info,
+  .studio-generation-flow,
+  .studio-progress-track,
+  .studio-api-presets,
 .studio-api-preset-save,
 .studio-api-preset-apply,
 .studio-api-preset-delete,
@@ -14273,9 +15477,10 @@ onBeforeUnmount(() => {
 .studio-side-empty,
 .studio-download-card,
 .studio-clear-button,
-.studio-workbench-toolbar,
-.studio-progress-info,
-.studio-api-presets,
+  .studio-workbench-toolbar,
+  .studio-progress-info,
+  .studio-generation-flow,
+  .studio-api-presets,
 .studio-api-preset-info,
 .studio-popover-panel,
 .studio-reference-images,
@@ -14585,6 +15790,10 @@ onBeforeUnmount(() => {
   color: color-mix(in srgb, var(--studio-text) 80%, var(--studio-accent-deep) 20%);
 }
 
+.studio-generate-target-line {
+  @apply flex w-full min-w-0 flex-nowrap items-center gap-2;
+}
+
 .studio-generate-target-mode {
   @apply inline-flex items-center gap-2 font-semibold;
   color: var(--studio-accent-deep);
@@ -14615,6 +15824,14 @@ onBeforeUnmount(() => {
   @apply mt-2 flex-nowrap overflow-hidden whitespace-nowrap py-2;
   min-height: 44px;
   height: 44px;
+}
+
+.studio-generate-target.studio-generate-target-compact.has-generation-flow {
+  @apply block whitespace-normal;
+  height: auto;
+  min-height: 44px;
+  padding-bottom: 10px;
+  overflow: visible;
 }
 
 .studio-generate-target.studio-generate-target-compact .studio-generate-target-host {
@@ -15100,6 +16317,246 @@ onBeforeUnmount(() => {
   border-color: oklch(75% 0.13 50);
   color: oklch(50% 0.16 35);
   background: oklch(98% 0.02 60);
+}
+
+.studio-generation-flow {
+  @apply mt-3 rounded-xl px-3 py-3;
+  border: 1px solid color-mix(in srgb, var(--studio-border) 86%, transparent);
+  background: color-mix(in srgb, var(--studio-soft-background) 78%, #ffffff 22%);
+}
+
+.studio-generation-flow-compact {
+  @apply mt-2 rounded-none p-0;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+
+.studio-generation-flow-compact .studio-generation-flow-head {
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--studio-accent) 16%, transparent);
+}
+
+.studio-generation-flow-compact.is-idle .studio-generation-flow-head {
+  display: none;
+}
+
+.studio-generation-flow-head {
+  @apply flex items-start justify-between gap-3 text-xs;
+  color: var(--studio-muted);
+}
+
+.studio-generation-flow-head > div {
+  @apply grid min-w-0 gap-0.5;
+}
+
+.studio-generation-flow-head strong {
+  @apply text-sm font-semibold;
+  color: var(--studio-text);
+}
+
+.studio-generation-flow-head span {
+  @apply truncate;
+}
+
+.studio-generation-flow-duration {
+  @apply shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold tabular-nums;
+  background: color-mix(in srgb, var(--studio-accent-soft) 78%, transparent);
+  color: var(--studio-accent-deep);
+}
+
+.studio-generation-flow-steps {
+  @apply mt-3 grid gap-2;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.studio-generation-flow-compact .studio-generation-flow-steps {
+  gap: 0;
+}
+
+.studio-generation-flow-compact.is-idle .studio-generation-flow-steps {
+  margin-top: 8px;
+}
+
+.studio-generation-flow-step {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 14px auto;
+  align-items: start;
+  gap: 7px;
+}
+
+.studio-generation-flow-step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 13px;
+  right: -8px;
+  top: 6px;
+  z-index: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--studio-border) 82%, transparent);
+  pointer-events: none;
+}
+
+.studio-generation-flow-step.is-done:not(:last-child)::after {
+  background: color-mix(in srgb, #10b981 54%, var(--studio-border) 46%);
+}
+
+.studio-generation-flow-step.is-error:not(:last-child)::after {
+  background: color-mix(in srgb, #ef4444 58%, var(--studio-border) 42%);
+}
+
+.studio-generation-flow-dot {
+  position: relative;
+  z-index: 2;
+  justify-self: start;
+  width: 13px;
+  height: 13px;
+  margin-top: 0;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--studio-border) 88%, #ffffff 12%);
+  background: #ffffff;
+}
+
+.studio-generation-flow-step.is-done .studio-generation-flow-dot {
+  border-color: color-mix(in srgb, #10b981 72%, #ffffff 28%);
+  background: #10b981;
+}
+
+.studio-generation-flow-step.is-active .studio-generation-flow-dot {
+  border-color: var(--studio-accent);
+  background: var(--studio-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--studio-accent) 16%, transparent);
+  animation: studio-generation-dot-pulse 1.25s ease-out infinite;
+}
+
+.studio-generation-flow-step.is-active:not(:last-child)::after {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--studio-accent) 18%, transparent),
+    color-mix(in srgb, var(--studio-accent) 78%, transparent),
+    color-mix(in srgb, var(--studio-accent) 18%, transparent)
+  );
+  background-size: 180% 100%;
+  animation: studio-generation-flow-line 1.4s linear infinite;
+}
+
+.studio-generation-flow-step.is-error .studio-generation-flow-dot {
+  border-color: #ef4444;
+  background: #ef4444;
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.13);
+}
+
+.studio-generation-flow-step-copy {
+  position: relative;
+  z-index: 1;
+  @apply grid min-w-0 gap-0.5 text-[11px] leading-4;
+  color: var(--studio-muted);
+}
+
+.studio-generation-flow-step-copy strong {
+  @apply truncate text-xs font-semibold;
+  color: var(--studio-text);
+}
+
+.studio-generation-flow-step.is-waiting .studio-generation-flow-step-copy strong {
+  color: color-mix(in srgb, var(--studio-muted) 86%, var(--studio-text) 14%);
+}
+
+.studio-generation-flow-step.is-active .studio-generation-flow-step-copy strong {
+  color: var(--studio-accent-deep);
+}
+
+.studio-generation-flow-step.is-active .studio-generation-flow-step-copy span,
+.studio-generation-flow-step.is-active .studio-generation-flow-step-copy small {
+  color: color-mix(in srgb, var(--studio-accent-deep) 70%, var(--studio-muted) 30%);
+}
+
+.studio-generation-flow-step.is-done .studio-generation-flow-step-copy strong {
+  color: #047857;
+}
+
+.studio-generation-flow-step.is-done .studio-generation-flow-step-copy span,
+.studio-generation-flow-step.is-done .studio-generation-flow-step-copy small {
+  color: color-mix(in srgb, #047857 68%, var(--studio-muted) 32%);
+}
+
+.studio-generation-flow-step-copy span,
+.studio-generation-flow-step-copy small {
+  @apply truncate;
+}
+
+.studio-generation-flow-compact.is-idle .studio-generation-flow-step-copy span,
+.studio-generation-flow-compact.is-idle .studio-generation-flow-step-copy small,
+.studio-generation-flow-compact.is-idle .studio-generation-flow-meta {
+  display: none;
+}
+
+.studio-generation-flow-compact.is-idle .studio-generation-flow-step-copy strong {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--studio-text) 68%, transparent);
+}
+
+.studio-generation-flow-compact.is-idle .studio-generation-flow-step {
+  gap: 4px;
+}
+
+.studio-generation-flow-step.is-error .studio-generation-flow-step-copy strong,
+.studio-generation-flow-step.is-error .studio-generation-flow-step-copy small {
+  color: #b91c1c;
+}
+
+.studio-generation-flow-step.is-error .studio-generation-flow-step-copy span {
+  color: #991b1b;
+}
+
+@keyframes studio-generation-dot-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--studio-accent) 30%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--studio-accent) 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--studio-accent) 0%, transparent);
+  }
+}
+
+@keyframes studio-generation-flow-line {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -180% 0;
+  }
+}
+
+.studio-shell.motion-reduced .studio-generation-flow-step.is-active .studio-generation-flow-dot,
+.studio-shell.motion-reduced .studio-generation-flow-step.is-active:not(:last-child)::after {
+  animation: none;
+}
+
+.studio-generation-flow-meta {
+  @apply mt-3 flex flex-wrap gap-1.5 text-[11px] font-medium;
+}
+
+.studio-generation-flow-meta span {
+  @apply rounded-full px-2 py-1;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid color-mix(in srgb, var(--studio-border) 80%, transparent);
+  color: var(--studio-muted);
+}
+
+@media (max-width: 900px) {
+  .studio-generation-flow-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .studio-generation-flow-step:not(:last-child)::after {
+    display: none;
+  }
 }
 
 .studio-test-connection {
@@ -15782,6 +17239,7 @@ onBeforeUnmount(() => {
   .studio-workbench-surface,
   .studio-workbench-tile,
   .studio-progress-info,
+  .studio-generation-flow,
   .studio-progress-track,
   .studio-progress-cancel,
   .studio-inline-button,
@@ -16014,8 +17472,8 @@ onBeforeUnmount(() => {
   .studio-prompt-library-check,
   .studio-prompt-image-drop,
   .studio-prompt-upload-fields .input,
+  .studio-prompt-upload-icon-button,
   .studio-prompt-upload-error,
-  .studio-prompt-upload-remove-image,
   .studio-prompt-upload-cancel,
   .studio-prompt-upload-save,
   .studio-replacement-mode,
@@ -16140,6 +17598,21 @@ onBeforeUnmount(() => {
   border-color: rgba(251, 191, 36, 0.34);
   background: rgba(120, 53, 15, 0.20);
   color: #fde68a;
+}
+
+.studio-shell.theme-night .studio-generation-flow {
+  border-color: rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.studio-shell.theme-night .studio-generation-flow-compact {
+  border-color: transparent;
+  background: transparent;
+}
+
+.studio-shell.theme-night .studio-generation-flow-meta span {
+  border-color: rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.52);
 }
 
 .studio-shell.theme-night :is(

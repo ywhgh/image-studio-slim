@@ -1,6 +1,6 @@
 import type { ImageStudioProtocolProfile, ImageStudioProviderMode } from '@/types/imageStudio'
 
-export const IMAGE_STUDIO_RELEASE_VERSION = 'v1.3.2'
+export const IMAGE_STUDIO_RELEASE_VERSION = 'v1.3.3'
 
 export type WorkspaceTranslate = (key: string) => string
 export type TranslateLang = 'en' | 'ja' | 'de' | 'zh' | 'ru'
@@ -73,15 +73,15 @@ export function createCurrentRelease(locale: string): ImageStudioReleaseNotes {
     return {
       version: IMAGE_STUDIO_RELEASE_VERSION,
       title: `${IMAGE_STUDIO_RELEASE_VERSION} 更新内容`,
-      subtitle: 'Grok 生图、历史记录和主题体验优化',
-      date: '2026-05-29',
+      subtitle: '提示词库多图链路和生图流程反馈优化',
+      date: '2026-06-05',
       items: [
-        '新增 Grok 生图协议，兼容官方 xAI /images 接口和 Grok2API 这类 OpenAI 兼容中转。',
-        '优化上游模型探测，Grok 协议会在 /image-generation-models 不可用时自动降级到 /models。',
-        '增强本地历史记录保存与展示，保留最近生成的提示词、参数、来源统计和快速恢复能力。',
-        '完善提示词模型配置、探测和调用链路，减少 Failed to fetch 与不可用模型的误判。',
-        '修复夜间模式、全局圆角、历史卡片和工作区图片裁剪等 UI 细节问题。',
-        '新增 API 渠道预设和工作区身份入口，方便在多个中转地址与 Key 之间切换。',
+        '修复提示词库多图保存、编辑和刷新读取链路，本地 IndexedDB 与 Cloudflare/R2 均保留 imageUrls 数组。',
+        '上传提示词支持最多 5 张图片，单张最大 20MB，编辑已有提示词时不会丢失多图。',
+        '优化详情页预览，支持多图键盘切换、磨砂玻璃指示器和全屏上下切换。',
+        '优化上传/编辑弹窗的多图预览，补齐左右切换、单图删除和当前图片设为封面。',
+        '新增生图流程实时反馈，展示排队、请求上游、重试、成功和失败步骤，并用动效标记当前阶段。',
+        '修复上游短暂失败后最终成功时流程状态仍显示失败的问题。',
       ],
     }
   }
@@ -89,15 +89,15 @@ export function createCurrentRelease(locale: string): ImageStudioReleaseNotes {
   return {
     version: IMAGE_STUDIO_RELEASE_VERSION,
     title: `${IMAGE_STUDIO_RELEASE_VERSION} Release Notes`,
-    subtitle: 'Grok image generation, history, and theme refinements',
-    date: '2026-05-29',
+    subtitle: 'Prompt-library multi-image flow and generation diagnostics',
+    date: '2026-06-05',
     items: [
-      'Added a Grok image protocol for official xAI /images endpoints and Grok2API-style OpenAI-compatible relays.',
-      'Improved upstream model probing so Grok falls back from /image-generation-models to /models when needed.',
-      'Expanded local history persistence and display with recent prompts, parameters, source statistics, and quick restore.',
-      'Improved prompt-helper model configuration, probing, and call flow to reduce Failed to fetch and unavailable-model confusion.',
-      'Fixed night mode, global radius, history-card readability, and workbench image-crop UI issues.',
-      'Added API channel presets and workspace identity entry points for switching between relay URLs and keys.',
+      'Fixed prompt-library multi-image save, edit, and refresh paths so IndexedDB and Cloudflare/R2 preserve imageUrls arrays.',
+      'Added prompt uploads with up to 5 images, enforcing a 20MB limit per image while preserving existing images during edits.',
+      'Improved prompt detail previews with keyboard image switching, frosted-glass indicators, and fullscreen vertical controls.',
+      'Improved upload/edit modal previews with side controls, single-image deletion, and set-current-image-as-cover support.',
+      'Added live generation-flow feedback for queueing, upstream requests, retries, success, and failure with animated current-step states.',
+      'Fixed generation flow status so successful retries no longer remain marked as failed after an earlier upstream error.',
     ],
   }
 }

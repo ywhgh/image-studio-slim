@@ -11,8 +11,11 @@ interface PromptRecord {
   prompt: string
   category: string
   imageKey?: string
+  imageKeys?: string[]
   imageMimeType?: string
+  imageMimeTypes?: string[]
   imageFilename?: string
+  imageFilenames?: string[]
   createdAt: string
 }
 
@@ -32,9 +35,11 @@ interface PromptPayload {
   category: string
   removeImage: boolean
   image?: PromptImagePayload
+  images: PromptImagePayload[]
 }
 
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
+const MAX_IMAGE_COUNT = 5
 const PROMPT_PREFIX = 'prompts/'
 const IMAGE_PREFIX = 'images/'
 
@@ -181,30 +186,52 @@ function parseDataUrlImage(
   }
 }
 
+function parseDataUrlImages(
+  values: unknown,
+  mimeTypes?: unknown,
+  filenames?: unknown
+): PromptImagePayload[] {
+  if (!Array.isArray(values)) {
+    return []
+  }
+  return values
+    .slice(0, MAX_IMAGE_COUNT)
+    .map((value, index) => parseDataUrlImage(
+      value,
+      Array.isArray(mimeTypes) ? mimeTypes[index] : undefined,
+      Array.isArray(filenames) ? filenames[index] : undefined
+    ))
+    .filter((image): image is PromptImagePayload => !!image)
+}
+
 async function readPromptPayload(request: Request): Promise<PromptPayload> {
   const contentType = request.headers.get('Content-Type') || ''
   if (contentType.toLowerCase().includes('application/json')) {
     const body = await request.json<Record<string, unknown>>()
+    const images = parseDataUrlImages(body.imageDataUrls, body.imageMimeTypes, body.imageFilenames)
+    const fallbackImage = parseDataUrlImage(body.imageDataUrl, body.imageMimeType, body.imageFilename)
     return {
       title: cleanJsonText(body.title, 'Uploaded prompt'),
       description: cleanJsonText(body.description),
       prompt: cleanJsonText(body.prompt),
       category: cleanJsonText(body.category),
       removeImage: body.removeImage === true || body.removeImage === '1',
-      image: parseDataUrlImage(body.imageDataUrl, body.imageMimeType, body.imageFilename),
+      image: images[0] || fallbackImage,
+      images: images.length ? images : (fallbackImage ? [fallbackImage] : []),
     }
   }
 
   const form = await request.formData()
-  const image = form.get('image')
-  const imagePayload = isPromptImageUpload(image) && image.size > 0
-    ? {
-        size: image.size,
-        mimeType: image.type || 'application/octet-stream',
-        filename: promptImageFilename(image, `preview${extensionForMimeType(image.type || 'application/octet-stream')}`),
-        body: image.stream(),
-      }
-    : undefined
+  const images = form.getAll('image')
+    .filter(isPromptImageUpload)
+    .filter((image) => image.size > 0)
+    .slice(0, MAX_IMAGE_COUNT)
+    .map((image) => ({
+      size: image.size,
+      mimeType: image.type || 'application/octet-stream',
+      filename: promptImageFilename(image, `preview${extensionForMimeType(image.type || 'application/octet-stream')}`),
+      body: image.stream(),
+    }))
 
   return {
     title: cleanText(form.get('title'), 'Uploaded prompt'),
@@ -212,7 +239,8 @@ async function readPromptPayload(request: Request): Promise<PromptPayload> {
     prompt: cleanText(form.get('prompt')),
     category: cleanText(form.get('category')),
     removeImage: cleanText(form.get('removeImage')) === '1',
-    image: imagePayload,
+    image: images[0],
+    images,
   }
 }
 
@@ -229,9 +257,11 @@ function validatePromptImage(image: PromptImagePayload, request: Request, env: E
 async function savePromptImage(
   bucket: R2Bucket,
   id: string,
-  image: PromptImagePayload
+  image: PromptImagePayload,
+  index = 0
 ): Promise<Pick<PromptRecord, 'imageKey' | 'imageMimeType' | 'imageFilename'>> {
-  const imageKey = `${IMAGE_PREFIX}${id}${extensionForMimeType(image.mimeType)}`
+  const suffix = index > 0 ? `-${index + 1}` : ''
+  const imageKey = `${IMAGE_PREFIX}${id}${suffix}${extensionForMimeType(image.mimeType)}`
   await bucket.put(imageKey, image.body, {
     httpMetadata: {
       contentType: image.mimeType,
@@ -244,17 +274,50 @@ async function savePromptImage(
   }
 }
 
+async function savePromptImages(
+  bucket: R2Bucket,
+  id: string,
+  images: PromptImagePayload[]
+): Promise<Pick<PromptRecord, 'imageKey' | 'imageKeys' | 'imageMimeType' | 'imageMimeTypes' | 'imageFilename' | 'imageFilenames'>> {
+  const storedImages = await Promise.all(images.slice(0, MAX_IMAGE_COUNT).map((image, index) => (
+    savePromptImage(bucket, id, image, index)
+  )))
+  return {
+    imageKey: storedImages[0]?.imageKey,
+    imageKeys: storedImages.map((image) => image.imageKey).filter((key): key is string => !!key),
+    imageMimeType: storedImages[0]?.imageMimeType,
+    imageMimeTypes: storedImages.map((image) => image.imageMimeType || ''),
+    imageFilename: storedImages[0]?.imageFilename,
+    imageFilenames: storedImages.map((image) => image.imageFilename || ''),
+  }
+}
+
 async function readPromptRecord(bucket: R2Bucket, id: string): Promise<PromptRecord | null> {
   const object = await bucket.get(objectKeyForPrompt(id))
   if (!object) return null
   return object.json<PromptRecord>()
 }
 
-function publicPrompt(record: PromptRecord, request: Request): PromptRecord & { imageUrl?: string } {
+function normalizeRecordImageKeys(record: PromptRecord): string[] {
+  const keys = Array.isArray(record.imageKeys)
+    ? record.imageKeys.filter((key) => typeof key === 'string' && key)
+    : []
+  if (!keys.length && record.imageKey) {
+    keys.push(record.imageKey)
+  }
+  return keys.slice(0, MAX_IMAGE_COUNT)
+}
+
+function publicPrompt(record: PromptRecord, request: Request): PromptRecord & { imageUrl?: string; imageUrls?: string[] } {
   const url = new URL(request.url)
+  const imageKeys = normalizeRecordImageKeys(record)
+  const imageUrls = imageKeys.map((_, index) => (
+    `${url.origin}/api/prompts/${encodeURIComponent(record.id)}/image/${index}`
+  ))
   return {
     ...record,
-    imageUrl: record.imageKey ? `${url.origin}/api/prompts/${encodeURIComponent(record.id)}/image` : undefined,
+    imageUrl: imageUrls[0],
+    imageUrls: imageUrls.length ? imageUrls : undefined,
   }
 }
 
@@ -284,16 +347,24 @@ async function createPrompt(request: Request, env: Env): Promise<Response> {
 
   const id = crypto.randomUUID()
   let imageKey: string | undefined
+  let imageKeys: string[] | undefined
   let imageMimeType: string | undefined
+  let imageMimeTypes: string[] | undefined
   let imageFilename: string | undefined
+  let imageFilenames: string[] | undefined
 
-  if (payload.image) {
-    const imageError = validatePromptImage(payload.image, request, env)
-    if (imageError) return imageError
-    const storedImage = await savePromptImage(env.PROMPT_BUCKET, id, payload.image)
-    imageKey = storedImage.imageKey
-    imageMimeType = storedImage.imageMimeType
-    imageFilename = storedImage.imageFilename
+  if (payload.images.length) {
+    for (const image of payload.images) {
+      const imageError = validatePromptImage(image, request, env)
+      if (imageError) return imageError
+    }
+    const storedImages = await savePromptImages(env.PROMPT_BUCKET, id, payload.images)
+    imageKey = storedImages.imageKey
+    imageKeys = storedImages.imageKeys
+    imageMimeType = storedImages.imageMimeType
+    imageMimeTypes = storedImages.imageMimeTypes
+    imageFilename = storedImages.imageFilename
+    imageFilenames = storedImages.imageFilenames
   }
 
   const record: PromptRecord = {
@@ -303,8 +374,11 @@ async function createPrompt(request: Request, env: Env): Promise<Response> {
     prompt: payload.prompt,
     category: payload.category,
     imageKey,
+    imageKeys,
     imageMimeType,
+    imageMimeTypes,
     imageFilename,
+    imageFilenames,
     createdAt: new Date().toISOString(),
   }
 
@@ -329,26 +403,38 @@ async function updatePrompt(request: Request, env: Env, id: string): Promise<Res
   }
 
   let imageKey = existing.imageKey
+  let imageKeys = existing.imageKeys
   let imageMimeType = existing.imageMimeType
+  let imageMimeTypes = existing.imageMimeTypes
   let imageFilename = existing.imageFilename
+  let imageFilenames = existing.imageFilenames
+  const existingImageKeys = normalizeRecordImageKeys(existing)
 
-  if (payload.removeImage && existing.imageKey) {
-    await env.PROMPT_BUCKET.delete(existing.imageKey)
+  if (payload.removeImage && existingImageKeys.length) {
+    await Promise.all(existingImageKeys.map((key) => env.PROMPT_BUCKET.delete(key)))
     imageKey = undefined
+    imageKeys = undefined
     imageMimeType = undefined
+    imageMimeTypes = undefined
     imageFilename = undefined
+    imageFilenames = undefined
   }
 
-  if (payload.image) {
-    const imageError = validatePromptImage(payload.image, request, env)
-    if (imageError) return imageError
-    if (existing.imageKey) {
-      await env.PROMPT_BUCKET.delete(existing.imageKey)
+  if (payload.images.length) {
+    for (const image of payload.images) {
+      const imageError = validatePromptImage(image, request, env)
+      if (imageError) return imageError
     }
-    const storedImage = await savePromptImage(env.PROMPT_BUCKET, id, payload.image)
-    imageKey = storedImage.imageKey
-    imageMimeType = storedImage.imageMimeType
-    imageFilename = storedImage.imageFilename
+    if (existingImageKeys.length) {
+      await Promise.all(existingImageKeys.map((key) => env.PROMPT_BUCKET.delete(key)))
+    }
+    const storedImages = await savePromptImages(env.PROMPT_BUCKET, id, payload.images)
+    imageKey = storedImages.imageKey
+    imageKeys = storedImages.imageKeys
+    imageMimeType = storedImages.imageMimeType
+    imageMimeTypes = storedImages.imageMimeTypes
+    imageFilename = storedImages.imageFilename
+    imageFilenames = storedImages.imageFilenames
   }
 
   const record: PromptRecord = {
@@ -358,8 +444,11 @@ async function updatePrompt(request: Request, env: Env, id: string): Promise<Res
     prompt: payload.prompt,
     category: payload.category,
     imageKey,
+    imageKeys: imageKeys?.length ? imageKeys : undefined,
     imageMimeType,
+    imageMimeTypes: imageMimeTypes?.length ? imageMimeTypes : undefined,
     imageFilename,
+    imageFilenames: imageFilenames?.length ? imageFilenames : undefined,
   }
 
   await env.PROMPT_BUCKET.put(objectKeyForPrompt(id), JSON.stringify(record), {
@@ -373,8 +462,9 @@ async function updatePrompt(request: Request, env: Env, id: string): Promise<Res
 
 async function deletePrompt(request: Request, env: Env, id: string): Promise<Response> {
   const record = await readPromptRecord(env.PROMPT_BUCKET, id)
-  if (record?.imageKey) {
-    await env.PROMPT_BUCKET.delete(record.imageKey)
+  const imageKeys = record ? normalizeRecordImageKeys(record) : []
+  if (imageKeys.length) {
+    await Promise.all(imageKeys.map((key) => env.PROMPT_BUCKET.delete(key)))
   }
   await env.PROMPT_BUCKET.delete(objectKeyForPrompt(id))
   return new Response(null, {
@@ -383,19 +473,21 @@ async function deletePrompt(request: Request, env: Env, id: string): Promise<Res
   })
 }
 
-async function getPromptImage(request: Request, env: Env, id: string): Promise<Response> {
+async function getPromptImage(request: Request, env: Env, id: string, index = 0): Promise<Response> {
   const record = await readPromptRecord(env.PROMPT_BUCKET, id)
-  if (!record?.imageKey) {
+  const imageKeys = record ? normalizeRecordImageKeys(record) : []
+  const imageKey = imageKeys[index] || imageKeys[0]
+  if (!record || !imageKey) {
     return json({ error: { code: 'not_found', message: 'image not found.' } }, { status: 404 }, request, env)
   }
-  const object = await env.PROMPT_BUCKET.get(record.imageKey)
+  const object = await env.PROMPT_BUCKET.get(imageKey)
   if (!object) {
     return json({ error: { code: 'not_found', message: 'image not found.' } }, { status: 404 }, request, env)
   }
   return new Response(object.body, {
     headers: {
       ...corsHeaders(request, env),
-      'Content-Type': record.imageMimeType || object.httpMetadata?.contentType || 'application/octet-stream',
+      'Content-Type': record.imageMimeTypes?.[index] || record.imageMimeType || object.httpMetadata?.contentType || 'application/octet-stream',
       'Cache-Control': 'private, max-age=3600',
     },
   })
@@ -424,6 +516,16 @@ export default {
       const imageMatch = path.match(/^\/api\/prompts\/([^/]+)\/image$/)
       if (request.method === 'GET' && imageMatch) {
         return getPromptImage(request, env, decodeURIComponent(imageMatch[1]))
+      }
+
+      const indexedImageMatch = path.match(/^\/api\/prompts\/([^/]+)\/image\/(\d+)$/)
+      if (request.method === 'GET' && indexedImageMatch) {
+        return getPromptImage(
+          request,
+          env,
+          decodeURIComponent(indexedImageMatch[1]),
+          Number(indexedImageMatch[2])
+        )
       }
 
       const promptMatch = path.match(/^\/api\/prompts\/([^/]+)$/)

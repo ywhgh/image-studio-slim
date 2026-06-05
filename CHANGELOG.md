@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.3.3 - 2026-06-05
+
+Patch release for prompt-library multi-image persistence and generation-flow diagnostics:
+
+- Fixed prompt-library multi-image saving, editing, and refresh behavior so local IndexedDB and Cloudflare/R2 keep `imageUrls` arrays instead of collapsing back to a single image.
+- Added prompt uploads with up to 5 images, enforcing a 20MB limit per image while preserving existing multi-image records during edits.
+- Improved prompt detail previews with multi-image switching, frosted-glass indicators, fullscreen vertical controls, keyboard navigation, and drag/zoom position retention.
+- Improved upload/edit modal previews with visible icon-only side controls, single-image deletion, and set-current-image-as-cover support.
+- Added live generation-flow diagnostics for queueing, upstream attempts, retry waits, fallback variants, upstream errors, successful responses, completion, and cancellation.
+- Fixed generation-flow status handling so successful retries are shown as successful instead of remaining red from an earlier failed attempt.
+
+Validation:
+
+- `pnpm typecheck`
+- `go test ./...`
+
 ## v1.3.2 - 2026-05-29
 
 Patch release for Grok image generation, local history, and Image Studio UI polish:

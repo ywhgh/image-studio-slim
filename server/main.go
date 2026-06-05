@@ -51,6 +51,7 @@ const (
 	defaultImageJobRetention           = 2 * time.Hour
 	maxExternalGenerateAttempts        = 2
 	externalGenerateRetryDelay         = 1200 * time.Millisecond
+	imageJobMaxEvents                  = 80
 
 	profileOpenAIImageAPI    = "openai-image-api"
 	profileOpenAIResponses   = "openai-responses"
@@ -135,6 +136,23 @@ type externalImageAttempt struct {
 	ContentType string
 	Format      string
 }
+
+type imageGenerationJobEvent struct {
+	Time        string `json:"time"`
+	Stage       string `json:"stage"`
+	Message     string `json:"message"`
+	Variant     string `json:"variant,omitempty"`
+	Endpoint    string `json:"endpoint,omitempty"`
+	Attempt     int    `json:"attempt,omitempty"`
+	MaxAttempts int    `json:"max_attempts,omitempty"`
+	Status      int    `json:"status,omitempty"`
+	DurationMs  int64  `json:"duration_ms,omitempty"`
+	BodyBytes   int    `json:"body_bytes,omitempty"`
+	Results     int    `json:"results,omitempty"`
+	Retrying    bool   `json:"retrying,omitempty"`
+}
+
+type imageGenerationJobEventSink func(event imageGenerationJobEvent)
 
 type config struct {
 	Host                 string
@@ -608,22 +626,24 @@ type imageGenerationJob struct {
 	StartedAt  time.Time
 	FinishedAt time.Time
 	UpdatedAt  time.Time
+	Events     []imageGenerationJobEvent
 	cancel     context.CancelFunc
 }
 
 type imageGenerationJobResponse struct {
-	ID            string             `json:"id"`
-	Status        imageJobStatus     `json:"status"`
-	Profile       string             `json:"profile,omitempty"`
-	QueuePosition int                `json:"queue_position,omitempty"`
-	QueueLength   int                `json:"queue_length"`
-	Running       int                `json:"running"`
-	Concurrency   int                `json:"concurrency"`
-	CreatedAt     string             `json:"created_at"`
-	StartedAt     string             `json:"started_at,omitempty"`
-	FinishedAt    string             `json:"finished_at,omitempty"`
-	Results       []normalizedResult `json:"results,omitempty"`
-	Error         *apiError          `json:"error,omitempty"`
+	ID            string                    `json:"id"`
+	Status        imageJobStatus            `json:"status"`
+	Profile       string                    `json:"profile,omitempty"`
+	QueuePosition int                       `json:"queue_position,omitempty"`
+	QueueLength   int                       `json:"queue_length"`
+	Running       int                       `json:"running"`
+	Concurrency   int                       `json:"concurrency"`
+	CreatedAt     string                    `json:"created_at"`
+	StartedAt     string                    `json:"started_at,omitempty"`
+	FinishedAt    string                    `json:"finished_at,omitempty"`
+	Events        []imageGenerationJobEvent `json:"events,omitempty"`
+	Results       []normalizedResult        `json:"results,omitempty"`
+	Error         *apiError                 `json:"error,omitempty"`
 }
 
 type imageGenerationRun struct {
@@ -704,6 +724,7 @@ func (q *imageGenerationQueue) enqueue(req externalGenerateRequest, attempts []e
 
 	q.mu.Lock()
 	q.cleanupLocked(now)
+	job.Events = append(job.Events, newImageJobEvent("queued", fmt.Sprintf("queued locally; queue length %d", len(q.pending)+1)))
 	if len(q.pending) >= q.queueSize {
 		resp := q.responseForLocked(job)
 		q.mu.Unlock()
@@ -736,6 +757,31 @@ func (q *imageGenerationQueue) enqueue(req externalGenerateRequest, attempts []e
 	return resp, true
 }
 
+func newImageJobEvent(stage, message string) imageGenerationJobEvent {
+	return imageGenerationJobEvent{
+		Time:    time.Now().UTC().Format(time.RFC3339Nano),
+		Stage:   stage,
+		Message: message,
+	}
+}
+
+func (q *imageGenerationQueue) appendEvent(id string, event imageGenerationJobEvent) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	job, ok := q.jobs[id]
+	if !ok {
+		return
+	}
+	if event.Time == "" {
+		event.Time = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	job.Events = append(job.Events, event)
+	if len(job.Events) > imageJobMaxEvents {
+		job.Events = append([]imageGenerationJobEvent(nil), job.Events[len(job.Events)-imageJobMaxEvents:]...)
+	}
+	job.UpdatedAt = time.Now()
+}
+
 func (q *imageGenerationQueue) worker() {
 	for id := range q.queue {
 		run, ok := q.start(id)
@@ -751,7 +797,9 @@ func (q *imageGenerationQueue) worker() {
 			emptyLogValue(run.Request.Size),
 			len(run.Attempts),
 		)
-		results, errStatus, errCode, errMsg := callExternalImageUpstream(run.Context, q.client, run.Attempts, run.APIKey, run.ID)
+		results, errStatus, errCode, errMsg := callExternalImageUpstream(run.Context, q.client, run.Attempts, run.APIKey, run.ID, func(event imageGenerationJobEvent) {
+			q.appendEvent(run.ID, event)
+		})
 		q.finish(run.ID, results, errStatus, errCode, errMsg)
 	}
 }
@@ -772,6 +820,7 @@ func (q *imageGenerationQueue) start(id string) (imageGenerationRun, bool) {
 	job.StartedAt = now
 	job.UpdatedAt = now
 	job.cancel = cancel
+	job.Events = append(job.Events, newImageJobEvent("started", fmt.Sprintf("started worker; %d upstream request variants prepared", len(job.Attempts))))
 	q.removePendingLocked(id)
 	q.running++
 
@@ -802,10 +851,12 @@ func (q *imageGenerationQueue) finish(id string, results []normalizedResult, err
 			job.ErrStatus = errStatus
 			job.ErrCode = errCode
 			job.ErrMsg = errMsg
+			job.Events = append(job.Events, newImageJobEvent("failed", errMsg))
 			log.Printf("image job failed id=%s status=%d code=%s msg=%s", id, errStatus, errCode, errMsg)
 		} else {
 			job.Status = imageJobSucceeded
 			job.Results = clampImageResultsForRequest(id, results, job.Request)
+			job.Events = append(job.Events, newImageJobEvent("succeeded", fmt.Sprintf("received %d image result(s)", len(job.Results))))
 			log.Printf("image job succeeded id=%s results=%d duration_ms=%d", id, len(job.Results), now.Sub(job.StartedAt).Milliseconds())
 		}
 	}
@@ -839,6 +890,7 @@ func (q *imageGenerationQueue) cancel(id string) (imageGenerationJobResponse, bo
 		job.Status = imageJobCanceled
 		job.FinishedAt = now
 		job.UpdatedAt = now
+		job.Events = append(job.Events, newImageJobEvent("canceled", "generation was canceled locally"))
 		job.APIKey = ""
 		job.Attempts = nil
 		q.removePendingLocked(id)
@@ -872,6 +924,9 @@ func (q *imageGenerationQueue) responseForLocked(job *imageGenerationJob) imageG
 	}
 	if !job.FinishedAt.IsZero() {
 		resp.FinishedAt = job.FinishedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if len(job.Events) > 0 {
+		resp.Events = append([]imageGenerationJobEvent(nil), job.Events...)
 	}
 	if len(job.Results) > 0 {
 		resp.Results = append([]normalizedResult(nil), job.Results...)
@@ -1134,6 +1189,7 @@ func handleGenerateExternal(client *http.Client, cfg config) http.HandlerFunc {
 			attempts,
 			req.APIKey,
 			"direct",
+			nil,
 		)
 		if errMsg != "" {
 			writeError(w, errStatus, errCode, errMsg)
@@ -1160,6 +1216,7 @@ func callExternalImageUpstream(
 	attempts []externalImageAttempt,
 	apiKey string,
 	jobID string,
+	eventSink imageGenerationJobEventSink,
 ) ([]normalizedResult, int, string, string) {
 	lastStatus := http.StatusBadGateway
 	lastCode := "UPSTREAM_REQUEST_FAILED"
@@ -1184,6 +1241,15 @@ func callExternalImageUpstream(
 				variant.ContentType,
 				len(variant.Body),
 			)
+			emitImageJobEvent(eventSink, imageGenerationJobEvent{
+				Stage:       "upstream_attempt",
+				Message:     fmt.Sprintf("requesting upstream variant %d/%d, attempt %d/%d", variantIndex+1, len(attempts), attempt, maxExternalGenerateAttempts),
+				Variant:     variant.Name,
+				Endpoint:    safeEndpointForLog(variant.EndpointURL),
+				Attempt:     attempt,
+				MaxAttempts: maxExternalGenerateAttempts,
+				BodyBytes:   len(variant.Body),
+			})
 			upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, variant.EndpointURL, bytes.NewReader(variant.Body))
 			if err != nil {
 				return nil, http.StatusInternalServerError, "REQUEST_BUILD_FAILED", "failed to build upstream request"
@@ -1198,7 +1264,24 @@ func callExternalImageUpstream(
 				lastCode = "UPSTREAM_REQUEST_FAILED"
 				lastMsg = fmt.Sprintf("failed to reach upstream provider: %v", err)
 				log.Printf("image upstream transport_error job=%s variant=%s attempt=%d duration_ms=%d msg=%s", jobID, variant.Name, attempt, time.Since(startedAt).Milliseconds(), lastMsg)
+				emitImageJobEvent(eventSink, imageGenerationJobEvent{
+					Stage:      "transport_error",
+					Message:    compactLogText(lastMsg, 260),
+					Variant:    variant.Name,
+					Endpoint:   safeEndpointForLog(variant.EndpointURL),
+					Attempt:    attempt,
+					DurationMs: time.Since(startedAt).Milliseconds(),
+				})
 				if shouldRetryExternalGenerate(attempt, 0, lastMsg) && waitBeforeExternalRetry(ctx, lastMsg, attempt) {
+					emitImageJobEvent(eventSink, imageGenerationJobEvent{
+						Stage:       "retry_wait",
+						Message:     "transport failed; retrying the same upstream variant",
+						Variant:     variant.Name,
+						Endpoint:    safeEndpointForLog(variant.EndpointURL),
+						Attempt:     attempt + 1,
+						MaxAttempts: maxExternalGenerateAttempts,
+						Retrying:    true,
+					})
 					continue
 				}
 				return nil, lastStatus, lastCode, lastMsg
@@ -1212,7 +1295,26 @@ func callExternalImageUpstream(
 				lastCode = "UPSTREAM_READ_FAILED"
 				lastMsg = fmt.Sprintf("failed to read upstream response: %v", readErr)
 				log.Printf("image upstream read_error job=%s variant=%s attempt=%d status=%d duration_ms=%d msg=%s", jobID, variant.Name, attempt, resp.StatusCode, time.Since(startedAt).Milliseconds(), lastMsg)
+				emitImageJobEvent(eventSink, imageGenerationJobEvent{
+					Stage:      "read_error",
+					Message:    compactLogText(lastMsg, 260),
+					Variant:    variant.Name,
+					Endpoint:   safeEndpointForLog(variant.EndpointURL),
+					Attempt:    attempt,
+					Status:     resp.StatusCode,
+					DurationMs: time.Since(startedAt).Milliseconds(),
+				})
 				if shouldRetryExternalGenerate(attempt, resp.StatusCode, lastMsg) && waitBeforeExternalRetry(ctx, lastMsg, attempt) {
+					emitImageJobEvent(eventSink, imageGenerationJobEvent{
+						Stage:       "retry_wait",
+						Message:     "response read failed; retrying the same upstream variant",
+						Variant:     variant.Name,
+						Endpoint:    safeEndpointForLog(variant.EndpointURL),
+						Attempt:     attempt + 1,
+						MaxAttempts: maxExternalGenerateAttempts,
+						Status:      resp.StatusCode,
+						Retrying:    true,
+					})
 					continue
 				}
 				return nil, lastStatus, lastCode, lastMsg
@@ -1220,6 +1322,16 @@ func callExternalImageUpstream(
 
 			if tooLarge {
 				log.Printf("image upstream response_too_large job=%s variant=%s attempt=%d status=%d duration_ms=%d body_bytes=%d", jobID, variant.Name, attempt, resp.StatusCode, time.Since(startedAt).Milliseconds(), len(respBody))
+				emitImageJobEvent(eventSink, imageGenerationJobEvent{
+					Stage:      "response_too_large",
+					Message:    "upstream response was too large to keep",
+					Variant:    variant.Name,
+					Endpoint:   safeEndpointForLog(variant.EndpointURL),
+					Attempt:    attempt,
+					Status:     resp.StatusCode,
+					DurationMs: time.Since(startedAt).Milliseconds(),
+					BodyBytes:  len(respBody),
+				})
 				return nil,
 					http.StatusBadGateway,
 					"UPSTREAM_RESPONSE_TOO_LARGE",
@@ -1235,13 +1347,52 @@ func callExternalImageUpstream(
 				lastCode = "UPSTREAM_ERROR"
 				lastMsg = parseUpstreamErrorMessage(resp.StatusCode, respBody)
 				log.Printf("image upstream error job=%s variant=%s attempt=%d status=%d duration_ms=%d body_bytes=%d msg=%s", jobID, variant.Name, attempt, resp.StatusCode, time.Since(startedAt).Milliseconds(), len(respBody), compactLogText(lastMsg, 220))
+				emitImageJobEvent(eventSink, imageGenerationJobEvent{
+					Stage:      "upstream_error",
+					Message:    compactLogText(lastMsg, 260),
+					Variant:    variant.Name,
+					Endpoint:   safeEndpointForLog(variant.EndpointURL),
+					Attempt:    attempt,
+					Status:     resp.StatusCode,
+					DurationMs: time.Since(startedAt).Milliseconds(),
+					BodyBytes:  len(respBody),
+				})
 				if shouldRetryCurrentExternalAttemptBeforeFallback(attempt, resp.StatusCode, lastMsg) && waitBeforeExternalRetry(ctx, lastMsg, attempt) {
+					emitImageJobEvent(eventSink, imageGenerationJobEvent{
+						Stage:       "retry_wait",
+						Message:     "upstream returned a retryable error; retrying the same variant",
+						Variant:     variant.Name,
+						Endpoint:    safeEndpointForLog(variant.EndpointURL),
+						Attempt:     attempt + 1,
+						MaxAttempts: maxExternalGenerateAttempts,
+						Status:      resp.StatusCode,
+						Retrying:    true,
+					})
 					continue
 				}
 				if shouldTryNextExternalAttempt(variantIndex, len(attempts), resp.StatusCode, lastMsg) {
+					emitImageJobEvent(eventSink, imageGenerationJobEvent{
+						Stage:    "variant_fallback",
+						Message:  "switching to the next request format",
+						Variant:  variant.Name,
+						Endpoint: safeEndpointForLog(variant.EndpointURL),
+						Attempt:  attempt,
+						Status:   resp.StatusCode,
+						Retrying: true,
+					})
 					break
 				}
 				if shouldRetryExternalGenerate(attempt, resp.StatusCode, lastMsg) && waitBeforeExternalRetry(ctx, lastMsg, attempt) {
+					emitImageJobEvent(eventSink, imageGenerationJobEvent{
+						Stage:       "retry_wait",
+						Message:     "upstream returned a retryable error; retrying",
+						Variant:     variant.Name,
+						Endpoint:    safeEndpointForLog(variant.EndpointURL),
+						Attempt:     attempt + 1,
+						MaxAttempts: maxExternalGenerateAttempts,
+						Status:      resp.StatusCode,
+						Retrying:    true,
+					})
 					continue
 				}
 				return nil, lastStatus, lastCode, lastMsg
@@ -1253,24 +1404,84 @@ func callExternalImageUpstream(
 				lastCode = "UPSTREAM_RESPONSE_INVALID"
 				lastMsg = err.Error()
 				log.Printf("image upstream invalid_response job=%s variant=%s attempt=%d status=%d duration_ms=%d body_bytes=%d msg=%s", jobID, variant.Name, attempt, resp.StatusCode, time.Since(startedAt).Milliseconds(), len(respBody), compactLogText(lastMsg, 220))
+				emitImageJobEvent(eventSink, imageGenerationJobEvent{
+					Stage:      "invalid_response",
+					Message:    compactLogText(lastMsg, 260),
+					Variant:    variant.Name,
+					Endpoint:   safeEndpointForLog(variant.EndpointURL),
+					Attempt:    attempt,
+					Status:     resp.StatusCode,
+					DurationMs: time.Since(startedAt).Milliseconds(),
+					BodyBytes:  len(respBody),
+				})
 				if shouldRetryCurrentExternalAttemptBeforeFallback(attempt, resp.StatusCode, lastMsg) && waitBeforeExternalRetry(ctx, lastMsg, attempt) {
+					emitImageJobEvent(eventSink, imageGenerationJobEvent{
+						Stage:       "retry_wait",
+						Message:     "response did not contain a usable image; retrying the same variant",
+						Variant:     variant.Name,
+						Endpoint:    safeEndpointForLog(variant.EndpointURL),
+						Attempt:     attempt + 1,
+						MaxAttempts: maxExternalGenerateAttempts,
+						Status:      resp.StatusCode,
+						Retrying:    true,
+					})
 					continue
 				}
 				if shouldTryNextExternalAttempt(variantIndex, len(attempts), resp.StatusCode, lastMsg) {
+					emitImageJobEvent(eventSink, imageGenerationJobEvent{
+						Stage:    "variant_fallback",
+						Message:  "switching to the next request format",
+						Variant:  variant.Name,
+						Endpoint: safeEndpointForLog(variant.EndpointURL),
+						Attempt:  attempt,
+						Status:   resp.StatusCode,
+						Retrying: true,
+					})
 					break
 				}
 				if shouldRetryExternalGenerate(attempt, resp.StatusCode, lastMsg) && waitBeforeExternalRetry(ctx, lastMsg, attempt) {
+					emitImageJobEvent(eventSink, imageGenerationJobEvent{
+						Stage:       "retry_wait",
+						Message:     "response did not contain a usable image; retrying",
+						Variant:     variant.Name,
+						Endpoint:    safeEndpointForLog(variant.EndpointURL),
+						Attempt:     attempt + 1,
+						MaxAttempts: maxExternalGenerateAttempts,
+						Status:      resp.StatusCode,
+						Retrying:    true,
+					})
 					continue
 				}
 				return nil, lastStatus, lastCode, lastMsg
 			}
 
 			log.Printf("image upstream success job=%s variant=%s attempt=%d status=%d duration_ms=%d body_bytes=%d results=%d", jobID, variant.Name, attempt, resp.StatusCode, time.Since(startedAt).Milliseconds(), len(respBody), len(results))
+			emitImageJobEvent(eventSink, imageGenerationJobEvent{
+				Stage:      "upstream_success",
+				Message:    fmt.Sprintf("upstream returned %d image result(s)", len(results)),
+				Variant:    variant.Name,
+				Endpoint:   safeEndpointForLog(variant.EndpointURL),
+				Attempt:    attempt,
+				Status:     resp.StatusCode,
+				DurationMs: time.Since(startedAt).Milliseconds(),
+				BodyBytes:  len(respBody),
+				Results:    len(results),
+			})
 			return results, 0, "", ""
 		}
 	}
 
 	return nil, lastStatus, lastCode, lastMsg
+}
+
+func emitImageJobEvent(eventSink imageGenerationJobEventSink, event imageGenerationJobEvent) {
+	if eventSink == nil {
+		return
+	}
+	if event.Time == "" {
+		event.Time = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	eventSink(event)
 }
 
 func shouldRetryCurrentExternalAttemptBeforeFallback(attempt int, status int, message string) bool {
